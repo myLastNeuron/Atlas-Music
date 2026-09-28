@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The audio_service plugin resolves its notification/action icons by name at
+  runtime (Resources.getIdentifier), so the resource shrinker cannot see them
+  as "used" and strips them from release builds. Without these drawables
+  AudioService.createCustomAction() builds a CustomAction with icon id 0,
+  throws IllegalArgumentException, and aborts setState, leaving the media
+  session idle and the notification absent ("No media playing").
+  Keep them (and their original names) explicitly.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/audio_service_stop,@drawable/audio_service_pause,@drawable/audio_service_play_arrow,@drawable/audio_service_skip_next,@drawable/audio_service_skip_previous,@drawable/audio_service_fast_forward,@drawable/audio_service_fast_rewind,@drawable/ic_stat_music"
+    tools:shrinkMode="strict" />
