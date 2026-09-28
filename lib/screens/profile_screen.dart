@@ -11,7 +11,6 @@ import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../media/cache_service.dart';
 import '../widgets/liquid_background.dart';
-import '../build_info.dart';
 
 /// Settings + identity. Name edit persists and reflects in header.
 class ProfileScreen extends StatefulWidget {
@@ -768,7 +767,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                       leading: const Icon(Icons.info_outline, size: 20),
                       title:
                           const Text('About', style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('Mono · v1.0.1 · $buildStamp',
+                      subtitle: const Text('v1.0.1',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
                       onTap: () {
