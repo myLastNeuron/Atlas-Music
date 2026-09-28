@@ -454,6 +454,19 @@ Licensed under the [Apache License, Version 2.0](LICENSE.md).
 > ### ⚠️ Disclaimer
 > This app is for **educational purposes**. YouTube's Terms of Service may restrict direct audio extraction. **Use responsibly.**
 
+---
+
+> [!CAUTION]
+> ### 🤖 Mostly AI-generated — use at your own risk
+> I built this app **mostly with AI**, as a personal project to understand how AI works and what it can actually do. It is **not** a professional or audited piece of software.
+>
+> - **Assume there are loopholes, bugs and rough edges.** Some of them I know about (see *Known Limitations* above); plenty I don't.
+> - **No security review has been done.** Don't treat it as hardened. Be careful about what you sign in to or store in it.
+> - **No warranty of any kind**, in the spirit of the Apache-2.0 license. You use it at your own risk.
+> - **It's a learning project first**, a music player second. If something breaks, that's the trade-off.
+>
+> Treat it as a curious experiment you're welcome to play with — not as software to depend on.
+
 <div align="center">
 <b>If you enjoy Atlas Music, give it a ⭐ star!</b>
 <br><br>
