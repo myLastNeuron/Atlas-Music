@@ -373,7 +373,7 @@ The next `flutter build apk --release` picks it up automatically.
 
 ### 🏷️ Release stamp
 
-Bump `build_stamp` in `lib/build_info.dart` on every release so *"stale install"* reports can be told apart from real regressions.
+Bump `buildStamp` in `lib/build_info.dart` on every release so *"stale install"* reports can be told apart from real regressions.
 
 ---
 
