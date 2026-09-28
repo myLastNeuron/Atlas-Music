@@ -312,10 +312,10 @@ lib/
 
 ```bash
 # 1 · Clone the repository
-git clone https://github.com/yourusername/atlas-music.git
+git clone https://github.com/myLastNeuron/Atlas-Music.git
 
 # 2 · Enter the project
-cd atlas-music
+cd Atlas-Music
 
 # 3 · Install dependencies
 flutter pub get
