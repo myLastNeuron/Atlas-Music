@@ -5,9 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 /// Search / Library / Profile share one premium look: deep neutral backdrop,
 /// frosted-glass floating surfaces, white ink, one light primary action.
 ///
-/// Legacy names (obsidian, ultraviolet, deepTeal, glowPurple, rose) are kept
-/// as aliases mapped onto the mono palette so existing call sites keep
-/// working without behavioral edits.
 class AppColors {
   // Core mono tokens (dark glass).
   static const paper = Color(0xFF0E0E12);
@@ -24,16 +21,6 @@ class AppColors {
   static Color get glass => Colors.white.withValues(alpha: 0.08);
   static Color get glassBorder => Colors.white.withValues(alpha: 0.14);
   static Color get glassHighlight => Colors.white.withValues(alpha: 0.06);
-
-  // Legacy aliases (do not use in new code).
-  static const obsidian = paper;
-  static const obsidian2 = mist;
-  static const ultraviolet = charcoal;
-  static const ultravioletSoft = inkSoft;
-  static const glowPurple = Color(0xFF3A3A44);
-  static const deepTeal = Color(0xFFFFFFFF);
-  static const rose = Color(0xFFFFFFFF);
-  static const glassWhite = Colors.white;
 }
 
 /// Consistent motion: fast, natural, cheap on low-end hardware.
@@ -256,9 +243,6 @@ class AppTheme {
       ),
     );
   }
-
-  /// Legacy entry point kept so existing call sites keep building.
-  static ThemeData dark() => light();
 
   static const headerName = TextStyle(
     fontSize: 15,

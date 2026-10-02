@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:atlas_music/models/song.dart';
 import 'package:atlas_music/services/quick_picks.dart';
-import 'package:atlas_music/services/user_preferences.dart';
+import 'package:atlas_music/services/user_prefs.dart';
 
 Song _s(String title, String artist, int sec,
         {String channel = '', String id = ''}) =>

@@ -1,18 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/playlist.dart';
-import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../services/spotify_service.dart';
 import '../services/youtube_service.dart';
-import '../services/user_preferences.dart';
-import '../services/song_filter.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
-import '../widgets/play_helper.dart';
+import 'history_screen.dart';
 import 'liked_songs_screen.dart';
 import 'playlist_detail_screen.dart';
 
@@ -30,7 +27,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _loading = true;
   bool _loadBusy = false;
   bool _loadQueued = false;
-  List<Song> _visibleLiked = [];
   Map<String, int> _playlistCounts = {};
 
   @override
@@ -63,24 +59,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _loadBusy = true;
     try {
       final p = await _storage.getPlaylists();
-      final l = await _storage.getLikedSongs();
-      MusicLanguage lang = MusicLanguage.all;
-      try {
-        lang = await UserPreferences().getLanguage();
-      } catch (_) {}
       if (!mounted) return;
 
-      /// GLOBAL rules on generated listings: liked rail shows only
-      /// 00:45–07:00 tracks in the selected language (queue-aligned).
-      /// Cached here so build never re-filters per row per frame.
-      final visible = SongFilter.apply(l, language: lang);
       final counts = <String, int>{};
       for (final pl in p) {
         counts[pl.id] = pl.songs.length;
       }
       setState(() {
         _playlists = p;
-        _visibleLiked = visible;
         _playlistCounts = counts;
         _loading = false;
       });
@@ -148,8 +134,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// Shared YouTube import runner: progress, fetch, save, toast.
   Future<void> _runYouTubeImport(String id) async {
     if (!mounted) return;
-    final navigator = Navigator.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
     final messenger = ScaffoldMessenger.of(context);
+    var dialogOpen = true;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -161,17 +148,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
           Text('Importing playlist...')
         ]),
       ),
-    );
+    ).whenComplete(() => dialogOpen = false);
     try {
       final pl = await _yt.getPlaylist(id);
       await _storage.savePlaylist(pl);
-      navigator.pop();
+      if (dialogOpen && navigator.canPop()) navigator.pop();
       _load();
       messenger.showSnackBar(
         SnackBar(content: Text('Imported "${pl.name}" (${pl.songs.length})')),
       );
     } catch (_) {
-      navigator.pop();
+      if (dialogOpen && navigator.canPop()) navigator.pop();
       messenger.showSnackBar(
         const SnackBar(content: Text('Import failed. Check link.')),
       );
@@ -299,11 +286,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (link == null || link.trim().isEmpty) return;
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
-      final navigator = Navigator.of(context);
+      final navigator = Navigator.of(context, rootNavigator: true);
 
       var matched = 0;
       var total = 0;
       void Function(void Function())? setProg;
+      var dialogOpen = true;
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -324,7 +312,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             );
           },
         ),
-      );
+      ).whenComplete(() => dialogOpen = false);
       Playlist pl;
       try {
         pl = await sp.clonePlaylist(
@@ -339,10 +327,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
           },
         );
       } catch (_) {
-        navigator.pop();
+        if (dialogOpen && navigator.canPop()) navigator.pop();
         rethrow;
       }
-      navigator.pop();
+      if (dialogOpen && navigator.canPop()) navigator.pop();
       await _storage.savePlaylist(pl);
       if (!mounted) return;
       _load();
@@ -424,12 +412,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     tracksCtrl.dispose();
     if (input == null || text.trim().isEmpty) return;
     if (!mounted) return;
-    final navigator = Navigator.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
     final messenger = ScaffoldMessenger.of(context);
 
     var matched = 0;
     var total = 0;
     void Function(void Function())? setProg;
+    var dialogOpen = true;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -450,7 +439,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           );
         },
       ),
-    );
+    ).whenComplete(() => dialogOpen = false);
     try {
       final pl = await SpotifyService().cloneFromText(
         yt: _yt,
@@ -464,7 +453,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           } catch (_) {}
         },
       );
-      navigator.pop();
+      // Pop exactly once, before the save. If savePlaylist below throws, the
+      // catch must NOT pop again or it dismisses the Library screen too.
+      if (dialogOpen && navigator.canPop()) navigator.pop();
       await _storage.savePlaylist(pl);
       if (!mounted) return;
       _load();
@@ -472,7 +463,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         SnackBar(content: Text('Cloned "${pl.name}" (${pl.songs.length})')),
       );
     } catch (e) {
-      navigator.pop();
+      // Only close the dialog if it is still open (save failure after pop).
+      if (dialogOpen && navigator.canPop()) navigator.pop();
       final raw = e.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
       final short = raw.length > 160 ? '${raw.substring(0, 160)}…' : raw;
       messenger.showSnackBar(
@@ -562,57 +554,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           children: [
                             _quick(Icons.download, 'Import', _import),
                             _quick(Icons.favorite_outline, 'Liked', _openLiked),
-                            _quick(Icons.history, 'Recent', () {}),
+                            _quick(Icons.history, 'Recent', _openHistory),
                           ],
                         ),
                       ),
                     ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Builder(builder: (context) {
-                      final liked = _visibleLiked;
-                      if (liked.isEmpty) {
-                        return const SizedBox.shrink();
-                      }
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 20),
-                            child: Text('Liked Songs',
-                                style: TextStyle(
-                                    fontSize: 16, fontWeight: FontWeight.w700)),
-                          ),
-                          ListView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: liked.length.clamp(0, 5),
-                            itemBuilder: (_, i) {
-                              final s = liked[i];
-                              return MotionPress(
-                                child: ListTile(
-                                  leading: Artwork(
-                                    s.thumbnailUrl,
-                                    size: 48,
-                                    radius: 10,
-                                  ),
-                                  title: Text(s.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                  subtitle: Text(s.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style:
-                                          const TextStyle(color: AppColors.inkSoft)),
-                                  onTap: () => playSongs(context,
-                                      song: s, queue: liked, index: i),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      );
-                    }),
                   ),
                   const SliverToBoxAdapter(
                     child: Padding(
@@ -695,6 +641,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _openLiked() async {
     await pushAppPage(context, const LikedSongsScreen());
+    _load();
+  }
+
+  Future<void> _openHistory() async {
+    await pushAppPage(context, const HistoryScreen());
+    // History may have been pruned; playlists/state are unaffected but a
+    // reload keeps counts fresh if anything changed.
     _load();
   }
 

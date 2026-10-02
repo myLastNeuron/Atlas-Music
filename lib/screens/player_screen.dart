@@ -9,7 +9,7 @@ import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/lyrics_sheet.dart';
-import '../widgets/play_helper.dart' show messengerOf, navigatorOf;
+import '../widgets/play_helper.dart' show messengerOf;
 
 class PlayerScreen extends StatefulWidget {
   static const routeName = '/player';
@@ -23,6 +23,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final StorageService _storageService = StorageService();
   bool _isLiked = false;
   String? _likedForId;
+  AudioPlayerService? _audio;
+  VoidCallback? _audioListener;
+
+  @override
+  void initState() {
+    super.initState();
+    final audio = context.read<AudioPlayerService>();
+    _audio = audio;
+    // Re-check on song change (auto-advance) and on any like toggled
+    // elsewhere (Liked page / playlist rows) so the heart never goes stale.
+    _audioListener = _checkIfLiked;
+    audio.addListener(_audioListener!);
+    _storageService.addListener(_onStorageChanged);
+  }
+
+  @override
+  void dispose() {
+    _audio?.removeListener(_audioListener!);
+    _storageService.removeListener(_onStorageChanged);
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -30,15 +51,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _checkIfLiked();
   }
 
-  Future<void> _checkIfLiked() async {
+  void _onStorageChanged() => _syncLiked(force: true);
+
+  void _checkIfLiked({bool force = false}) => _syncLiked(force: force);
+
+  Future<void> _syncLiked({required bool force}) async {
     final audioService = context.read<AudioPlayerService>();
     final cur = audioService.currentSong;
-    if (cur != null && _likedForId != cur.id) {
-      _likedForId = cur.id;
-      final liked = await _storageService.isSongLiked(cur.id);
-      if (mounted && _likedForId == cur.id) {
-        setState(() => _isLiked = liked);
-      }
+    if (cur == null) return;
+    if (!force && _likedForId == cur.id) return;
+    _likedForId = cur.id;
+    final liked = await _storageService.isSongLiked(cur.id);
+    if (mounted && _likedForId == cur.id) {
+      setState(() => _isLiked = liked);
     }
   }
 
@@ -362,6 +387,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                             horizontal: 20, vertical: 10),
                                       ),
                                       onPressed: () async {
+                                        // Capture the root navigator up front and
+                                        // dismiss the modal in `finally`: a screen
+                                        // that gets popped mid-download must never
+                                        // orphan this barrierDismissible:false route
+                                        // (there is no other way back).
+                                        final navigator = Navigator.of(
+                                          context,
+                                          rootNavigator: true,
+                                        );
+                                        var dialogOpen = true;
                                         showDialog(
                                           context: context,
                                           barrierDismissible: false,
@@ -375,11 +410,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                               ],
                                             ),
                                           ),
-                                        );
+                                        ).whenComplete(() => dialogOpen = false);
                                         final ok = await audioService
                                             .downloadCurrentSong();
+                                        if (navigator.canPop() && dialogOpen) {
+                                          navigator.pop();
+                                        }
                                         if (!context.mounted) return;
-                                        navigatorOf(context).pop();
                                         messengerOf(context).showSnackBar(
                                           SnackBar(
                                             content: Text(ok

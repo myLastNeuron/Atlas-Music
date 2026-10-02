@@ -63,7 +63,12 @@ class MainActivity : AudioServiceActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_NOTIFICATIONS) {
-            maybeRequestBatteryExemption()
+            // Only chain the battery ask when the notification permission was
+            // actually granted: popping a second system dialog right after a
+            // denial is exactly the stacking the header comment avoids.
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) maybeRequestBatteryExemption()
         }
     }
 

@@ -29,39 +29,4 @@ abstract class MediaResolver {
   /// streaming: no duplicated provider logic in the caller.
   /// Throws [ResolveFailure] with stage [ResolveStage.download].
   Future<void> download(MediaSource source, File file);
-
-  /// Shared guard used by all providers before returning a source.
-  /// Expired URLs are url-scoped (a fresh resolve fixes them);
-  /// incompatible/empty sources are song-scoped and never retryable.
-  void checkCompatible(MediaSource source) {
-    if (source.url.isEmpty) {
-      throw ResolveFailure(
-        provider: provider,
-        stage: ResolveStage.validation,
-        scope: FailureScope.song,
-        detail: 'empty URL',
-        retryable: false,
-      );
-    }
-    if (source.isExpired) {
-      throw ResolveFailure(
-        provider: provider,
-        stage: ResolveStage.validation,
-        scope: FailureScope.url,
-        detail: 'URL expired at ${source.expiresAt}',
-        retryable: true,
-      );
-    }
-    if (!source.hasCompatibleContainer) {
-      throw ResolveFailure(
-        provider: provider,
-        stage: ResolveStage.validation,
-        scope: FailureScope.song,
-        detail: 'incompatible container/codec '
-            '(container=${source.container}, codec=${source.codec}, '
-            'mime=${source.mimeType})',
-        retryable: false,
-      );
-    }
-  }
 }

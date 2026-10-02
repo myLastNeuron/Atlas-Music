@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.6
   just_audio: ^0.9.36
   audio_session: ^0.1.18
   youtube_explode_dart: 3.1.0

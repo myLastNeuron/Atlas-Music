@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
-import '../services/user_preferences.dart';
+import '../services/user_prefs.dart';
 import '../services/song_filter.dart';
 import '../services/youtube_service.dart';
 import '../theme/app_theme.dart';
@@ -54,11 +54,11 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _search(String q) async {
     if (q.trim().isEmpty) return;
     final int gen = ++_searchGen;
+    FocusScope.of(context).unfocus();
+    setState(() => _loading = true);
     await _storage.addSearchQuery(q.trim());
     await _loadHistory();
     if (!mounted || gen != _searchGen) return;
-    FocusScope.of(context).unfocus();
-    setState(() => _loading = true);
     try {
       final r = await _yt.search(q.trim());
       if (!mounted || gen != _searchGen) return;

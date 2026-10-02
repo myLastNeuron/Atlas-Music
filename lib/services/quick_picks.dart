@@ -1,6 +1,6 @@
 import '../models/song.dart';
 import 'song_filter.dart';
-import 'user_preferences.dart';
+import 'user_prefs.dart';
 
 /// Personalized Quick Picks ranking — pure logic, no plugins, unit-tested.
 ///

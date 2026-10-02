@@ -18,7 +18,7 @@ import '../media/resolve_failure.dart';
 import '../media/providers/youtube_provider.dart';
 import 'storage_service.dart';
 import 'song_filter.dart';
-import 'user_preferences.dart';
+import 'user_prefs.dart';
 import 'youtube_service.dart';
 import 'quick_picks.dart';
 
@@ -40,7 +40,7 @@ class AudioPlayerService extends ChangeNotifier {
   final YouTubeService _youtubeService = YouTubeService();
   final CacheService _cache = CacheService();
   final StorageService _storage = StorageService();
-  final YouTubeProvider _youTube = YouTubeProvider(stale: () => false);
+  final YouTubeProvider _youTube = YouTubeProvider();
   late final ResolverStrategy _strategy = ResolverStrategy([_youTube]);
 
   // Singleton instance for notification action callbacks.
@@ -64,6 +64,30 @@ class AudioPlayerService extends ChangeNotifier {
   Duration _position = Duration.zero;
   int _lastNotifiedSecond = -1;
   int _playGen = 0;
+  // Monotonic token for "which load most recently claimed the network".
+  // Each load captures its own token and installs a matching `stale`
+  // closure on the shared provider, so a superseded resolve/download aborts
+  // instead of running to completion. Kept separate from _playGen so an
+  // explicit download can be superseded by a newer load without disturbing
+  // playback ownership.
+  int _loadToken = 0;
+  int _activeLoadToken = 0;
+
+  /// Live stream subscriptions for [dispose]. Without these, player/state
+  /// events keep firing into a disposed notifier (debug assertion, release
+  /// warning) and the connectivity stream leaks.
+  final List<StreamSubscription<dynamic>> _subs = <StreamSubscription<dynamic>>[];
+  bool _disposed = false;
+
+  /// Claims the network for a new load and points the provider's staleness
+  /// hook at the returned token. Every entry point that does provider work
+  /// calls this; an older claim's hook then reports stale.
+  int _claimLoad() {
+    final token = ++_loadToken;
+    _activeLoadToken = token;
+    _youTube.stale = () => token != _activeLoadToken;
+    return token;
+  }
   Song? _currentSong;
   // Committed player ownership: the song id + gen that actually holds the
   // native source. _currentSong only changes on commit (setAudioSource
@@ -107,6 +131,11 @@ class AudioPlayerService extends ChangeNotifier {
   bool _appBackgrounded = false;
   Timer? _bgRetryTimer;
   int _bgRetryCount = 0;
+  // Wall-clock stamp when the current background-heal streak started. The
+  // heal must never give up permanently, but it also must not run forever
+  // against a permanently dead queue: after _bgRetryBudget it stops and
+  // waits for a connectivity change / foreground transition.
+  DateTime? _bgRetrySince;
   // Per-song retry count for background heal. Prevents infinite retry loop
   // on a single failing song by skipping to the next after max retries.
   final Map<String, int> _bgRetrySongCounts = <String, int>{};
@@ -159,6 +188,11 @@ class AudioPlayerService extends ChangeNotifier {
   // is unresolvable. Reset on: user interaction, new queue, connectivity.
   int _globalAdvanceFailures = 0;
   static const int _maxGlobalAdvanceFailures = 8;
+  // Hard ceiling on one continuous background-heal streak. The heal stays
+  // "never permanently give up" (a connectivity change or foreground
+  // transition resets the streak), but a permanently dead queue must not
+  // resolve+download every 45s for hours on end.
+  static const Duration _bgRetryBudget = Duration(minutes: 10);
   // Wall-clock end-of-track preload arm. The OS throttles position events
   // while backgrounded, so the 45s window (driven by positionStream) can
   // be missed and the next song never cached -> a full download at
@@ -199,6 +233,10 @@ class AudioPlayerService extends ChangeNotifier {
   // (e.g. 1 -> 3). Exactly one playNext chain owns the transition at a
   // time; the rest collapse. A user tap steals ownership.
   bool _advancing = false;
+  // The playback generation that owns the in-flight advance. Lets a forced
+  // automatic advance collapse when it duplicates the same generation's
+  // chain, while still letting a genuinely new generation proceed.
+  int _advancingGen = -1;
   // Seed-based search radio: the song the user tapped to start a search
   // queue. Every queue end fetches tracks similar to this seed.
   Song? _autoplaySeed;
@@ -245,11 +283,20 @@ class AudioPlayerService extends ChangeNotifier {
       // Foreground owns recovery now (immediate connectivity re-check +
       // stuck-advance heal); the background retry must not double-fire.
       _cancelOfflineResumeRetry('foreground');
+      // Foreground is a fresh recovery attempt: restart the heal budget.
+      _bgRetrySince = null;
       // Foreground: a song that ended in the background may have its
       // advance stuck (the next load failed under restricted background
       // networking). Heal it immediately instead of waiting for the next
       // backoff tick so music resumes as soon as the app is opened.
       _onForeground();
+    } else {
+      // Backgrounding with an offline pause still active must (re-)arm the
+      // self-heal: foregrounding cancelled it above and nothing else does,
+      // so without this the timer is permanently gone after one open.
+      if (_pausedForOffline) {
+        _armOfflineResumeRetry();
+      }
     }
   }
 
@@ -360,7 +407,7 @@ class AudioPlayerService extends ChangeNotifier {
     // TEMPORARY boot marker: proves which binary is on device.
     _cache.sweep();
     // Listen to player state for notification updates.
-    _player.positionStream.listen((position) {
+    _subs.add(_player.positionStream.listen((position) {
       _position = position;
       // Stall watchdog keeps its own baseline in _lastStallPosition.
       // Do not overwrite it or cancel the timer on every tick, otherwise
@@ -372,9 +419,9 @@ class AudioPlayerService extends ChangeNotifier {
         notifyListeners();
       }
       _maybePreloadNext(position);
-    });
+    }));
 
-    _player.durationStream.listen((duration) {
+    _subs.add(_player.durationStream.listen((duration) {
       _duration = duration ?? Duration.zero;
       // Dedup: identical consecutive duration lines are one native event.
       if (_duration.inSeconds == _lastDurSec) return;
@@ -383,9 +430,9 @@ class AudioPlayerService extends ChangeNotifier {
       // means the source itself is truncated (native layer), not a Dart
       // restart. Tagged with the owning source, not the current UI song.
       notifyListeners();
-    });
+    }));
 
-    _player.playerStateStream.listen((state) {
+    _subs.add(_player.playerStateStream.listen((state) {
       // Dedup: identical consecutive state lines are one native event.
       final key =
           '${state.processingState}|${state.playing}|${_position.inSeconds}s';
@@ -417,15 +464,17 @@ class AudioPlayerService extends ChangeNotifier {
       // all, leaving a silent player that looks like a live process.
       // Log only; recovery stays owned by the stall watchdog / background
       // heal paths.
-    });
+    }));
 
     // Connectivity trigger (no polling): preload unblock and offline
     // queue-resume react to REAL connectivity changes only. The event
     // only arms a re-check; truth still comes from _hasConnectivity, so
     // a captive portal (wifi up, no internet) never reads as online.
-    Connectivity().onConnectivityChanged.listen((results) {
+    _subs.add(Connectivity().onConnectivityChanged.listen((results) {
+      // Network transition: a fresh heal streak is justified.
+      _bgRetrySince = null;
       unawaited(_onConnectivityMaybeChanged());
-    });
+    }));
   }
 
   /// Completion handler that only advances when playback genuinely finished.
@@ -705,6 +754,9 @@ class AudioPlayerService extends ChangeNotifier {
     // re-checks it, so a superseded load can never command the player.
     _lastFailure = null;
     final int gen = ++_playGen;
+    // Newest load claims the network: provider work still running for an
+    // older load now reports stale and aborts.
+    _claimLoad();
     bool stale() => gen != _playGen;
     // Assign synchronously (before the first await) so a second tap that
     // lands during stop() already sees the new index. Otherwise both taps
@@ -719,7 +771,7 @@ class AudioPlayerService extends ChangeNotifier {
       List<Song> filtered = queue;
       if (queueOrigin != 'playlist') {
         try {
-          final lang = await UserPreferences().getLanguage();
+          final lang = await UserPrefs().getLanguage();
           filtered = SongFilter.apply(queue, language: lang);
         } catch (e) {
           filtered = queue;
@@ -1143,6 +1195,14 @@ class AudioPlayerService extends ChangeNotifier {
     if (song == null) {
       return;
     }
+    // Bounded heal: one continuous streak gets _bgRetryBudget, then it
+    // stops. Recovery resumes on a connectivity change or foreground
+    // transition (both reset _bgRetrySince), so this is a pause, not a
+    // permanent give-up.
+    _bgRetrySince ??= DateTime.now();
+    if (DateTime.now().difference(_bgRetrySince!) > _bgRetryBudget) {
+      return;
+    }
     // Heal captures the gen it was scheduled for and never acts on a song
     // that is no longer current.
     final healGen = _playGen;
@@ -1187,6 +1247,7 @@ class AudioPlayerService extends ChangeNotifier {
           if (nextIdx < _queue.length) {
             final nextSongId = _queue[nextIdx].id;
             final retries = (_bgRetrySongCounts[nextSongId] ?? 0) + 1;
+            if (_bgRetrySongCounts.length > 200) _bgRetrySongCounts.clear();
             _bgRetrySongCounts[nextSongId] = retries;
             if (retries > 3) {
               _bgRetrySongCounts.remove(nextSongId);
@@ -1227,7 +1288,10 @@ class AudioPlayerService extends ChangeNotifier {
   /// anymore. Needed because some ROMs/VPNs never emit a connectivity
   /// change, and the foreground heal only runs when the app is reopened.
   void _armOfflineResumeRetry() {
-    _cancelOfflineResumeRetry();
+    // Cancel only the pending timer: the attempt counter must survive the
+    // re-arm, otherwise every arm resets it to 0 and the backoff below can
+    // never escalate (and the bail-out can never fire).
+    _cancelOfflineResumeTimer();
     if (!_appBackgrounded) return;
     if (!_pausedForOffline) return;
     const delays = [5, 12, 25, 45, 60, 90, 120, 120, 120, 120];
@@ -1245,11 +1309,15 @@ class AudioPlayerService extends ChangeNotifier {
     });
   }
 
+  void _cancelOfflineResumeTimer() {
+    _offlineResumeTimer?.cancel();
+    _offlineResumeTimer = null;
+  }
+
   void _cancelOfflineResumeRetry([String reason = '']) {
     if (_offlineResumeTimer != null && reason.isNotEmpty) {
     }
-    _offlineResumeTimer?.cancel();
-    _offlineResumeTimer = null;
+    _cancelOfflineResumeTimer();
     _offlineResumeAttempt = 0;
   }
 
@@ -1576,7 +1644,7 @@ class AudioPlayerService extends ChangeNotifier {
       Set<String> selGenres = {};
       Set<String> selArtists = {};
       try {
-        final prefs = UserPreferences();
+        final prefs = UserPrefs();
         lang = await prefs.getLanguage();
         selGenres = await prefs.getGenres();
         selArtists = await prefs.getArtists();
@@ -1763,7 +1831,11 @@ class AudioPlayerService extends ChangeNotifier {
         }
         if (_activeGen == gen) return;
         if (_loadStage == 'download' || _loadStage == 'setSource') {
-          if (arms < 2) {
+          // Download legs can legitimately run past the 120s window
+          // (150s download + 90s fallback). Re-arm rather than restart, but
+          // evaluate the pre-increment value so a download gets more than
+          // one extra window.
+          if (arms <= 2) {
             arm();
           }
           return;
@@ -1795,6 +1867,7 @@ class AudioPlayerService extends ChangeNotifier {
     _isLoading = false;
     _isPlaying = true;
     _bgRetryCount = 0;
+    _bgRetrySince = null;
     _cancelBackgroundRetry('playing');
     notifyListeners();
     _startStallTimer();
@@ -1818,12 +1891,18 @@ class AudioPlayerService extends ChangeNotifier {
       }
       if (_preloadedBlockedSongIds.contains(s.id)) continue;
       if (_preloadingSongIds.contains(s.id)) continue;
+      // Register in-flight BEFORE awaiting: _ensurePrefetch (and concurrent
+      // warmups) use this set as the dedup guard, so without it the same
+      // song is downloaded twice at the moment bandwidth matters most.
+      _preloadingSongIds.add(s.id);
       try {
         await _preloadNextSongInner(s).timeout(const Duration(seconds: 30));
         _prefetchedSongIds.add(s.id);
         count++;
       } catch (_) {
-        // Ignore â€” async preload will retry later.
+        // Ignore — async preload will retry later.
+      } finally {
+        _preloadingSongIds.remove(s.id);
       }
     }
     // Fire remaining async.
@@ -1835,6 +1914,7 @@ class AudioPlayerService extends ChangeNotifier {
   /// notification would freeze on the first track.
   @override
   void notifyListeners() {
+    if (_disposed) return;
     AtlasAudioHandler.instance?.syncFromService();
     super.notifyListeners();
   }
@@ -1890,6 +1970,18 @@ class AudioPlayerService extends ChangeNotifier {
   final Map<String, String> _notificationArtFileCache = <String, String>{};
   final Set<String> _artResolving = <String>{};
   Directory? _artDir;
+
+  /// Bounds the artwork maps, which otherwise grow one entry per distinct
+  /// videoId ever played (hundreds per hour on a radio session).
+  void _trimArtCache() {
+    const cap = 300;
+    if (_artFileCache.length <= cap) return;
+    final drop = _artFileCache.keys.take(_artFileCache.length - cap).toList();
+    for (final k in drop) {
+      _artFileCache.remove(k);
+      _notificationArtFileCache.remove(k);
+    }
+  }
 
   Future<Directory> _artworkDir() async {
     final existing = _artDir;
@@ -1965,6 +2057,7 @@ class AudioPlayerService extends ChangeNotifier {
           _artFileCache[videoId] = file.path;
           _notificationArtFileCache[videoId] =
               await _notificationArtworkFile(file, videoId);
+          _trimArtCache();
           AtlasAudioHandler.instance?.refreshMediaItem();
           // Let the in-app Player pick up the sharp file (it selects on
           // highResArtPathFor, which now returns this path).
@@ -2021,6 +2114,7 @@ class AudioPlayerService extends ChangeNotifier {
           _artFileCache[videoId] = file.path;
           _notificationArtFileCache[videoId] =
               await _notificationArtworkFile(file, videoId);
+          _trimArtCache();
           AtlasAudioHandler.instance?.refreshMediaItem();
           notifyListeners();
           return;
@@ -2033,6 +2127,7 @@ class AudioPlayerService extends ChangeNotifier {
         _artFileCache[videoId] = file.path;
         _notificationArtFileCache[videoId] =
             await _notificationArtworkFile(file, videoId);
+        _trimArtCache();
         AtlasAudioHandler.instance?.refreshMediaItem();
         notifyListeners();
         return;
@@ -2368,13 +2463,14 @@ class AudioPlayerService extends ChangeNotifier {
       }
     }
 
-    final candidateIds = <String>[];
     final cachedIdx = <int>[];
     for (var i = 0; i < n; i++) {
       final s = _queue[i];
       if (s.id == skipSongId) continue;
+      // Only forward positions can be chosen below, so probing earlier
+      // songs is wasted filesystem work.
+      if (i <= fromIndex) continue;
       if (await hasFile(s)) {
-        candidateIds.add(s.id);
         cachedIdx.add(i);
       }
     }
@@ -2384,12 +2480,7 @@ class AudioPlayerService extends ChangeNotifier {
     // Only look FORWARD from the unavailable song. Never wrap around to
     // already-played songs. If nothing cached ahead, return null so the
     // caller pauses instead of replaying old tracks.
-    for (var i = fromIndex + 1; i < n; i++) {
-      if (cachedIdx.contains(i)) {
-        return i;
-      }
-    }
-    return null;
+    return cachedIdx.first;
   }
 
   /// Last-resort cache search that WRAPS: any queued song with a valid
@@ -2871,7 +2962,16 @@ class AudioPlayerService extends ChangeNotifier {
       if (_advancing && !userInitiated && !force) {
         return true;
       }
+      // Two automatic triggers for the SAME generation (e.g. a completion
+      // racing an app-foreground) would otherwise both run a full
+      // resolve+download for the same next song. force still collapses
+      // here only when it is a duplicate for the generation already
+      // advancing; a new generation's force always proceeds.
+      if (_advancing && !userInitiated && force && _advancingGen == _playGen) {
+        return true;
+      }
       _advancing = true;
+      _advancingGen = _playGen;
     }
     try {
       _resyncIndex();
@@ -3093,6 +3193,9 @@ class AudioPlayerService extends ChangeNotifier {
       if (nextIdx < _queue.length) {
         final nextSongId = _queue[nextIdx].id;
         final retries = (_completionGuardSongCounts[nextSongId] ?? 0) + 1;
+        if (_completionGuardSongCounts.length > 200) {
+          _completionGuardSongCounts.clear();
+        }
         _completionGuardSongCounts[nextSongId] = retries;
         if (retries > 3) {
           _completionGuardSongCounts.remove(nextSongId);
@@ -3143,7 +3246,7 @@ class AudioPlayerService extends ChangeNotifier {
     List<Song> pool = const [];
     MusicLanguage lang = MusicLanguage.all;
     try {
-      lang = await UserPreferences().getLanguage();
+      lang = await UserPrefs().getLanguage();
     } catch (_) {
       // Non-fatal: the surrounding watchdog covers this path.
     }
@@ -3448,6 +3551,21 @@ class AudioPlayerService extends ChangeNotifier {
       } catch (_) {
         // Non-fatal: the surrounding watchdog covers this path.
       }
+      // pause() cancelled the recovery timers; pressing play must restore
+      // them or a source that failed to load resumes into silence with no
+      // pending heal. Re-arm whatever the current state still calls for.
+      _rearmRecovery();
+    }
+  }
+
+  /// Re-establishes the self-heal timers after a user resume. Safe to call
+  /// in any state: each arm() bails when its precondition is not met.
+  void _rearmRecovery() {
+    // A stale heal budget must not block a fresh user-initiated attempt.
+    _bgRetrySince = null;
+    _scheduleBackgroundRetry();
+    if (_pausedForOffline && _appBackgrounded) {
+      _armOfflineResumeRetry();
     }
   }
 
@@ -3498,6 +3616,7 @@ class AudioPlayerService extends ChangeNotifier {
       _currentSong = null;
       _activeSongId = null;
       _activeSince = null;
+      _activeGen = 0;
       _pendingIndex = null;
       _handlingCompletion = false;
       _retryCount = 0;
@@ -3548,6 +3667,9 @@ class AudioPlayerService extends ChangeNotifier {
       }
       final report =
           PlaybackReport(song.title, songId: song.videoId ?? song.id);
+      // Explicit downloads claim the network too: a later playSong (or
+      // another download) supersedes them so stale work stops early.
+      _claimLoad();
       // Resolve once, then share the verified-download helper with
       // playback so explicit downloads validate identically.
       final source = await _strategy.resolveFirstValid(song, report);
@@ -3611,8 +3733,22 @@ class AudioPlayerService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    // Cancel every timer and subscription: a leaked timer fires playNext /
+    // player commands on a disposed player, and the connectivity stream
+    // keeps calling into a dead notifier.
     _cancelStallTimer();
     _cancelBackgroundRetry();
+    _cancelOfflineResumeRetry();
+    _cancelLoadWatchdog();
+    _cancelQueueEndRetry();
+    _cancelCompletionGuard();
+    _cancelPreloadRetry();
+    _cancelEndPreload();
+    for (final s in _subs) {
+      s.cancel();
+    }
+    _subs.clear();
     _player.dispose();
     _youtubeService.dispose();
     _youTube.dispose();

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
 
@@ -21,6 +22,11 @@ class PlaylistParser {
       '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
   static const _timeout = Duration(seconds: 20);
   static const _maxContinuationFailures = 3;
+
+  /// Testing hook for [_extractInitialData].
+  @visibleForTesting
+  static Map<String, dynamic> extractInitialDataForTest(String html) =>
+      PlaylistParser()._extractInitialData(html);
 
   Future<List<Song>> fetchVideos(String playlistId, {int maxPages = 25}) async {
     final songs = <Song>[];
@@ -77,10 +83,41 @@ class PlaylistParser {
   }
 
   Map<String, dynamic> _extractInitialData(String html) {
-    final match =
-        RegExp(r'ytInitialData\s*=\s*(\{.*?\});').firstMatch(html);
-    if (match == null) throw Exception('Playlist data not found on page');
-    return json.decode(match.group(1)!) as Map<String, dynamic>;
+    // Find the assignment, then scan to the matching closing brace. A regex
+    // cannot do this safely: non-greedy stops at the first `};` inside a
+    // string value, and `.` does not match newlines in a non-minified page.
+    final marker = RegExp(r'ytInitialData\s*=\s*').firstMatch(html);
+    if (marker == null) throw Exception('Playlist data not found on page');
+    final start = html.indexOf('{', marker.end);
+    if (start < 0) throw Exception('Playlist data not found on page');
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var i = start; i < html.length; i++) {
+      final ch = html[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch == r'\') {
+          escaped = true;
+        } else if (ch == '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch == '"') {
+        inString = true;
+      } else if (ch == '{') {
+        depth++;
+      } else if (ch == '}') {
+        depth--;
+        if (depth == 0) {
+          final raw = html.substring(start, i + 1);
+          return json.decode(raw) as Map<String, dynamic>;
+        }
+      }
+    }
+    throw Exception('Playlist data not found on page');
   }
 
   String? _firstMatch(String text, String pattern) {

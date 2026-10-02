@@ -6,8 +6,7 @@ import '../models/playlist.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import 'dart:io';
-import '../services/user_preferences.dart';
-import '../services/user_prefs.dart' as up;
+import '../services/user_prefs.dart';
 import '../services/song_filter.dart';
 import '../services/quick_picks.dart';
 import '../services/youtube_service.dart';
@@ -16,6 +15,7 @@ import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
 import '../widgets/play_helper.dart';
 import '../widgets/skeleton_card.dart';
+import 'history_screen.dart';
 import 'playlist_detail_screen.dart';
 
 const _badPhrases = [
@@ -234,8 +234,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final YouTubeService _yt = YouTubeService();
   final StorageService _storage = StorageService();
-  final UserPreferences _prefs = UserPreferences();
-  final up.UserPrefs _userPrefs = up.UserPrefs();
+  final UserPrefs _prefs = UserPrefs();
 
   MusicLanguage _selectedLanguage = MusicLanguage.all;
   Set<String> _selectedGenres = {};
@@ -266,7 +265,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    up.userAvatarVersion.addListener(_onAvatarChanged);
+    userAvatarVersion.addListener(_onAvatarChanged);
     _loadPreferences();
     _listenToPlayback();
   }
@@ -298,10 +297,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _refreshRecent() async {
     final r = await _storage.getRecentlyPlayed();
     if (mounted) {
-      // GLOBAL rules also cover the recent rail.
-      setState(
-          () => _recent = SongFilter.apply(r, language: _selectedLanguage));
+      // History is raw user data: no discovery filtering, so the rail
+      // reflects exactly what was played (including playlist tracks).
+      setState(() => _recent = r);
     }
+  }
+
+  Future<void> _openHistory() async {
+    await pushAppPage(context, const HistoryScreen());
+    // Deletions on the History page must reflect on the rail.
+    await _refreshRecent();
   }
 
   /// Same shared avatar as Profile: standalone read with its own guard,
@@ -310,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _avatarError = false;
   Future<void> _refreshAvatar() async {
     try {
-      final avatar = await _userPrefs.getAvatar();
+      final avatar = await _prefs.getAvatar();
       if (!mounted) return;
       if (avatar != _avatarUrl) {
         ImageProvider? provider;
@@ -363,7 +368,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         counts[p.id] = p.songs.length;
       }
       setState(() {
-        _recent = SongFilter.apply(recent, language: _selectedLanguage);
+        _recent = recent;
         _playlists = pls;
         _playlistCounts = counts;
         _hasHistory = hasHistory;
@@ -479,6 +484,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _recommended = ranked.map((pick) => pick.song).toList();
         _recError = candidates.isEmpty;
       });
+    } catch (_) {
+      // A storage/provider throw must not escape (unhandled async) or leave
+      // the rails blank with no explanation. Surface the error state.
+      if (mounted) {
+        setState(() => _recError = true);
+      }
     } finally {
       _loading = false;
     }
@@ -957,8 +968,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         scrollCacheExtent: const ScrollCacheExtent.pixels(600), scrollDirection: Axis.horizontal,
         addAutomaticKeepAlives: false,
         addRepaintBoundaries: true,
-        itemCount: _recent.length,
+        // At most 10 songs, then a "Show all" entry into full history.
+        itemCount: (_recent.length > 10 ? 10 : _recent.length) + 1,
         itemBuilder: (context, i) {
+          final shown = _recent.length > 10 ? 10 : _recent.length;
+          if (i == shown) return _showAllCard();
           final s = _recent[i];
           return MotionPress(
             child: GestureDetector(
@@ -971,25 +985,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(16),
-                      child: Stack(
-                        children: [
-                          Artwork(s.thumbnailUrl,
-                              width: 150, height: 130, radius: 0),
-                          Positioned(
-                            bottom: 6,
-                            right: 6,
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: AppColors.ultraviolet.withValues(alpha: 0.9),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: const Icon(Icons.play_arrow,
-                                  size: 18, color: Colors.white),
-                            ),
-                          ),
-                        ],
-                      ),
+                      child: Artwork(s.thumbnailUrl,
+                          width: 150, height: 130, radius: 0),
                     ),
                     const SizedBox(height: 8),
                     Text(s.title,
@@ -1010,6 +1007,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _showAllCard() {
+    return MotionPress(
+      child: GestureDetector(
+        onTap: _openHistory,
+        child: Container(
+          width: 110,
+          margin: const EdgeInsets.only(right: 12),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.08),
+                  border: Border.all(color: AppColors.glassBorder),
+                ),
+                child: const Icon(Icons.arrow_forward, color: AppColors.ink),
+              ),
+              const SizedBox(height: 10),
+              const Text('Show all',
+                  style: TextStyle(
+                      color: AppColors.ink,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1089,7 +1119,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    up.userAvatarVersion.removeListener(_onAvatarChanged);
+    userAvatarVersion.removeListener(_onAvatarChanged);
     if (_playbackListener != null) {
       context.read<AudioPlayerService>().removeListener(_playbackListener!);
     }
@@ -1123,7 +1153,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: RefreshIndicator(
           onRefresh: _onRefresh,
           backgroundColor: AppColors.card,
-          color: AppColors.ultraviolet,
+          color: AppColors.charcoal,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(
                 parent: BouncingScrollPhysics()),

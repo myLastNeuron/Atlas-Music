@@ -39,7 +39,7 @@ class LyricsService {
   static const _durationToleranceSec = 10;
   static const _diskTtl = Duration(days: 30);
   static const _ua =
-      'AtlasMusic/1.0 (https://github.com/anomalyco/opencode)';
+      'AtlasMusic/1.0 (https://github.com/anomalyco/atlas-music)';
 
   final http.Client _http;
   final Directory _dir;
@@ -47,7 +47,16 @@ class LyricsService {
 
   LyricsService({http.Client? client, Directory? dir})
       : _http = client ?? http.Client(),
+        _owned = client == null,
         _dir = dir ?? Directory.systemTemp;
+
+  final bool _owned;
+
+  /// Closes the owned HTTP client. Safe to call on an injected client
+  /// (no-op): the caller owns that one.
+  void dispose() {
+    if (_owned) _http.close();
+  }
 
   /// Strips YouTube junk so "Blinding Lights (Official Video)"
   /// queries as "Blinding Lights". Public + static for tests.

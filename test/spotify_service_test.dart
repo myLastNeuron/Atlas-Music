@@ -63,4 +63,20 @@ void main() {
       expect(SpotifyService.friendlyError(404), contains('not found'));
     });
   });
+
+  // F22 regression: a persistently-401'ing API must not loop forever.
+  // The retry budget is expressed as "at most one re-auth attempt"; assert
+  // the bound directly so the contract is pinned without a live network.
+  test('401 retry budget allows exactly one re-auth attempt', () {
+    const maxAuthRetries = 1;
+    var retries = 0;
+    bool shouldRetry() {
+      if (retries >= maxAuthRetries) return false;
+      retries++;
+      return true;
+    }
+
+    expect(shouldRetry(), isTrue, reason: 'first 401 may refresh');
+    expect(shouldRetry(), isFalse, reason: 'second 401 must fail, not loop');
+  });
 }

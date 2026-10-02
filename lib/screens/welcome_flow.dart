@@ -163,6 +163,7 @@ class _MainNavigationState extends State<MainNavigation>
     with WidgetsBindingObserver {
   int _index = 0;
   List<Widget>? _screens;
+  String? _screensName;
 
   @override
   void initState() {
@@ -194,7 +195,11 @@ class _MainNavigationState extends State<MainNavigation>
   }
 
   List<Widget> _buildScreens() {
-    return _screens ??= [
+    // Rebuild when the name changes: a rename on Profile must reach the Home
+    // header too, so the two screens never show different identities.
+    if (_screens != null && _screensName == widget.userName) return _screens!;
+    _screensName = widget.userName;
+    return _screens = [
       FadeSlideIn(child: HomeScreen(userName: widget.userName)),
       const FadeSlideIn(child: SearchScreen()),
       const FadeSlideIn(child: LibraryScreen()),
@@ -205,9 +210,11 @@ class _MainNavigationState extends State<MainNavigation>
   @override
   Widget build(BuildContext context) {
     // Selector instead of watch: rebuild shell only when song identity
-    // changes (start/stop), NOT every 1/sec position tick.
-    final hasSong =
-        context.select<AudioPlayerService, bool>((s) => s.currentSong != null);
+    // changes (start/stop), NOT every 1/sec position tick. Include isLoading
+    // so the bar stays visible across auto-advance gaps and cold-start loads
+    // instead of vanishing between tracks.
+    final hasSong = context.select<AudioPlayerService, bool>(
+        (s) => s.currentSong != null || s.isLoading);
     return LiquidBackground(
       child: Stack(
         children: [

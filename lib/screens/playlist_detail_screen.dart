@@ -46,7 +46,38 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     super.initState();
     _playlist = widget.playlist;
     _resyncSongs();
+    _storage.addListener(_onStorageChanged);
     _refreshFromStorage();
+    _loadLiked();
+  }
+
+  @override
+  void dispose() {
+    _storage.removeListener(_onStorageChanged);
+    super.dispose();
+  }
+
+  void _onStorageChanged() {
+    _loadLiked();
+  }
+
+  Set<String> _likedIds = {};
+
+  /// Likes/unlikes anywhere (player, Liked page) must reflect on these rows.
+  Future<void> _loadLiked() async {
+    final liked = await _storage.getLikedSongs();
+    if (!mounted) return;
+    final ids = liked.map((s) => s.id).toSet();
+    if (ids.length == _likedIds.length &&
+        ids.every(_likedIds.contains)) {
+      return;
+    }
+    setState(() => _likedIds = ids);
+  }
+
+  Future<void> _toggleLike(Song song) async {
+    await _storage.toggleLikedSong(song);
+    await _loadLiked();
   }
 
   Future<void> _refreshFromStorage() async {
@@ -71,8 +102,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _downloadPlaylist() async {
     if (_songs.isEmpty) return;
-    final navigator = Navigator.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
     final messenger = ScaffoldMessenger.of(context);
+    var dialogOpen = true;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -87,17 +119,23 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           ],
         ),
       ),
-    );
+    ).whenComplete(() => dialogOpen = false);
     final audioService = context.read<AudioPlayerService>();
     final downloadedIds = Set<String>.from(_playlist.downloadedSongIds);
-    for (final song in _songs) {
-      if (downloadedIds.contains(song.id)) continue;
-      final ok = await audioService.downloadCurrentSongForSong(song,
-          addToDownloadedPlaylist: false);
-      if (ok) downloadedIds.add(song.id);
+    // Dismiss the modal unconditionally once the work is done, even if this
+    // screen was popped meanwhile — otherwise the barrier-blocked route
+    // outlives its owner and hard-locks the app.
+    try {
+      for (final song in _songs) {
+        if (downloadedIds.contains(song.id)) continue;
+        final ok = await audioService.downloadCurrentSongForSong(song,
+            addToDownloadedPlaylist: false);
+        if (ok) downloadedIds.add(song.id);
+      }
+    } finally {
+      if (dialogOpen && navigator.canPop()) navigator.pop();
     }
     if (!mounted) return;
-    navigator.pop();
     // Protect only while offline content exists. Empty (all failed) stays normal.
     final updated = _playlist.copyWith(
       isDownloaded:
@@ -143,15 +181,22 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                   ),
                   onSubmitted: (q) async {
                     if (q.trim().isEmpty) return;
+                    // The dialog may be dismissed while the search is in
+                    // flight: every state write must be guarded, including
+                    // the one in `catch`, or the next write throws outside
+                    // any handler.
+                    if (!ctx.mounted) return;
                     setDialogState(() => loading = true);
                     try {
                       final r = await yt.search(q.trim(), limit: 10);
+                      if (!ctx.mounted) return;
                       setDialogState(() {
                         results = r;
                         searched = true;
                         loading = false;
                       });
                     } catch (_) {
+                      if (!ctx.mounted) return;
                       setDialogState(() => loading = false);
                     }
                   },
@@ -513,11 +558,28 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 queueOrigin: 'playlist',
                               );
                             },
-                            trailing: playlist.isDownloaded &&
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: _likedIds
+                                          .contains(songs[index].id)
+                                      ? 'Unlike'
+                                      : 'Like',
+                                  icon: Icon(
+                                    _likedIds
+                                            .contains(songs[index].id)
+                                        ? Icons.favorite
+                                        : Icons.favorite_border,
+                                    size: 20,
+                                    color: AppColors.ink,
+                                  ),
+                                  onPressed: () => _toggleLike(songs[index]),
+                                ),
+                                if (!(playlist.isDownloaded &&
                                     playlist.downloadedSongIds
-                                        .contains(songs[index].id)
-                                ? null
-                                : PopupMenuButton(
+                                        .contains(songs[index].id)))
+                                  PopupMenuButton(
                                     itemBuilder: (context) => [
                                       const PopupMenuItem(
                                         value: 'remove',
@@ -530,6 +592,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                       }
                                     },
                                   ),
+                              ],
+                            ),
                           );
                         },
                         childCount: songs.length,

@@ -299,13 +299,18 @@ class SpotifyService {
     final out = <Song>[];
     String? url =
         '$_baseUrl/playlists/$playlistId/tracks?limit=100&fields=${Uri.encodeComponent('items(track(id,name,artists(name),album(images(url)),duration_ms,is_local)),next')}';
+    var authRetries = 0;
     while (url != null) {
       final resp = await http
           .get(Uri.parse(url),
               headers: {'Authorization': 'Bearer $_accessToken'})
           .timeout(_timeout);
       if (resp.statusCode == 401) {
-        // Token died mid-clone: refresh once, retry same page.
+        // Token died mid-clone: refresh once, retry same page. A second
+        // 401 means re-auth is not fixing it — fail instead of looping
+        // forever against the same URL.
+        if (authRetries >= 1) _fail(401);
+        authRetries++;
         _accessToken = null;
         await ensureAuthenticated();
         continue;
@@ -372,15 +377,18 @@ class SpotifyService {
 
   Never _fail(int code) => throw Exception(friendlyError(code));
 
-  Future<Map<String, dynamic>> _getJson(String url) async {
+  Future<Map<String, dynamic>> _getJson(String url, [int authRetries = 0]) async {
     final resp = await http
         .get(Uri.parse(url),
             headers: {'Authorization': 'Bearer $_accessToken'})
         .timeout(_timeout);
     if (resp.statusCode == 401) {
+      // Refresh at most once. If the newly-issued token still 401s, the app
+      // is in a restricted state; fail instead of recursing forever.
+      if (authRetries >= 1) _fail(401);
       _accessToken = null;
       await ensureAuthenticated();
-      return _getJson(url);
+      return _getJson(url, authRetries + 1);
     }
     if (resp.statusCode != 200) _fail(resp.statusCode);
     return json.decode(resp.body) as Map<String, dynamic>;

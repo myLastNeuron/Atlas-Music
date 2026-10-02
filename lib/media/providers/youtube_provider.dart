@@ -45,9 +45,11 @@ class YouTubeProvider extends MediaResolver {
   final http.Client _http = _FreshConnectionClient();
 
   /// Optional staleness check callback. If provided, called during long
-  /// operations (download) to check if the load has been superseded.
-  /// Defaults to always returning false (never stale).
-  final bool Function()? stale;
+  /// operations (resolve/download) to check if the load has been superseded.
+  /// Defaults to always returning false (never stale). Mutable so the owner
+  /// can point it at the live playback generation — a hard-wired
+  /// `() => false` made the abort hook dead code.
+  bool Function()? stale;
 
   YouTubeProvider({this.stale});
 
@@ -210,6 +212,16 @@ class YouTubeProvider extends MediaResolver {
     var sawNetworkError = false;
     var allExpired = true;
     for (final info in ranked.take(3)) {
+      // A superseded load must not keep probing URLs or fetch a fresh
+      // manifest for a track nobody is waiting on.
+      if (stale?.call() ?? false) {
+        throw ResolveFailure(
+          provider: provider,
+          stage: ResolveStage.resolution,
+          detail: 'resolve superseded for $videoId',
+          retryable: false,
+        );
+      }
       final src = _toSource(info, videoId);
       try {
         await _head(src.url);
@@ -362,6 +374,14 @@ class YouTubeProvider extends MediaResolver {
     ResolveFailure? last;
     MediaSource? current = source;
     for (var attempt = 0; attempt < 3 && current != null; attempt++) {
+      if (stale?.call() ?? false) {
+        throw ResolveFailure(
+          provider: provider,
+          stage: ResolveStage.download,
+          detail: 'download superseded',
+          retryable: false,
+        );
+      }
       if (!tried.add(current.url)) break;
       try {
         await _downloadUrl(current.url, file, current.contentLength);
@@ -371,6 +391,10 @@ class YouTubeProvider extends MediaResolver {
         try {
           if (await file.exists()) await file.delete();
         } catch (_) {}
+        // Do not resolve a fresh candidate after the final attempt: the
+        // answer would be discarded by the loop condition, so the manifest
+        // fetch + URL probes are pure waste on the throttled path.
+        if (attempt == 2) break;
         current = await _nextCandidate(current, tried);
       }
     }
@@ -477,7 +501,7 @@ class YouTubeProvider extends MediaResolver {
         }
         var wrote = 0;
         await for (final chunkBytes in resp.stream) {
-          if (stale?.call() ?? false) return;
+          if (stale?.call() ?? false) return; // aborted, not corrupt
           sink.add(chunkBytes);
           wrote += chunkBytes.length;
           start += chunkBytes.length;
@@ -496,6 +520,21 @@ class YouTubeProvider extends MediaResolver {
     // connection can drop mid-file with no error. Against a known total
     // that is truncation, not EOF: fail so download() retries a fresh
     // itag instead of caching a file that plays seconds then stops.
+    // A stale abort returns from inside the try above, so this check is
+    // skipped for aborts — reporting an intentional cancel as corruption
+    // would turn every supersede into an extra resolve + download.
+    // A server that ignores the range parameter and returns the whole body
+    // repeats it every iteration, so the request cap alone still allows
+    // ~4 GB written to one staging file. Bound the bytes too.
+    const maxStagingBytes = 256 * 1024 * 1024;
+    if (start > maxStagingBytes) {
+      throw ResolveFailure(
+        provider: provider,
+        stage: ResolveStage.download,
+        detail: 'download exceeded $maxStagingBytes bytes for $url',
+        retryable: true,
+      );
+    }
     if (total != null && start < total) {
       try {
         if (await file.exists()) await file.delete();
