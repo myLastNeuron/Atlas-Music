@@ -75,11 +75,11 @@ void main() {
     expect(await cache.getValid(song), isNull);
   });
 
-  test('size cap evicts oldest first', () async {
+  test('sweep keeps a valid cached entry under the size cap', () async {
     final small = CacheService(baseDir: dir);
-    // Force tiny cap via many files: simulate by committing then trimming
-    // manually through enforceCap after shrinking maxBytes is const, so
-    // verify sweep keeps valid entries instead.
+    // Eviction ordering is not testable here: maxBytes is a static const,
+    // so the cap cannot be shrunk. This asserts the complementary property
+    // (a valid entry survives sweep) — see CacheService docs for eviction.
     final bytes = realisticBytes();
     final tmp = File('${dir.path}/a.part')..writeAsBytesSync(bytes);
     await small.commit(song, tmp, src(len: bytes.length));

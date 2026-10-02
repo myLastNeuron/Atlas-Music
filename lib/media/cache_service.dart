@@ -24,6 +24,11 @@ class CacheService {
   Directory? _baseDir;
   Future<Directory>? _baseDirFuture;
 
+  /// Approximate cached byte total, maintained across commits so a normal
+  /// download does not trigger a full directory scan + N stats. Invalidated
+  /// (set null) whenever it cannot be trusted; then enforceCap rescans.
+  int? _approxBytes;
+
   CacheService({Directory? baseDir}) : baseDirOverride = baseDir;
 
   /// Resolves the cache root once and caches it. Default is the app's
@@ -197,6 +202,7 @@ class CacheService {
       'bytes': bytes,
       'downloadedAt': DateTime.now().toIso8601String(),
     }));
+    if (_approxBytes != null) _approxBytes = _approxBytes! + bytes;
     await enforceCap(keepKeys: keepKeys);
     return dest;
   }
@@ -220,10 +226,12 @@ class CacheService {
         await _deleteQuiet(File('${dir.path}/$key.$ext.json'));
       }
     }
+    _approxBytes = null;
   }
 
   /// TTL sweep + orphan `.part` cleanup + size-cap eviction.
   Future<void> sweep() async {
+    _approxBytes = null;
     try {
       final dir = await _resolveBaseDir();
       await for (final e in dir.list()) {
@@ -254,6 +262,14 @@ class CacheService {
   Future<void> enforceCap({Set<String>? keepKeys}) async {
     try {
       final dir = await _resolveBaseDir();
+      // Fast path: the approximate total is trusted and well below the cap,
+      // so a full scan would be pure waste on every one of N playlist
+      // downloads. A 10% margin absorbs sidecar drift.
+      if (_approxBytes != null &&
+          _approxBytes! < (maxBytes * 0.9).round() &&
+          keepKeys == null) {
+        return;
+      }
       final files = <File>[];
       await for (final e in dir.list()) {
         if (e is! File) continue;
@@ -264,16 +280,22 @@ class CacheService {
           files.add(e);
         }
       }
-      var total = 0;
       final sizes = <File, int>{};
+      var total = 0;
       for (final f in files) {
-        final s = await f.length();
-        sizes[f] = s;
-        total += s;
+        final st = await f.stat();
+        sizes[f] = st.size;
+        total += st.size;
       }
+      _approxBytes = total;
       if (total <= maxBytes) return;
-      files.sort(
-          (a, b) => a.statSync().modified.compareTo(b.statSync().modified));
+      // Oldest-first eviction. Use the stat we already paid for instead of
+      // two more synchronous statSync() calls per comparison.
+      final modified = <File, DateTime>{};
+      for (final f in files) {
+        modified[f] = (await f.stat()).modified;
+      }
+      files.sort((a, b) => modified[a]!.compareTo(modified[b]!));
       for (final f in files) {
         if (total <= maxBytes) break;
         if (keepKeys != null) {
@@ -281,10 +303,13 @@ class CacheService {
           if (keepKeys.any(name.startsWith)) continue;
         }
         total -= sizes[f]!;
+        _approxBytes = total;
         await _deleteQuiet(f);
         await _deleteQuiet(File('${f.path}.json'));
       }
-    } catch (_) {}
+    } catch (_) {
+      _approxBytes = null;
+    }
   }
 
   Future<Map<String, dynamic>?> _readSidecar(Song song, File file) async {

@@ -28,18 +28,24 @@ class LyricsSheet extends StatefulWidget {
 
 class _LyricsSheetState extends State<LyricsSheet> {
   late final Future<SyncedLyrics?> _future;
+  late final LyricsService _service;
   final ScrollController _scroll = ScrollController();
   final Map<int, GlobalKey> _keys = {};
   int _current = -1;
+  bool _ownsService = false;
 
   @override
   void initState() {
     super.initState();
-    _future = (widget.service ?? LyricsService()).fetch(widget.song);
+    _ownsService = widget.service == null;
+    _service = widget.service ?? LyricsService();
+    _future = _service.fetch(widget.song);
   }
 
   @override
   void dispose() {
+    // Close the client we created; a caller-supplied service is theirs.
+    if (_ownsService) _service.dispose();
     _scroll.dispose();
     super.dispose();
   }

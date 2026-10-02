@@ -3,8 +3,6 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
-import '../services/user_preferences.dart';
-import '../services/song_filter.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
@@ -43,15 +41,11 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
 
   Future<void> _load() async {
     final l = await _storage.getLikedSongs();
-    MusicLanguage lang = MusicLanguage.all;
-    try {
-      lang = await UserPreferences().getLanguage();
-    } catch (_) {}
     if (!mounted) return;
     setState(() {
-      // GLOBAL rules: 00:45–07:00 window + strict selected language.
-      // Stored data untouched; the member doubles as the play queue.
-      _liked = SongFilter.apply(l, language: lang);
+      // Likes are explicit user data, not discovery: show every liked song
+      // unfiltered so the count here always matches Profile and Library.
+      _liked = l;
       _loading = false;
     });
   }

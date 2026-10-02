@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/user_preferences.dart';
-import '../services/user_prefs.dart' hide MusicLanguage;
+import '../services/user_prefs.dart';
 import '../theme/app_theme.dart';
 import '../widgets/liquid_background.dart';
 
@@ -17,7 +16,7 @@ class OnboardingPreferences extends StatefulWidget {
 }
 
 class _OnboardingPreferencesState extends State<OnboardingPreferences> {
-  final UserPreferences _prefs = UserPreferences();
+  final UserPrefs _prefs = UserPrefs();
   MusicLanguage _selectedLanguage = MusicLanguage.all;
   final Set<String> _selectedGenres = <String>{};
   final Set<String> _selectedArtists = <String>{};

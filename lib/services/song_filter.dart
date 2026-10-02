@@ -1,5 +1,5 @@
 import '../models/song.dart';
-import 'user_preferences.dart';
+import 'user_prefs.dart';
 
 /// GLOBAL content rules — strict, no exceptions.
 ///

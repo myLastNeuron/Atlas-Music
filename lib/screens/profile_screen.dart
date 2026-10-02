@@ -11,6 +11,7 @@ import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../media/cache_service.dart';
 import '../widgets/liquid_background.dart';
+import 'liked_songs_screen.dart';
 
 /// Settings + identity. Name edit persists and reflects in header.
 class ProfileScreen extends StatefulWidget {
@@ -30,8 +31,6 @@ class _ProfileScreenState extends State<ProfileScreen>
   int _liked = 0;
   int _playlists = 0;
   int _recent = 0;
-  bool _offline = false;
-  bool _notifications = true;
   bool _batteryExempt = false;
   bool _spotifyLinked = false;
   String? _spotifyId;
@@ -41,9 +40,15 @@ class _ProfileScreenState extends State<ProfileScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _name = widget.userName;
+    _storage.addListener(_onStorageChanged);
     _loadStats();
     _loadSpotify();
     _loadBatteryStatus();
+  }
+
+  void _onStorageChanged() {
+    if (!mounted) return;
+    _loadStats();
   }
 
   /// Battery-optimization status for the "Background playback" row. The
@@ -61,6 +66,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   void dispose() {
+    _storage.removeListener(_onStorageChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -627,7 +633,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               children: [
                 _stat('$_recent', 'Recent'),
                 const SizedBox(width: 10),
-                _stat('$_liked', 'Liked'),
+                _stat('$_liked', 'Liked', onTap: _openLiked),
                 const SizedBox(width: 10),
                 _stat('$_playlists', 'Playlists'),
               ],
@@ -640,26 +646,6 @@ class _ProfileScreenState extends State<ProfileScreen>
               blur: 0,
               child: Column(
                 children: [
-                  SwitchListTile(
-                    title: const Text('Offline mode',
-                        style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('Prefer cached audio',
-                        style:
-                            TextStyle(fontSize: 12, color: AppColors.inkSoft)),
-                    value: _offline,
-                    onChanged: (v) => setState(() => _offline = v),
-                  ),
-                  const Divider(height: 1, color: AppColors.line),
-                  SwitchListTile(
-                    title: const Text('Notifications',
-                        style: TextStyle(fontSize: 14)),
-                    subtitle: const Text('Playback updates',
-                        style:
-                            TextStyle(fontSize: 12, color: AppColors.inkSoft)),
-                    value: _notifications,
-                    onChanged: (v) => setState(() => _notifications = v),
-                  ),
-                  const Divider(height: 1, color: AppColors.line),
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
@@ -811,24 +797,34 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _stat(String v, String label) {
-    return Expanded(
-      child: GlassPanel(
-        radius: 18,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        opacity: 0.07,
-        blur: 0,
-        child: Column(
-          children: [
-            Text(v,
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 2),
-            Text(label,
-                style: const TextStyle(fontSize: 11, color: AppColors.inkSoft)),
-          ],
-        ),
+  Future<void> _openLiked() async {
+    await pushAppPage(context, const LikedSongsScreen());
+    _loadStats();
+  }
+
+  Widget _stat(String v, String label, {VoidCallback? onTap}) {
+    final panel = GlassPanel(
+      radius: 18,
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      opacity: 0.07,
+      blur: 0,
+      child: Column(
+        children: [
+          Text(v,
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+        ],
       ),
+    );
+    return Expanded(
+      child: onTap == null
+          ? panel
+          : MotionPress(
+              child: GestureDetector(onTap: onTap, child: panel),
+            ),
     );
   }
 }

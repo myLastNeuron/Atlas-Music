@@ -99,7 +99,10 @@ class AtlasAudioHandler extends BaseAudioHandler {
       updatePosition: service.position,
       bufferedPosition: service.position,
       speed: 1.0,
-      queueIndex: service.currentIndex >= 0 ? service.currentIndex : null,
+      // No queue is ever published (mediaItem.add is used, not
+      // mediaItem.addQueue), so a queueIndex would point into a queue no
+      // consumer can see. Omit it.
+      queueIndex: null,
     );
     playbackState.add(_state);
   }
