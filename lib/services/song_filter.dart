@@ -108,6 +108,61 @@ class SongFilter {
     }).toList();
   }
 
+  // Non-music content to strip from Search: trailers, movies, TV, podcasts,
+  // interviews. Deliberately does NOT match slowed/reverb/remix/cover/lyric/
+  // sped-up — those are music uploads and search must show them.
+  static final RegExp _searchNonMusic = RegExp(
+    r'\btrailer\b|'
+    r'\bteaser\b|'
+    r'\bweb\s+series\b|'
+    r'\bepisode\s+\d+\b|'
+    r'\bseason\s+\d+\b|'
+    r'\bbehind\s+the\s+scenes\b|'
+    r'\bpodcast\b|'
+    r'\binterview\b|'
+    r'\baudiobook\b|'
+    r'\bstand[-\s]?up\s+comedy\b|'
+    r'\bhighlights\b|'
+    r'\bgameplay\b|'
+    r'\bwalkthrough\b|'
+    r'\breaction\b|'
+    r'\bmovie\b|'
+    r'\bfilm\b|'
+    r'\bdialogue\b',
+    caseSensitive: false,
+  );
+
+  static const List<String> _searchNonMusicChannels = [
+    'youtube movies',
+    'netflix',
+    'prime video',
+    'hbo',
+    'movieclips',
+    'sony pictures',
+    'warner bros',
+    'pixar',
+    'rotten tomatoes',
+    'trailer',
+  ];
+
+  /// Search is an explicit request, so it shows every music upload the
+  /// catalogue + video sources return — including slowed/reverb/remix/cover/
+  /// lyric/sped-up variants and official music videos that discovery drops.
+  /// It still removes non-music (trailers, movies, TV, podcasts, interviews)
+  /// and enforces the duration window with a known length.
+  static List<Song> applySearch(List<Song> songs) {
+    return songs.where((s) {
+      if (s.duration.inSeconds <= 0) return false; // livestreams/mixes
+      if (!inDurationWindow(s)) return false;
+      if (isLongForm(s)) return false;
+      final hay = '${s.title} ${s.channel}';
+      if (_searchNonMusic.hasMatch(hay)) return false;
+      final channel = s.channel.toLowerCase();
+      if (_searchNonMusicChannels.any(channel.contains)) return false;
+      return true;
+    }).toList();
+  }
+
   /// Script-based language guess for one song, or null when the text is
   /// Latin/ambiguous and cannot be attributed (used for session-language
   /// detection in Quick Picks; the strict gate above stays authoritative).

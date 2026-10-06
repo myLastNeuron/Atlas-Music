@@ -42,6 +42,68 @@ class YouTubeService {
     return _legacySearch(query, limit: limit);
   }
 
+  /// Union of YouTube Music "Songs" and plain YouTube video results, for the
+  /// explicit Search tab. Keeps user uploads (slowed/reverb, remix, lyric,
+  /// covers) that catalogue-only [search] never returns. Callers still screen
+  /// out trailers/movies/long-form via `SongFilter.applySearch`.
+  ///
+  /// One source failing must not blank the other: only when BOTH throw is the
+  /// error surfaced.
+  Future<List<Song>> searchAll(String query, {int limit = 25}) async {
+    Object? firstError;
+    var anySourceOk = false;
+    final songs = <Song>[];
+    final videos = <Song>[];
+
+    Future<void> run(
+        Future<List<Song>> Function() fetch, List<Song> sink) async {
+      try {
+        sink.addAll(await fetch());
+        anySourceOk = true;
+      } catch (e) {
+        firstError ??= e;
+      }
+    }
+
+    await Future.wait([
+      run(() => _ytm.searchSongs(query, limit: limit), songs),
+      run(() => _legacySearch(query, limit: limit), videos),
+    ]);
+    if (!anySourceOk) throw firstError ?? Exception('Search failed');
+    return mergeResults(songs, videos, cap: limit * 2);
+  }
+
+  /// Merges catalogue songs with video results, keeping first occurrence by
+  /// video id and collapsing the same track (normalized title + artist, so
+  /// "Artist" and "Artist - Topic" match). Distinct uploads such as
+  /// "Song (Slowed + Reverb)" keep distinct keys. Pure; unit-tested.
+  static List<Song> mergeResults(
+    List<Song> catalogue,
+    List<Song> videos, {
+    int cap = 50,
+  }) {
+    final out = <Song>[];
+    final seenVideo = <String>{};
+    final seenTrack = <String>{};
+    for (final s in [...catalogue, ...videos]) {
+      final vid = s.videoId ?? s.id;
+      if (!seenVideo.add(vid)) continue;
+      final key = '${_searchKey(s.title)}|${_searchKey(s.artist)}';
+      if (!seenTrack.add(key)) continue;
+      out.add(s);
+      if (out.length >= cap) break;
+    }
+    return out;
+  }
+
+  /// Lowercase, punctuation/space-stripped, with trailing channel noise
+  /// ("- Topic", "VEVO", "Official") removed so a catalogue entry and its
+  /// upload collapse to one key.
+  static String _searchKey(String value) {
+    final v = value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    return v.replaceAll(RegExp(r'(topic|vevo|official)$'), '');
+  }
+
   Future<List<Song>> _legacySearch(String query, {int limit = 20}) async {
     // Uses searchContent (raw SearchResult union) instead of search():
     // search() eagerly maps every item to Video and throws the whole
@@ -73,8 +135,8 @@ class YouTubeService {
     String thumb = 'https://i.ytimg.com/vi/${v.id.value}/hqdefault.jpg';
     try {
       if (v.thumbnails.isNotEmpty) {
-        final best = v.thumbnails.reduce(
-            (a, b) => a.width * a.height >= b.width * b.height ? a : b);
+        final best = v.thumbnails
+            .reduce((a, b) => a.width * a.height >= b.width * b.height ? a : b);
         thumb = best.url.toString();
       }
     } catch (_) {}
@@ -93,11 +155,9 @@ class YouTubeService {
   /// Static for unit tests.
   static Duration parseDurationString(String text) {
     try {
-      final parts =
-          text.split(':').map((p) => int.parse(p.trim())).toList();
+      final parts = text.split(':').map((p) => int.parse(p.trim())).toList();
       if (parts.length == 3) {
-        return Duration(
-            hours: parts[0], minutes: parts[1], seconds: parts[2]);
+        return Duration(hours: parts[0], minutes: parts[1], seconds: parts[2]);
       }
       if (parts.length == 2) {
         return Duration(minutes: parts[0], seconds: parts[1]);
@@ -109,11 +169,9 @@ class YouTubeService {
 
   Future<List<Song>> getRelatedVideos(String videoId, {int limit = 15}) async {
     try {
-      final video =
-          await _yt.videos.get(VideoId(videoId)).timeout(_timeout);
-      final related = await _yt.videos
-          .getRelatedVideos(video)
-          .timeout(_timeout);
+      final video = await _yt.videos.get(VideoId(videoId)).timeout(_timeout);
+      final related =
+          await _yt.videos.getRelatedVideos(video).timeout(_timeout);
 
       if (related == null) return [];
       return related.take(limit).map(_toSong).toList();
@@ -128,8 +186,7 @@ class YouTubeService {
     String name = 'Imported Playlist';
     String? description;
     try {
-      final meta =
-          await _yt.playlists.get(playlistId).timeout(_timeout);
+      final meta = await _yt.playlists.get(playlistId).timeout(_timeout);
       name = meta.title;
       description = meta.description;
     } catch (_) {
@@ -160,14 +217,6 @@ class YouTubeService {
       createdAt: DateTime.now(),
       source: 'youtube',
     );
-  }
-
-  Future<List<Song>> getTrending({int limit = 20}) async {
-    try {
-      return await search('top music hits global', limit: limit);
-    } catch (e) {
-      throw Exception('Failed to get trending: $e');
-    }
   }
 
   void dispose() {

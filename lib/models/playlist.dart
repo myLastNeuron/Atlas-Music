@@ -33,10 +33,9 @@ class Playlist {
       name: json['title'] ?? 'Untitled Playlist',
       description: json['description'],
       thumbnailUrl: json['thumbnail'],
-      songs: (json['songs'] as List?)
-              ?.map((s) => Song.fromYouTube(s))
-              .toList() ??
-          [],
+      songs:
+          (json['songs'] as List?)?.map((s) => Song.fromYouTube(s)).toList() ??
+              [],
       createdAt: DateTime.now(),
       source: 'youtube',
     );
@@ -65,33 +64,17 @@ class Playlist {
       description: json['description'],
       thumbnailUrl: json['thumbnailUrl'],
       coverPath: json['coverPath'],
-      songs: (json['songs'] as List?)
-              ?.map((s) => Song.fromJson(s))
-              .toList() ??
-          [],
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
+      songs:
+          (json['songs'] as List?)?.map((s) => Song.fromJson(s)).toList() ?? [],
+      createdAt:
+          DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
       source: json['source'],
       isDownloaded: json['isDownloaded'] ?? false,
-      downloadedSongIds: (json['downloadedSongIds'] as List?)
-              ?.map((e) => e as String)
-              .toSet(),
+      downloadedSongIds:
+          (json['downloadedSongIds'] as List?)?.map((e) => e as String).toSet(),
       isSystemManaged: json['isSystemManaged'] ?? false,
     );
   }
-
-  Playlist withCover(String? path) => Playlist(
-        id: id,
-        name: name,
-        description: description,
-        thumbnailUrl: thumbnailUrl,
-        coverPath: path,
-        songs: songs,
-        createdAt: createdAt,
-        source: source,
-        isDownloaded: isDownloaded,
-        downloadedSongIds: downloadedSongIds,
-        isSystemManaged: isSystemManaged,
-      );
 
   Playlist copyWith({
     String? id,

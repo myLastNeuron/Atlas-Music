@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
@@ -6,56 +7,115 @@ import '../theme/app_theme.dart';
 /// through frosted surfaces, so the whole UI reads as layered glass.
 /// RepaintBoundary wraps each wash so content repaints never repaint
 /// the background — cheap on low-end hardware.
-class LiquidBackground extends StatelessWidget {
+///
+/// The washes drift slowly (one controller, transform-only, no repaint).
+/// Motion is skipped entirely when the OS "reduce motion" flag is set.
+class LiquidBackground extends StatefulWidget {
   final Widget child;
   const LiquidBackground({super.key, required this.child});
 
   @override
+  State<LiquidBackground> createState() => _LiquidBackgroundState();
+}
+
+class _LiquidBackgroundState extends State<LiquidBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _drift = AnimationController(
+    vsync: this,
+    duration: AppMotion.ambient,
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // React to the setting changing at runtime as well as at first build.
+    if (AppMotion.reduced(context)) {
+      if (_drift.isAnimating) _drift.stop();
+    } else if (!_drift.isAnimating) {
+      _drift.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _drift.dispose();
+    super.dispose();
+  }
+
+  /// Drift one blob with a transform only. [blob] is prebuilt and lives
+  /// inside its own RepaintBoundary, so per-frame work is one transform
+  /// update with NO relayout and NO rebuild of the blob/Stack.
+  Widget _driftBlob(Widget blob,
+      {required double phase,
+      required double amount,
+      required bool reduced}) {
+    return AnimatedBuilder(
+      animation: _drift,
+      child: RepaintBoundary(child: blob),
+      builder: (context, child) {
+        if (reduced) return child!;
+        final angle = (_drift.value + phase) * 2 * math.pi;
+        return Transform.translate(
+          offset:
+              Offset(math.sin(angle) * amount, math.cos(angle) * amount * 0.7),
+          child: child,
+        );
+      },
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final reduced = AppMotion.reduced(context);
     return Container(
       color: AppColors.paper,
       child: Stack(
         children: [
-          const Positioned(
+          Positioned(
             top: -120,
             left: -100,
-            child: RepaintBoundary(
-              child: _Blob(
-                  size: 340,
-                  color: Color(0xFF3A3A46),
-                  opacity: 0.55),
+            child: _driftBlob(
+              const _Blob(
+                  size: 340, color: Color(0xFF3A3A46), opacity: 0.55),
+              phase: 0.0,
+              amount: 26,
+              reduced: reduced,
             ),
           ),
-          const Positioned(
+          Positioned(
             top: -80,
             right: -110,
-            child: RepaintBoundary(
-              child: _Blob(
-                  size: 320,
-                  color: Color(0xFF2A2A33),
-                  opacity: 0.7),
+            child: _driftBlob(
+              const _Blob(
+                  size: 320, color: Color(0xFF2A2A33), opacity: 0.7),
+              phase: 0.33,
+              amount: 20,
+              reduced: reduced,
             ),
           ),
-          const Positioned(
+          Positioned(
             bottom: -140,
             left: -40,
             right: -40,
-            child: RepaintBoundary(
-              child: _FloorBlob(
-                  color: Color(0xFF23232B), opacity: 0.8),
+            child: _driftBlob(
+              const _FloorBlob(color: Color(0xFF23232B), opacity: 0.8),
+              phase: 0.66,
+              amount: 16,
+              reduced: reduced,
             ),
           ),
-          const Positioned(
+          Positioned(
             bottom: 60,
             right: -80,
-            child: RepaintBoundary(
-              child: _Blob(
-                  size: 260,
-                  color: Color(0xFF33333D),
-                  opacity: 0.5),
+            child: _driftBlob(
+              const _Blob(
+                  size: 260, color: Color(0xFF33333D), opacity: 0.5),
+              phase: 0.85,
+              amount: 30,
+              reduced: reduced,
             ),
           ),
-          Positioned.fill(child: child),
+          Positioned.fill(child: widget.child),
         ],
       ),
     );
@@ -73,15 +133,7 @@ class _Blob extends StatelessWidget {
     return Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            color.withValues(alpha: opacity),
-            color.withValues(alpha: 0.0),
-          ],
-        ),
-      ),
+      decoration: _blobDecoration(color, opacity),
     );
   }
 }
@@ -95,18 +147,20 @@ class _FloorBlob extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 340,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            color.withValues(alpha: opacity),
-            color.withValues(alpha: 0.0),
-          ],
-        ),
-      ),
+      decoration: _blobDecoration(color, opacity),
     );
   }
 }
+
+BoxDecoration _blobDecoration(Color color, double opacity) => BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: RadialGradient(
+        colors: [
+          color.withValues(alpha: opacity),
+          color.withValues(alpha: 0.0),
+        ],
+      ),
+    );
 
 /// Frosted-glass panel: translucent surface + backdrop blur + hairline
 /// border + top highlight + soft shadow. BackdropFilter is used only here
@@ -127,11 +181,6 @@ class GlassPanel extends StatelessWidget {
     this.opacity = 0.08,
     this.blur = 2,
   });
-
-  static final Map<double, ImageFilter> _blurCache = {};
-
-  static ImageFilter _filter(double sigma) =>
-      _blurCache.putIfAbsent(sigma, () => ImageFilter.blur(sigmaX: sigma, sigmaY: sigma));
 
   @override
   Widget build(BuildContext context) {
@@ -172,7 +221,7 @@ class GlassPanel extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: BackdropFilter(
-          filter: _filter(blur),
+          filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
           child: content,
         ),
       ),

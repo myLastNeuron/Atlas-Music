@@ -13,13 +13,11 @@ import 'app_transitions.dart';
 class LyricsSheet extends StatefulWidget {
   final Song song;
   final AudioPlayerService audio;
-  final LyricsService? service;
 
   const LyricsSheet({
     super.key,
     required this.song,
     required this.audio,
-    this.service,
   });
 
   @override
@@ -32,20 +30,17 @@ class _LyricsSheetState extends State<LyricsSheet> {
   final ScrollController _scroll = ScrollController();
   final Map<int, GlobalKey> _keys = {};
   int _current = -1;
-  bool _ownsService = false;
 
   @override
   void initState() {
     super.initState();
-    _ownsService = widget.service == null;
-    _service = widget.service ?? LyricsService();
+    _service = LyricsService();
     _future = _service.fetch(widget.song);
   }
 
   @override
   void dispose() {
-    // Close the client we created; a caller-supplied service is theirs.
-    if (_ownsService) _service.dispose();
+    _service.dispose();
     _scroll.dispose();
     super.dispose();
   }

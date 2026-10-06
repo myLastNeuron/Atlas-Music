@@ -15,12 +15,17 @@ class AppColors {
   static const inkSoft = Color(0xFFC6C6CE);
   static const mute = Color(0xFF9A9AA3);
   static const charcoal = Color(0xFF18181B);
-  static const onCharcoal = Color(0xFFFFFFFF);
 
   /// Frosted-glass surface tints (non-const: used with BackdropFilter).
-  static Color get glass => Colors.white.withValues(alpha: 0.08);
   static Color get glassBorder => Colors.white.withValues(alpha: 0.14);
   static Color get glassHighlight => Colors.white.withValues(alpha: 0.06);
+}
+
+/// `m:ss` clock shared by list rows (no leading zero on minutes).
+String formatClock(Duration d) {
+  final m = d.inMinutes;
+  final s = d.inSeconds % 60;
+  return '$m:${s.toString().padLeft(2, '0')}';
 }
 
 /// Consistent motion: fast, natural, cheap on low-end hardware.
@@ -28,11 +33,33 @@ class AppColors {
 /// entrances, and touch feedback.
 class AppMotion {
   static const curve = Curves.easeOutCubic;
+  static const emphasized = Cubic(0.2, 0.0, 0.0, 1.0);
+  static const spring = Curves.easeOutBack;
   static const page = Duration(milliseconds: 240);
-  static const tab = Duration(milliseconds: 320);
+  // Full player: the cover Hero and the page ease own the motion together.
+  // Longer and eased so the player materialises smoothly rather than
+  // snapping; these also set how long the cover flight takes.
+  static const playerOpen = Duration(milliseconds: 480);
+  static const playerClose = Duration(milliseconds: 420);
   static const modal = Duration(milliseconds: 220);
   static const micro = Duration(milliseconds: 180);
   static const entrance = Duration(milliseconds: 320);
+
+  /// Slow ambient loop for the background washes.
+  static const ambient = Duration(milliseconds: 18000);
+
+  /// Per-item delay for staggered entrances.
+  static const stagger = Duration(milliseconds: 40);
+
+  /// OS "reduce motion" accessibility flag. When true, large movement and
+  /// looping animations snap to their end state instead of animating.
+  static bool reduced(BuildContext context) =>
+      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
+  /// Collapses to zero when the user disabled animations, so callers can
+  /// keep one duration constant and still respect the setting.
+  static Duration dur(BuildContext context, Duration base) =>
+      reduced(context) ? Duration.zero : base;
 }
 
 class AppTheme {
@@ -57,20 +84,20 @@ class AppTheme {
     return base.copyWith(
       textTheme: text
           .copyWith(
-            displayLarge: text.displayLarge?.copyWith(
-                fontWeight: FontWeight.w700, letterSpacing: -0.3),
-            displayMedium: text.displayMedium?.copyWith(
-                fontWeight: FontWeight.w700, letterSpacing: -0.2),
-            titleLarge: text.titleLarge?.copyWith(
-                fontWeight: FontWeight.w600, letterSpacing: 0),
-            titleMedium: text.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600, letterSpacing: 0.1),
-            titleSmall: text.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600, letterSpacing: 0.2),
-            bodyLarge: text.bodyLarge?.copyWith(
-                fontWeight: FontWeight.w500, letterSpacing: 0),
-            bodyMedium: text.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w400, letterSpacing: 0),
+            displayLarge: text.displayLarge
+                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.3),
+            displayMedium: text.displayMedium
+                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2),
+            titleLarge: text.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w600, letterSpacing: 0),
+            titleMedium: text.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.1),
+            titleSmall: text.titleSmall
+                ?.copyWith(fontWeight: FontWeight.w600, letterSpacing: 0.2),
+            bodyLarge: text.bodyLarge
+                ?.copyWith(fontWeight: FontWeight.w500, letterSpacing: 0),
+            bodyMedium: text.bodyMedium
+                ?.copyWith(fontWeight: FontWeight.w400, letterSpacing: 0),
             bodySmall: text.bodySmall?.copyWith(
                 fontWeight: FontWeight.w400,
                 letterSpacing: 0,
@@ -225,8 +252,7 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide:
-              const BorderSide(color: AppColors.inkSoft, width: 1.2),
+          borderSide: const BorderSide(color: AppColors.inkSoft, width: 1.2),
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -243,27 +269,64 @@ class AppTheme {
       ),
     );
   }
+}
 
-  static const headerName = TextStyle(
-    fontSize: 15,
-    fontWeight: FontWeight.w500,
-    letterSpacing: 0.2,
-    color: AppColors.ink,
-    decoration: TextDecoration.none,
-  );
-
-  static const centerName = TextStyle(
-    fontSize: 32,
-    fontWeight: FontWeight.w700,
-    letterSpacing: -0.3,
-    color: AppColors.ink,
-    decoration: TextDecoration.none,
+/// One route-motion implementation shared by the explicit [AppPageRoute]
+/// (app_transitions.dart) and the global [AppPageTransitionsBuilder], so the
+/// two can never drift. Incoming page: fade + short upward slide + 0.98
+/// scale. The outgoing page is left in place (no parallax): shifting a page
+/// that sits behind the fixed acrylic nav read as a mirrored smear.
+/// Framework-driven (no controllers), so it can not stack, leak, or block
+/// input; back gesture stays interactive. Respects reduce-motion.
+Widget buildAppTransition(
+  BuildContext context,
+  Animation<double> animation,
+  Animation<double> secondaryAnimation,
+  Widget child,
+) {
+  if (AppMotion.reduced(context)) return child;
+  final curved = CurvedAnimation(parent: animation, curve: AppMotion.curve);
+  return FadeTransition(
+    opacity: curved,
+    child: SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 0.04),
+        end: Offset.zero,
+      ).animate(curved),
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 0.98, end: 1.0).animate(curved),
+        child: child,
+      ),
+    ),
   );
 }
 
-/// Shared route transition: fade + short upward slide + 0.98 scale.
-/// Runs on the framework animation (no manual controllers), so it can not
-/// stack, leak, or block input; back gesture stays interactive.
+/// Full-player route motion. The mini-player cover flies into the full
+/// player via a [Hero] (see MiniPlayer/PlayerScreen), while the page itself
+/// eases in behind it with a gentle rise. A slower, eased movement is what
+/// reads as "smooth"; the previous instant/short version felt like a jump.
+/// Respects reduce-motion.
+Widget buildPlayerTransition(
+  BuildContext context,
+  Animation<double> animation,
+  Animation<double> secondaryAnimation,
+  Widget child,
+) {
+  if (AppMotion.reduced(context)) return child;
+  final curved =
+      CurvedAnimation(parent: animation, curve: AppMotion.emphasized);
+  return FadeTransition(
+    opacity: curved,
+    child: SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 0.06),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    ),
+  );
+}
+
 class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   const AppPageTransitionsBuilder();
 
@@ -276,20 +339,6 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
     Widget child,
   ) {
     if (route.settings.name == Navigator.defaultRouteName) return child;
-    final curved =
-        CurvedAnimation(parent: animation, curve: AppMotion.curve);
-    return FadeTransition(
-      opacity: curved,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.04),
-          end: Offset.zero,
-        ).animate(curved),
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.98, end: 1.0).animate(curved),
-          child: child,
-        ),
-      ),
-    );
+    return buildAppTransition(context, animation, secondaryAnimation, child);
   }
 }

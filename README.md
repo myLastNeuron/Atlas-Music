@@ -73,7 +73,7 @@
 
 | Feature | Details |
 |---|---|
-| 🎤 **Song-first search** | Queries YouTube Music's InnerTube endpoint with the "Songs" filter — real songs, not lyric re-uploads, covers or music videos. |
+| 🎤 **Song-first search** | Merges YouTube Music's InnerTube catalogue with plain YouTube video results, so slowed/reverb, remix, lyric and sped-up uploads all appear. Trailers, movies, TV, podcasts and long-form uploads are stripped. |
 | 📈 **Related & Autoplay** | Radio/autoplay continuations are routed through the same song-only path. |
 | 🕘 **Recent searches** | History with one-tap re-query. |
 | ➕ **Quick actions** | Play, or add to playlist straight from results. |
@@ -458,14 +458,25 @@ Licensed under the [Apache License, Version 2.0](LICENSE.md).
 
 > [!CAUTION]
 > ### 🤖 Mostly AI-generated — use at your own risk
-> I built this app **mostly with AI**, as a personal project to understand how AI works and what it can actually do. It is **not** a professional or audited piece of software.
+> Built **mostly with AI** as a learning project, not audited software. Expect bugs, no security review, no warranty (Apache-2.0). It's a curious experiment, not something to depend on. Fair warning: getting it polished enough to feel like a real app took a *lot* longer than expected — the AI wrote the bulk of the code, but every rough edge took rounds of back-and-forth to sand off.
 >
-> - **Assume there are loopholes, bugs and rough edges.** Some of them I know about (see *Known Limitations* above); plenty I don't.
-> - **No security review has been done.** Don't treat it as hardened. Be careful about what you sign in to or store in it.
-> - **No warranty of any kind**, in the spirit of the Apache-2.0 license. You use it at your own risk.
-> - **It's a learning project first**, a music player second. If something breaks, that's the trade-off.
+> **Models used:**
 >
-> Treat it as a curious experiment you're welcome to play with — not as software to depend on.
+> | Model | Share of work |
+> |---|---|
+> | Muse Spark 1.3 | 30–40% |
+> | DeepSeek V4.1 Flash | 20–30% |
+> | Muse Glimmer 30B | 10–15% |
+> | Big Pickle, Nemotron & other misc models | the rest |
+>
+> ```mermaid
+> pie showData
+>     title Rough share of the work by model
+>     "Muse Spark 1.3" : 35
+>     "DeepSeek V4.1 Flash" : 25
+>     "Misc (Big Pickle, Nemotron, etc.)" : 28
+>     "Muse Glimmer 30B" : 12
+> ```
 
 <div align="center">
 <b>If you enjoy Atlas Music, give it a ⭐ star!</b>

@@ -11,6 +11,7 @@ import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
 import 'history_screen.dart';
 import 'liked_songs_screen.dart';
+import 'offline_music_screen.dart';
 import 'playlist_detail_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -27,7 +28,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _loading = true;
   bool _loadBusy = false;
   bool _loadQueued = false;
-  Map<String, int> _playlistCounts = {};
+  // Guards the quick actions (Import / Liked / Recent) against a second
+  // tap firing while the first dialog/route is still opening.
+  bool _actionBusy = false;
 
   @override
   void initState() {
@@ -58,16 +61,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
     _loadBusy = true;
     try {
-      final p = await _storage.getPlaylists();
+      final p = (await _storage.getPlaylists())
+          .where((pl) => pl.id != StorageService.downloadedPlaylistId)
+          .toList();
       if (!mounted) return;
 
-      final counts = <String, int>{};
-      for (final pl in p) {
-        counts[pl.id] = pl.songs.length;
-      }
       setState(() {
         _playlists = p;
-        _playlistCounts = counts;
         _loading = false;
       });
     } finally {
@@ -80,6 +80,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _import() async {
+    if (_actionBusy) return;
+    _actionBusy = true;
+    try {
+      await _importFlow();
+    } finally {
+      _actionBusy = false;
+    }
+  }
+
+  Future<void> _importFlow() async {
     final src = await _importSource();
     if (src == null) return;
     if (src == 'spotify') {
@@ -516,154 +526,189 @@ class _LibraryScreenState extends State<LibraryScreen> {
       backgroundColor: Colors.transparent,
       body: SafeArea(
         bottom: false,
-        child: _loading
-            ? const Center(
-                child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2)))
-            : CustomScrollView(
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding:
-                          const EdgeInsets.only(left: 20, right: 12, top: 14),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Your Library',
-                              style: TextStyle(
-                                  fontSize: 22, fontWeight: FontWeight.w700)),
-                          IconButton(
-                            icon: const Icon(Icons.add),
-                            onPressed: _create,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: GlassPanel(
-                        radius: 20,
-                        padding: const EdgeInsets.all(6),
-                        opacity: 0.07,
+        child: AnimatedSwitcher(
+          duration: AppMotion.dur(context, AppMotion.modal),
+          switchInCurve: AppMotion.curve,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: fadeRiseTransition,
+          child: _loading
+              ? const Center(
+                  key: ValueKey('library_loading'),
+                  child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2)))
+              : CustomScrollView(
+                  key: const ValueKey('library_content'),
+                  physics: const BouncingScrollPhysics(),
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.only(left: 20, right: 12, top: 14),
                         child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            _quick(Icons.download, 'Import', _import),
-                            _quick(Icons.favorite_outline, 'Liked', _openLiked),
-                            _quick(Icons.history, 'Recent', _openHistory),
+                            const Text('Your Library',
+                                style: TextStyle(
+                                    fontSize: 22, fontWeight: FontWeight.w700)),
+                            IconButton(
+                              icon: const Icon(Icons.add),
+                              onPressed: _create,
+                            ),
                           ],
                         ),
                       ),
                     ),
-                  ),
-                  const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-                      child: Text('Playlists',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w700)),
-                    ),
-                  ),
-                  if (_playlists.isEmpty)
-                    const SliverToBoxAdapter(
+                    SliverToBoxAdapter(
                       child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(
-                          child: Text(
-                            'No playlists yet\nTap + to create or import',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: AppColors.inkSoft),
+                        padding: const EdgeInsets.all(20),
+                        child: GlassPanel(
+                          radius: 20,
+                          padding: const EdgeInsets.all(6),
+                          opacity: 0.07,
+                          child: Row(
+                            children: [
+                              _quick(Icons.download, 'Import', _import),
+                              _quick(
+                                  Icons.favorite_outline, 'Liked', _openLiked),
+                              _quick(Icons.history, 'Recent', _openHistory),
+                              _quick(Icons.download_done, 'Offline Music',
+                                  _openOfflineMusic),
+                            ],
                           ),
                         ),
                       ),
-                    )
-                  else
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (_, i) {
-                          final p = _playlists[i];
-                          // GLOBAL rules: counts reflect listed songs.
-                          final visibleCount =
-                              _playlistCounts[p.id] ?? p.songs.length;
-                          return MotionPress(
-                            child: ListTile(
-                              leading: (p.thumbnailUrl ?? '').isEmpty
-                                  ? Container(
-                                      width: 48,
-                                      height: 48,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.mist,
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: const Icon(Icons.queue_music,
-                                          color: AppColors.mute),
-                                    )
-                                  : Artwork(
-                                      p.thumbnailUrl!,
-                                      size: 48,
-                                      radius: 10,
-                                    ),
-                              title: Text(
-                                  p.isDownloaded
-                                      ? '${p.name} - Downloaded'
-                                      : p.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                              subtitle: Text('$visibleCount songs',
-                                  style: const TextStyle(color: AppColors.inkSoft)),
-                              trailing: const Icon(Icons.chevron_right,
-                                  color: AppColors.mute),
-                              onTap: () async {
-                                await pushAppPage(
-                                  context,
-                                  PlaylistDetailScreen(playlist: p),
-                                );
-                                _load();
-                              },
-                            ),
-                          );
-                        },
-                        childCount: _playlists.length,
+                    ),
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+                        child: Text('Playlists',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w700)),
                       ),
                     ),
-                  SliverPadding(
-                    padding: EdgeInsets.only(bottom: hasSong ? 190 : 120),
-                  ),
-                ],
-              ),
+                    if (_playlists.isEmpty)
+                      const SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Center(
+                            child: Text(
+                              'No playlists yet\nTap + to create or import',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: AppColors.inkSoft),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (_, i) {
+                            final p = _playlists[i];
+                            return MotionPress(
+                              child: ListTile(
+                                leading: (p.thumbnailUrl ?? '').isEmpty
+                                    ? Container(
+                                        width: 48,
+                                        height: 48,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.mist,
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                        child: const Icon(Icons.queue_music,
+                                            color: AppColors.mute),
+                                      )
+                                    : Artwork(
+                                        p.thumbnailUrl!,
+                                        size: 48,
+                                        radius: 10,
+                                      ),
+                                title: Text(
+                                    p.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                subtitle: Text('${p.songs.length} songs',
+                                    style: const TextStyle(
+                                        color: AppColors.inkSoft)),
+                                trailing: const Icon(Icons.chevron_right,
+                                    color: AppColors.mute),
+                                onTap: () async {
+                                  await pushAppPage(
+                                    context,
+                                    PlaylistDetailScreen(playlist: p),
+                                  );
+                                  _load();
+                                },
+                              ),
+                            );
+                          },
+                          childCount: _playlists.length,
+                        ),
+                      ),
+                    SliverPadding(
+                      padding: EdgeInsets.only(bottom: hasSong ? 190 : 120),
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }
 
   Future<void> _openLiked() async {
-    await pushAppPage(context, const LikedSongsScreen());
-    _load();
+    if (_actionBusy) return;
+    _actionBusy = true;
+    try {
+      await pushAppPage(context, const LikedSongsScreen());
+      _load();
+    } finally {
+      _actionBusy = false;
+    }
   }
 
   Future<void> _openHistory() async {
-    await pushAppPage(context, const HistoryScreen());
-    // History may have been pruned; playlists/state are unaffected but a
-    // reload keeps counts fresh if anything changed.
-    _load();
+    if (_actionBusy) return;
+    _actionBusy = true;
+    try {
+      await pushAppPage(context, const HistoryScreen());
+      // History may have been pruned; playlists/state are unaffected but a
+      // reload keeps counts fresh if anything changed.
+      _load();
+    } finally {
+      _actionBusy = false;
+    }
+  }
+
+  Future<void> _openOfflineMusic() async {
+    if (_actionBusy) return;
+    _actionBusy = true;
+    try {
+      await pushAppPage(context, const OfflineMusicScreen());
+      _load();
+    } finally {
+      _actionBusy = false;
+    }
   }
 
   Widget _quick(IconData icon, String label, VoidCallback onTap) {
     return Expanded(
       child: MotionPress(
-        child: InkWell(
+        child: GestureDetector(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          behavior: HitTestBehavior.opaque,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Column(
               children: [
                 Icon(icon, color: Colors.white, size: 22),
                 const SizedBox(height: 6),
-                Text(label, style: const TextStyle(fontSize: 11)),
+                Text(label,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11)),
               ],
             ),
           ),

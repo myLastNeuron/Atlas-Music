@@ -21,6 +21,7 @@ class MiniPlayer extends StatelessWidget {
       context,
       const PlayerScreen(),
       routeName: PlayerScreen.routeName,
+      slideUp: true,
     );
   }
 
@@ -47,6 +48,26 @@ class MiniPlayer extends StatelessWidget {
     offset: const Offset(0, 10),
   );
 
+  Widget _glassBar(Widget child) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: _blur,
+        child: Container(
+          height: 70,
+          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.09),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: AppColors.glassBorder),
+            boxShadow: [_shadow],
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Shell subscribes transport only. Position tick lives in
@@ -67,112 +88,53 @@ class MiniPlayer extends StatelessWidget {
     // playing and known-uncached ones are skipped without re-checking.
     final bool degraded =
         context.select<AudioPlayerService, bool>((s) => s.degradedOffline);
+    // Downloaded high-res cover (the notification's copy), same one the full
+    // player shows, so the cover flight can land on it instead of the thumb.
+    final String? artPath = context.select<AudioPlayerService, String?>(
+        (s) => s.highResArtPathFor(s.currentSong));
     // Keep the bar mounted while a first track loads (song still null)
     // so it never vanishes on cold start / auto-advance gaps.
     if (song == null) {
       if (!isLoading) {
         if (!pausedOffline) return const SizedBox.shrink();
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: BackdropFilter(
-            filter: _blur,
-            child: Container(
-              height: 70,
-              padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.09),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: AppColors.glassBorder),
-                boxShadow: [_shadow],
-              ),
-              child: const Center(
-                child: Text(
-                    'Track unavailable — no internet and not '
-                    'downloaded',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
-              ),
-            ),
-          ),
-        );
+        return _glassBar(const Center(
+          child: Text(
+              'Track unavailable — no internet and not downloaded',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
+        ));
       }
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: _blur,
-          child: Container(
-            height: 70,
-            padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.09),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: AppColors.glassBorder),
-              boxShadow: [_shadow],
-            ),
-            child: const Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white),
-              ),
-            ),
-          ),
+      return _glassBar(const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
         ),
-      );
+      ));
     }
 
     final loading = isLoading && !playing;
 
     if (pausedOffline) {
       // Queue paused for offline: swap the transport row for the reason.
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: _blur,
-          child: Container(
-            height: 70,
-            padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.09),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: AppColors.glassBorder),
-              boxShadow: [_shadow],
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.wifi_off, size: 22, color: AppColors.inkSoft),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                      'Track unavailable — no internet and not '
-                      'downloaded. Waiting for internet…',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
-                ),
-              ],
-            ),
+      return _glassBar(const Row(
+        children: [
+          Icon(Icons.wifi_off, size: 22, color: AppColors.inkSoft),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+                'Track unavailable — no internet and not '
+                'downloaded. Waiting for internet…',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
           ),
-        ),
-      );
+        ],
+      ));
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: _blur,
-        child: Container(
-          height: 70,
-          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.09),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.glassBorder),
-            boxShadow: [_shadow],
-          ),
-          child: Column(
-            children: [
+    return _glassBar(Column(
+      children: [
               Expanded(
                 child: Row(
                   children: [
@@ -185,10 +147,35 @@ class MiniPlayer extends StatelessWidget {
                           onTap: () => _openPlayer(context),
                           child: Row(
                             children: [
-                              Artwork(
-                                song.thumbnailUrl,
-                                size: 42,
-                                radius: 10,
+                              Hero(
+                                tag: 'player_cover',
+                                createRectTween: (begin, end) =>
+                                    MaterialRectArcTween(
+                                        begin: begin, end: end),
+                                flightShuttleBuilder:
+                                    (ctx, anim, dir, from, to) =>
+                                        CoverFlightShuttle(
+                                            song.thumbnailUrl,
+                                            filePath: artPath,
+                                            animation: anim),
+                                child: AnimatedSwitcher(
+                                  duration:
+                                      AppMotion.dur(context, AppMotion.micro),
+                                  switchInCurve: AppMotion.curve,
+                                  switchOutCurve: AppMotion.curve,
+                                  transitionBuilder: (child, animation) =>
+                                      FadeTransition(
+                                    opacity: animation,
+                                    child: ScaleTransition(
+                                        scale: animation, child: child),
+                                  ),
+                                  child: Artwork(
+                                    song.thumbnailUrl,
+                                    key: ValueKey(song.id),
+                                    size: kMiniArtworkSize,
+                                    radius: 10,
+                                  ),
+                                ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -292,10 +279,7 @@ class MiniPlayer extends StatelessWidget {
               const SizedBox(height: 4),
               const _MiniProgress(),
             ],
-          ),
-        ),
-      ),
-    );
+          ));
   }
 }
 

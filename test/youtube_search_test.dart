@@ -1,6 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:atlas_music/models/song.dart';
 import 'package:atlas_music/services/youtube_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+
+Song song(String title, String artist, String id) => Song(
+      id: id,
+      title: title,
+      artist: artist,
+      thumbnailUrl: '',
+      duration: const Duration(seconds: 200),
+      videoId: id,
+    );
 
 SearchVideo vid({
   String duration = '3:45',
@@ -48,5 +58,39 @@ void main() {
     expect(
         () => YouTubeService.songFromSearchVideo(vid(duration: '')),
         returnsNormally);
+  });
+
+  group('mergeResults', () {
+    test('dedupes by video id and normalized title+artist', () {
+      final out = YouTubeService.mergeResults(
+        [
+          song('Kesariya', 'Arijit Singh', 'a1'),
+          song('Kesariya', 'Arijit Singh', 'a2'), // same track, new id
+        ],
+        [
+          song('Kesariya', 'Arijit Singh - Topic', 'a3'), // channel noise
+          song('Kesariya', 'Arijit Singh', 'a1'), // duplicate id
+        ],
+      );
+      expect(out.length, 1);
+      expect(out.single.id, 'a1');
+    });
+
+    test('keeps slowed/reverb variant distinct', () {
+      final out = YouTubeService.mergeResults(
+        [song('Kesariya', 'Arijit Singh', 'a1')],
+        [song('Kesariya (Slowed + Reverb)', 'Arijit Singh', 'b1')],
+      );
+      expect(out.map((s) => s.id), ['a1', 'b1']);
+    });
+
+    test('respects the cap', () {
+      final out = YouTubeService.mergeResults(
+        [for (var i = 0; i < 5; i++) song('T$i', 'A', 'i$i')],
+        const [],
+        cap: 3,
+      );
+      expect(out.length, 3);
+    });
   });
 }

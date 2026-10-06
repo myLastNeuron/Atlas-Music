@@ -2,18 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
-import '../screens/player_screen.dart';
-import 'app_transitions.dart';
 
-/// `Navigator` / `ScaffoldMessenger` lookups that capture the *current*
-/// `BuildContext` at the moment of the call.
+/// `ScaffoldMessenger` lookups that capture the *current* `BuildContext` at
+/// the moment of the call.
 ///
 /// Dart's `BuildContext` was made non-nullable, which makes `context.mounted`
-/// statically false in a `Future` body (a known analyzer limitation). These
-/// wrappers keep the capture explicit and readable while still resolving the
+/// statically false in a `Future` body (a known analyzer limitation). This
+/// wrapper keeps the capture explicit and readable while still resolving the
 /// correct context after an `await`.
-NavigatorState navigatorOf(BuildContext context) => Navigator.of(context);
-
 ScaffoldMessengerState messengerOf(BuildContext context) =>
     ScaffoldMessenger.of(context);
 
@@ -26,22 +22,9 @@ Future<void> playSongs(
   required Song song,
   required List<Song> queue,
   required int index,
-  bool openPlayer = false,
   bool autoplayOnEnd = true,
   String? queueOrigin,
 }) async {
-  if (openPlayer && context.mounted) {
-    // Guard duplicate push: skip when PlayerScreen is already the active
-    // route, so a double-tap does not stack two identical screens.
-    final cur = ModalRoute.of(context)?.settings.name;
-    if (cur != PlayerScreen.routeName) {
-      pushAppPage(
-        context,
-        const PlayerScreen(),
-        routeName: PlayerScreen.routeName,
-      );
-    }
-  }
   try {
     final audio = context.read<AudioPlayerService>();
     final ok = await audio.playSong(
