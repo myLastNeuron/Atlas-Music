@@ -1,47 +1,39 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
-/// Consistent 240ms fade + slide + scale route used for the player and
-/// playlist pages. Framework-driven (no controllers to leak), back gesture
+/// Shared page route: fade + slide + scale for normal pushes, and for the
+/// full player (`slideUp: true`) a quick fade whose cover [Hero] flies from
+/// the mini player. Framework-driven (no controllers to leak), back gesture
 /// stays interactive, input is never blocked.
 class AppPageRoute<T> extends PageRouteBuilder<T> {
   AppPageRoute({
     required Widget Function(BuildContext) builder,
     super.settings,
+    bool slideUp = false,
   }) : super(
-          transitionDuration: AppMotion.page,
-          reverseTransitionDuration: AppMotion.page,
+          transitionDuration:
+              slideUp ? AppMotion.playerOpen : AppMotion.page,
+          reverseTransitionDuration:
+              slideUp ? AppMotion.playerClose : AppMotion.page,
           pageBuilder: (context, _, __) => builder(context),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            final curved = CurvedAnimation(
-              parent: animation,
-              curve: AppMotion.curve,
-            );
-            return FadeTransition(
-              opacity: curved,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0, 0.05),
-                  end: Offset.zero,
-                ).animate(curved),
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.98, end: 1.0).animate(curved),
-                  child: child,
-                ),
-              ),
-            );
-          },
+          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+              slideUp
+                  ? buildPlayerTransition(
+                      context, animation, secondaryAnimation, child)
+                  : buildAppTransition(
+                      context, animation, secondaryAnimation, child),
         );
 }
 
 /// Push with the shared transition. Drop-in for MaterialPageRoute.
 Future<T?> pushAppPage<T>(BuildContext context, Widget page,
-    {String? routeName}) {
+    {String? routeName, bool slideUp = false}) {
   return Navigator.push<T>(
     context,
     AppPageRoute<T>(
       builder: (_) => page,
       settings: routeName == null ? null : RouteSettings(name: routeName),
+      slideUp: slideUp,
     ),
   );
 }
@@ -87,6 +79,7 @@ class _MotionPressState extends State<MotionPress> {
 
   @override
   Widget build(BuildContext context) {
+    final micro = AppMotion.dur(context, AppMotion.micro);
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: _onPointerDown,
@@ -94,13 +87,13 @@ class _MotionPressState extends State<MotionPress> {
       onPointerCancel: _releasePointer,
       child: TweenAnimationBuilder<Offset>(
         tween: Tween<Offset>(begin: Offset.zero, end: _repelOffset),
-        duration: AppMotion.micro,
+        duration: micro,
         curve: Curves.easeOutBack,
         builder: (context, offset, child) => Transform.translate(
           offset: offset,
           child: AnimatedScale(
             scale: _pressed ? widget.scale : 1,
-            duration: AppMotion.micro,
+            duration: micro,
             curve: Curves.easeOutCubic,
             child: child,
           ),
@@ -122,6 +115,7 @@ class FadeSlideIn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (AppMotion.reduced(context)) return child;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
       duration: AppMotion.entrance + delay,
@@ -139,9 +133,47 @@ class FadeSlideIn extends StatelessWidget {
           ),
         );
       },
-      child: child,
+      // Retain the child's raster so the per-frame opacity/translate during the
+      // entrance composites a cached layer instead of repainting the whole
+      // (often heavy) subtree every frame.
+      child: RepaintBoundary(child: child),
     );
   }
+}
+
+/// Staggered entrance for fixed, non-recycled groups (onboarding sections,
+/// settings tiles, stat cards, transport rows). Each item fades + rises with
+/// an incremental delay. Built on [FadeSlideIn] so it is ticker-driven (no
+/// pending timers) and reduce-motion users get static content.
+class Stagger extends StatelessWidget {
+  final Widget child;
+  final int index;
+  const Stagger({super.key, required this.child, this.index = 0});
+
+  @override
+  Widget build(BuildContext context) {
+    // Cap the cascade so deep lists do not wait seconds to appear.
+    final i = index > 12 ? 12 : index;
+    return FadeSlideIn(delay: AppMotion.stagger * i, child: child);
+  }
+}
+
+/// Shared fade + tiny rise for [AnimatedSwitcher] section swaps (loading →
+/// empty → content) so every screen's state change feels the same.
+Widget fadeRiseTransition(Widget child, Animation<double> animation) {
+  final curved = CurvedAnimation(parent: animation, curve: AppMotion.curve);
+  return FadeTransition(
+    opacity: curved,
+    child: SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 0.025),
+        end: Offset.zero,
+      ).animate(curved),
+      // Retain the child's layer so the fade/slide animate a cached raster
+      // instead of repainting the incoming screen every frame.
+      child: RepaintBoundary(child: child),
+    ),
+  );
 }
 
 /// Animated play/pause swap: fade + scale, fixed size so layout never jumps.
@@ -158,7 +190,7 @@ class PlayPauseIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
-      duration: AppMotion.micro,
+      duration: AppMotion.dur(context, AppMotion.micro),
       switchInCurve: AppMotion.curve,
       switchOutCurve: AppMotion.curve,
       transitionBuilder: (child, animation) => FadeTransition(

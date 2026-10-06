@@ -13,11 +13,6 @@ import 'user_prefs.dart';
 /// channel, duration proximity, genre anchors, and language; key
 /// compatibility is skipped rather than faked. Rankings state this openly
 /// instead of pretending to hear the audio.
-///
-/// Collaborative input is a supported parameter (`collaborative`: plays
-/// immediately after the seed → count) but this install has no user
-/// network, so it defaults to empty and the blend falls back to
-/// content-first per spec (60/40 with data, 20/80 without).
 class QuickPick {
   final Song song;
   final double score;
@@ -36,7 +31,7 @@ class QuickPicksEngine {
   /// Seed (latest) dominates at ~50%; session outweighs long-term taste.
   static const List<double> sessionWeights = [0.5, 0.2, 0.125, 0.1, 0.075];
 
-  static const int maxPerArtist = 2;
+  static const int defaultMaxPerArtist = 2;
   static const int recentMinutesExclusion = 60;
   static const int sessionMinutes = 30;
 
@@ -53,10 +48,10 @@ class QuickPicksEngine {
     Set<String> queueIds = const {},
     MusicLanguage userLanguage = MusicLanguage.all,
     MusicLanguage? sessionLanguage,
-    Map<String, int> collaborative = const {},
     List<String> searchHistory = const [],
     List<String> selectedArtists = const [],
     int count = 10,
+    int maxPerArtist = defaultMaxPerArtist,
     int seedHint = 0,
     bool includeStretchPick = true,
     bool requirePersonalSignal = false,
@@ -91,16 +86,6 @@ class QuickPicksEngine {
       final sessionLang = sessionLanguage ??
           (seed == null ? null : SongFilter.detectLanguage(seed));
       final seedDur = seed?.duration.inSeconds ?? 0;
-
-      // Collaborative normalization: popular tracks must not dominate.
-      var collabMax = 0;
-      for (final v in collaborative.values) {
-        if (v > collabMax) collabMax = v;
-      }
-      final collabUseful =
-          collaborative.values.where((v) => v > 0).length >= 50;
-      final wCollab = collabUseful ? 0.6 : 0.2;
-      final wContent = collabUseful ? 0.4 : 0.8;
 
       final seenVideo = <String>{};
       final seenTrack = <String>{};
@@ -143,11 +128,7 @@ class QuickPicksEngine {
             _genreHit(c, topGenres) ||
             searchBoost >= 0.03;
         if (requirePersonalSignal && !hasPersonalSignal) continue;
-        var collab = 0.0;
-        if (collabMax > 0) {
-          collab = ((collaborative[c.id] ?? 0) / collabMax).clamp(0.0, 1.0);
-        }
-        var score = wCollab * collab + wContent * content;
+        var score = 0.8 * content;
 
         // Long-term taste + behavior: small capped boosts, never
         // override session. Meaningful listens (high totalMs vs duration),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/user_prefs.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_transitions.dart';
 import '../widgets/liquid_background.dart';
 
 class OnboardingPreferences extends StatefulWidget {
@@ -20,14 +21,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
   MusicLanguage _selectedLanguage = MusicLanguage.all;
   final Set<String> _selectedGenres = <String>{};
   final Set<String> _selectedArtists = <String>{};
-  
-  final List<String> _availableLanguages = [
-    'All', 'Hindi', 'English', 'Spanish', 'Korean', 'Japanese',
-    'Portuguese', 'French', 'Punjabi', 'Arabic', 'German', 'Italian',
-    'Indonesian', 'Turkish', 'Tamil', 'Telugu', 'Russian', 'Bengali',
-    'Thai', 'Filipino', 'Dutch', 'Kannada', 'Marathi',
-  ];
-  
+
   final List<String> _availableGenres = [
     'Pop', 'Rock', 'Hip Hop / Rap', 'Dance / Electronic', 'Latin',
     'R&B / Soul', 'Classical / Opera', 'Country', 'Reggae', 'K-Pop',
@@ -287,9 +281,6 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
       'Rahman', 'Sonu Nigam', 'Shreya Ghoshal', 'Vijay Prakash', 'Tippu',
       'S.P. Balasubrahmanyam', 'K.S. Chithra', 'Udit Narayan', 'Kumar Sanu',
     ],
-    'Malayalam': [
-      'K.S. Chithra', 'M.G. Sreekumar', 'Singer Sudeep', 'Vijay Yesudas', 'Shreya Ghoshal',
-    ],
     'Marathi': [
       'Ajay Atul', 'Shreya Ghoshal', 'Swapnil Bandodkar', 'Sonu Nigam', 'Aadesh Chowdhary',
     ],
@@ -332,65 +323,97 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Let\'s personalize your music experience',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.ink,
+                const Stagger(
+                  index: 0,
+                  child: Text(
+                    'Let\'s personalize your music experience',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.ink,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Select your preferred language, genres, and favorite artists to get tailored recommendations',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: AppColors.inkSoft,
+                const Stagger(
+                  index: 1,
+                  child: Text(
+                    'Select your preferred language, genres, and favorite artists to get tailored recommendations',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: AppColors.inkSoft,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 32),
                 
                 // Language Selection
-                _buildSectionTitle('Music Language'),
-                _buildLanguageChips(),
+                Stagger(
+                  index: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSectionTitle('Music Language'),
+                      _buildLanguageChips(),
+                    ],
+                  ),
+                ),
                 
                 const SizedBox(height: 24),
                 
                 // Genre Selection
-                _buildSectionTitle('Favorite Genres'),
-                _buildMultiSelectChips(
-                  _selectedGenres.toList(),
-                  _availableGenres,
-                  (selected) {
-                    setState(() {
-                      _selectedGenres.clear();
-                      _selectedGenres.addAll(selected);
-                    });
-                  },
+                Stagger(
+                  index: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSectionTitle('Favorite Genres'),
+                      _buildMultiSelectChips(
+                        _selectedGenres.toList(),
+                        _availableGenres,
+                        (selected) {
+                          setState(() {
+                            _selectedGenres.clear();
+                            _selectedGenres.addAll(selected);
+                          });
+                        },
+                      ),
+                    ],
+                  ),
                 ),
                 
                 const SizedBox(height: 24),
                 
                 // Artist Selection
-                _buildSectionTitle('Favorite Artists'),
-                _buildMultiSelectChips(
-                  _selectedArtists.toList(),
-                  _availableArtists,
-                  (selected) {
-                    setState(() {
-                      _selectedArtists.clear();
-                      _selectedArtists.addAll(selected);
-                    });
-                  },
+                Stagger(
+                  index: 4,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSectionTitle('Favorite Artists'),
+                      _buildMultiSelectChips(
+                        _selectedArtists.toList(),
+                        _availableArtists,
+                        (selected) {
+                          setState(() {
+                            _selectedArtists.clear();
+                            _selectedArtists.addAll(selected);
+                          });
+                        },
+                      ),
+                    ],
+                  ),
                 ),
                 
                 const SizedBox(height: 32),
                 
                 // Continue Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: ElevatedButton(
+                Stagger(
+                  index: 5,
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
                     onPressed: _selectedArtists.isNotEmpty || _selectedGenres.isNotEmpty || _selectedLanguage != MusicLanguage.all
                         ? () => _savePreferencesAndContinue()
                         : null,
@@ -411,6 +434,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
                       ),
                     ),
                   ),
+                ),
                 ),
               ],
             ),
@@ -445,15 +469,15 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
-        children: List.generate(_availableLanguages.length, (index) {
-          final lang = _availableLanguages[index];
-          final isSelected = _selectedLanguage == MusicLanguage.values[index];
+        children: MusicLanguage.values.map((lang) {
+          final label = lang.name[0].toUpperCase() + lang.name.substring(1);
+          final isSelected = _selectedLanguage == lang;
           return ChoiceChip(
-            label: Text(lang),
+            label: Text(label),
             selected: isSelected,
             onSelected: (_) {
               setState(() {
-                _selectedLanguage = MusicLanguage.values[index];
+                _selectedLanguage = lang;
                 _selectedArtists.clear();
               });
             },
@@ -468,7 +492,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
               borderRadius: BorderRadius.circular(12),
             ),
           );
-        }),
+        }).toList(),
       ),
     );
   }

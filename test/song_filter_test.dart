@@ -142,4 +142,47 @@ void main() {
       expect(out.map((s) => s.id), ['c']);
     });
   });
+
+  group('search gate keeps music uploads, drops non-music', () {
+    test('keeps slowed/reverb/remix/cover/lyric/sped-up/music video', () {
+      final out = SongFilter.applySearch([
+        _s('Kesariya', 'Arijit Singh', 268, id: 'song'),
+        _s('Kesariya (Slowed + Reverb)', 'Arijit Singh', 300, id: 'slow'),
+        _s('Kesariya Remix', 'DJ X', 200, id: 'remix'),
+        _s('Kesariya (Cover)', 'Unknown', 210, id: 'cover'),
+        _s('Kesariya Lyric Video', 'Arijit Singh', 268, id: 'lyric'),
+        _s('Kesariya (Sped Up)', 'Arijit Singh', 180, id: 'sped'),
+        _s('Kesariya (Official Music Video)', 'Arijit Singh', 268, id: 'mv'),
+      ]);
+      expect(out.map((s) => s.id),
+          ['song', 'slow', 'remix', 'cover', 'lyric', 'sped', 'mv']);
+    });
+
+    test('drops trailers, movies, TV, podcasts, long-form and unknowns', () {
+      final out = SongFilter.applySearch([
+        _s('Normal Song', 'Artist', 200, id: 'ok'),
+        _s('Movie: Official Trailer', 'Studio', 150, id: 'trailer'),
+        _s('The Movie', 'Studio', 200, id: 'movie'),
+        _s('Full Movie', 'Studio', 200, id: 'fullmovie'),
+        _s('Episode 4', 'TV', 200, id: 'episode'),
+        _s('Season 2', 'TV', 200, id: 'season'),
+        _s('Some Podcast', 'Host', 200, id: 'podcast'),
+        _s('Artist Interview', 'Host', 200, id: 'interview'),
+        _s('1 Hour Loop', 'Artist', 200, id: 'hour'),
+        _s('Greatest Hits Full Album', 'Artist', 200, id: 'album'),
+        _s('Short Clip', 'Artist', 18, id: 'short'),
+        _s('Mystery Upload', 'Artist', 0, id: 'unknown'),
+      ]);
+      expect(out.map((s) => s.id), ['ok']);
+    });
+
+    test('drops non-music channels', () {
+      final out = SongFilter.applySearch([
+        _s('Some Song', 'Artist', 200, channel: 'YouTube Movies', id: 'ytm'),
+        _s('Some Song', 'Artist', 200, channel: 'Netflix', id: 'nf'),
+        _s('Some Song', 'Artist', 200, channel: 'Artist - Topic', id: 'ok'),
+      ]);
+      expect(out.map((s) => s.id), ['ok']);
+    });
+  });
 }

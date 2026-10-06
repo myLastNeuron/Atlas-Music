@@ -1,167 +1,34 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../models/song.dart';
-import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
-import '../widgets/app_transitions.dart';
-import '../widgets/artwork.dart';
-import '../widgets/liquid_background.dart';
-import '../widgets/mini_player.dart';
-import '../widgets/play_helper.dart';
+import '../widgets/song_actions.dart';
+import 'song_collection_screen.dart';
 
-/// Liked songs collection. Listens to storage so likes/unlikes anywhere
-/// in the app reflect here instantly.
-class LikedSongsScreen extends StatefulWidget {
+/// Liked songs collection. Unfiltered explicit user data, so the count here
+/// always matches Profile and Library. Reloads on any like/unlike.
+class LikedSongsScreen extends StatelessWidget {
   const LikedSongsScreen({super.key});
 
   @override
-  State<LikedSongsScreen> createState() => _LikedSongsScreenState();
-}
-
-class _LikedSongsScreenState extends State<LikedSongsScreen> {
-  final _storage = StorageService.instance;
-  List<Song> _liked = [];
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _storage.addListener(_onStorageChanged);
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _storage.removeListener(_onStorageChanged);
-    super.dispose();
-  }
-
-  void _onStorageChanged() => _load();
-
-  Future<void> _load() async {
-    final l = await _storage.getLikedSongs();
-    if (!mounted) return;
-    setState(() {
-      // Likes are explicit user data, not discovery: show every liked song
-      // unfiltered so the count here always matches Profile and Library.
-      _liked = l;
-      _loading = false;
-    });
-  }
-
-  Future<void> _unlike(Song song) async {
-    await _storage.toggleLikedSong(song);
-    // Listener reloads; no manual refresh needed.
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final hasSong =
-        context.select<AudioPlayerService, bool>((s) => s.currentSong != null);
-    return LiquidBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: AppColors.ink),
-            onPressed: () => Navigator.pop(context),
+    final storage = StorageService.instance;
+    return SongCollectionScreen(
+      title: 'Liked Songs',
+      listKey: 'liked_list',
+      emptyIcon: Icons.favorite_outline,
+      emptyTitle: 'No liked songs yet',
+      emptyHint: 'Tap the heart on any song and it will appear here',
+      load: storage.getLikedSongs,
+      trailing: (s, i, queue) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.favorite, size: 20, color: AppColors.ink),
+            tooltip: 'Unlike',
+            onPressed: () => storage.toggleLikedSong(s),
           ),
-          title: const Text('Liked Songs',
-              style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 17,
-                  color: AppColors.ink)),
-          centerTitle: true,
-        ),
-        body: SafeArea(
-          bottom: false,
-          child: Stack(
-            children: [
-              _loading
-                  ? const Center(
-                      child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2)))
-                  : _liked.isEmpty
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(32),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.favorite_outline,
-                                    size: 44, color: AppColors.mute),
-                                SizedBox(height: 12),
-                                Text('No liked songs yet',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                        color: AppColors.ink)),
-                                SizedBox(height: 6),
-                                Text(
-                                    'Tap the heart on any song and it will appear here',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                        fontSize: 13,
-                                        color: AppColors.inkSoft)),
-                              ],
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: EdgeInsets.only(
-                              left: 8,
-                              right: 8,
-                              top: 8,
-                              bottom: hasSong ? 190 : 120),
-                          physics: const BouncingScrollPhysics(),
-                          itemCount: _liked.length,
-                          itemBuilder: (_, i) {
-                            final s = _liked[i];
-                            return MotionPress(
-                              child: ListTile(
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14)),
-                                leading: Artwork(
-                                  s.thumbnailUrl,
-                                  size: 48,
-                                  radius: 10,
-                                ),
-                                title: Text(s.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                        color: AppColors.ink)),
-                                subtitle: Text(s.artist,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        color: AppColors.inkSoft,
-                                        fontSize: 12)),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.favorite,
-                                      size: 20, color: AppColors.ink),
-                                  tooltip: 'Unlike',
-                                  onPressed: () => _unlike(s),
-                                ),
-                                onTap: () => playSongs(context,
-                                    song: s, queue: _liked, index: i),
-                              ),
-                            );
-                          },
-                        ),
-              if (hasSong)
-                const Positioned(
-                    left: 16, right: 16, bottom: 8, child: MiniPlayer()),
-            ],
-          ),
-        ),
+          SongMenuButton(song: s, queue: queue, index: i),
+        ],
       ),
     );
   }

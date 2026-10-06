@@ -11,11 +11,11 @@ import '../services/youtube_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../media/cache_service.dart';
-import '../widgets/song_tile.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/play_helper.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
+import '../widgets/song_actions.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
   final Playlist playlist;
@@ -32,23 +32,17 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   /// Playlists show every song they contain. The global language/duration
   /// rules govern discovery (search, trending, recommendations), not an
-  /// explicit import. Cached on playlist change so build never re-copies
-  /// per frame.
-  List<Song> _songsCache = [];
-  List<Song> get _songs => _songsCache;
-
-  void _resyncSongs() {
-    _songsCache = List<Song>.from(_playlist.songs);
-  }
+  /// explicit import.
+  List<Song> get _songs => _playlist.songs;
 
   @override
   void initState() {
     super.initState();
     _playlist = widget.playlist;
-    _resyncSongs();
     _storage.addListener(_onStorageChanged);
     _refreshFromStorage();
     _loadLiked();
+    _loadDownloaded();
   }
 
   @override
@@ -59,21 +53,36 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   void _onStorageChanged() {
     _loadLiked();
+    _loadDownloaded();
   }
 
   Set<String> _likedIds = {};
 
-  /// Likes/unlikes anywhere (player, Liked page) must reflect on these rows.
-  Future<void> _loadLiked() async {
-    final liked = await _storage.getLikedSongs();
+  /// Global downloaded ids: a song is offline when its file is in the
+  /// downloads list, independent of this playlist's own offline flags.
+  Set<String> _downloadedIds = {};
+
+  // Multi-select: indices point into the frozen _songs snapshot so a
+  // background reload cannot shift the row a tap targets.
+  final MultiSelectController _sel = MultiSelectController();
+  bool get _selecting => _sel.selecting;
+  Set<int> get _selected => _sel.selected;
+  bool _downloadingSingle = false;
+
+  Future<void> _applyIds(Future<List<Song>> Function() load,
+      Set<String> current, void Function(Set<String>) apply) async {
+    final ids = (await load()).map((s) => s.id).toSet();
     if (!mounted) return;
-    final ids = liked.map((s) => s.id).toSet();
-    if (ids.length == _likedIds.length &&
-        ids.every(_likedIds.contains)) {
-      return;
-    }
-    setState(() => _likedIds = ids);
+    if (ids.length == current.length && ids.every(current.contains)) return;
+    setState(() => apply(ids));
   }
+
+  Future<void> _loadDownloaded() => _applyIds(_storage.getDownloadedSongs,
+      _downloadedIds, (ids) => _downloadedIds = ids);
+
+  /// Likes/unlikes anywhere (player, Liked page) must reflect on these rows.
+  Future<void> _loadLiked() =>
+      _applyIds(_storage.getLikedSongs, _likedIds, (ids) => _likedIds = ids);
 
   Future<void> _toggleLike(Song song) async {
     await _storage.toggleLikedSong(song);
@@ -86,12 +95,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     if (match.isNotEmpty && mounted) {
       setState(() {
         _playlist = match.first;
-        _resyncSongs();
       });
     }
   }
 
-  static Widget _fallbackBackground(Playlist p) => Container(
+  static Widget _fallbackBackground() => Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [AppColors.charcoal, AppColors.inkSoft],
@@ -102,24 +110,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _downloadPlaylist() async {
     if (_songs.isEmpty) return;
-    final navigator = Navigator.of(context, rootNavigator: true);
     final messenger = ScaffoldMessenger.of(context);
-    var dialogOpen = true;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const AlertDialog(
-        backgroundColor: AppColors.card,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 12),
-            Text('Downloading playlist...'),
-          ],
-        ),
-      ),
-    ).whenComplete(() => dialogOpen = false);
+    final close = showBlockingProgress(context, 'Downloading playlist...');
     final audioService = context.read<AudioPlayerService>();
     final downloadedIds = Set<String>.from(_playlist.downloadedSongIds);
     // Dismiss the modal unconditionally once the work is done, even if this
@@ -133,7 +125,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         if (ok) downloadedIds.add(song.id);
       }
     } finally {
-      if (dialogOpen && navigator.canPop()) navigator.pop();
+      await close();
     }
     if (!mounted) return;
     // Protect only while offline content exists. Empty (all failed) stays normal.
@@ -146,13 +138,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     await _storage.savePlaylist(updated);
     setState(() {
       _playlist = updated;
-      _resyncSongs();
     });
     messenger.showSnackBar(
       SnackBar(
           content: Text(
               'Downloaded ${downloadedIds.length}/${_songs.length} songs')),
     );
+    await _loadDownloaded();
   }
 
   Future<void> _addSongDialog() async {
@@ -261,18 +253,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     yt.dispose();
     ctrl.dispose();
     if (song == null) return;
-    if (_playlist.id == StorageService.downloadedPlaylistId ||
-        _playlist.isDownloaded ||
-        _playlist.downloadedSongIds.isNotEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'Downloaded playlist is read-only — clear download first')),
-        );
-      }
-      return;
-    }
     await _storage.addSongToPlaylist(_playlist.id, song);
     await _refreshFromStorage();
     if (mounted) {
@@ -283,28 +263,132 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   Future<void> _removeSong(Song song) async {
-    // System Downloaded Music: delete the download (playlist entry + global
-    // downloaded list + cache file). This is the supported delete path.
-    if (_playlist.id == StorageService.downloadedPlaylistId) {
-      await _storage.removeSongFromDownloadedPlaylist(song.id);
+    // Deleting a downloaded track deletes the local file too; an online-only
+    // track is simply removed from the playlist.
+    if (_downloadedIds.contains(song.id)) {
+      await _storage.removeSongAndDownload(_playlist.id, song.id);
       try {
         await CacheService().invalidate(song);
       } catch (_) {}
-      await _refreshFromStorage();
-      return;
+    } else {
+      await _storage.removeSongFromPlaylist(_playlist.id, song.id);
     }
-    if ((_playlist.isDownloaded &&
-            _playlist.downloadedSongIds.contains(song.id)) ||
-        _playlist.downloadedSongIds.contains(song.id)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'Downloaded — remove via Offline Content to keep cache in sync')),
-      );
-      return;
-    }
-    await _storage.removeSongFromPlaylist(_playlist.id, song.id);
     await _refreshFromStorage();
+    await _loadDownloaded();
+  }
+
+  bool get _playlistHasDownloads =>
+      _songs.any((s) => _downloadedIds.contains(s.id));
+
+  /// Recomputes this playlist's offline set from the global downloaded list.
+  /// Runs after single/selected downloads so flags and the "downloaded"
+  /// badge stay accurate when songs are added or removed.
+  Future<void> _syncPlaylistDownloads() async {
+    final dl = (await _storage.getDownloadedSongs()).map((s) => s.id).toSet();
+    final ids =
+        _songs.map((s) => s.id).where(dl.contains).toSet();
+    final isDl = ids.isNotEmpty && ids.length == _songs.length;
+    final updated = _playlist.copyWith(
+      downloadedSongIds: ids,
+      isDownloaded: isDl,
+      isSystemManaged: ids.isNotEmpty,
+    );
+    await _storage.savePlaylist(updated);
+    if (!mounted) return;
+    setState(() {
+      _playlist = updated;
+      _downloadedIds = dl;
+    });
+  }
+
+  Future<void> _downloadOne(Song song) async {
+    if (_downloadingSingle || _downloadedIds.contains(song.id)) return;
+    _downloadingSingle = true;
+    try {
+      await downloadSongFlow(context, song);
+    } finally {
+      _downloadingSingle = false;
+    }
+    await _loadDownloaded();
+    await _syncPlaylistDownloads();
+  }
+
+  void _startSelection(int i) => setState(() => _sel.start(i));
+
+  void _toggle(int i) => setState(() => _sel.toggle(i));
+
+  void _exitSelection() {
+    if (!_sel.selecting && _sel.selected.isEmpty) return;
+    setState(_sel.exit);
+  }
+
+  Future<void> _downloadSelected() async {
+    final todo = _selected
+        .map((i) => _songs[i])
+        .where((s) => !_downloadedIds.contains(s.id))
+        .toList();
+    if (todo.isEmpty) {
+      _exitSelection();
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    final audio = context.read<AudioPlayerService>();
+    final close = showBlockingProgress(context, 'Downloading selected...');
+    var done = 0;
+    try {
+      for (final s in todo) {
+        final ok = await audio.downloadCurrentSongForSong(s);
+        if (ok) done++;
+      }
+    } finally {
+      await close();
+    }
+    if (!mounted) return;
+    _exitSelection();
+    await _syncPlaylistDownloads();
+    messenger.showSnackBar(
+      SnackBar(content: Text('Downloaded $done/${todo.length} songs')),
+    );
+  }
+
+  Future<void> _deleteSelected() async {
+    if (_selected.isEmpty) return;
+    final songs = _selected.map((i) => _songs[i]).toList();
+    for (final s in songs) {
+      if (_downloadedIds.contains(s.id)) {
+        await _storage.removeSongAndDownload(_playlist.id, s.id);
+        try {
+          await CacheService().invalidate(s);
+        } catch (_) {}
+      } else {
+        await _storage.removeSongFromPlaylist(_playlist.id, s.id);
+      }
+    }
+    if (!mounted) return;
+    _exitSelection();
+    await _refreshFromStorage();
+    await _loadDownloaded();
+  }
+
+  Widget _selectionBar() {
+    final count = _selected.length;
+    return SelectionBar(
+      count: count,
+      onCancel: _exitSelection,
+      actions: [
+        TextButton(
+          onPressed: count == 0 ? null : _downloadSelected,
+          child: const Text('Download'),
+        ),
+        if (_playlistHasDownloads)
+          TextButton(
+            onPressed: count == 0 ? null : _deleteSelected,
+            child: const Text('Delete',
+                style: TextStyle(
+                    color: Colors.red, fontWeight: FontWeight.w600)),
+          ),
+      ],
+    );
   }
 
   @override
@@ -314,7 +398,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final playlist = _playlist;
     final songs = _songs;
 
-    return LiquidBackground(
+    return PopScope(
+      canPop: !_selecting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _exitSelection();
+      },
+      child: LiquidBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
@@ -343,7 +432,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               gaplessPlayback: true,
                               filterQuality: FilterQuality.medium,
                               errorBuilder: (_, __, ___) =>
-                                  _fallbackBackground(playlist),
+                                  _fallbackBackground(),
                             )
                           else if (playlist.thumbnailUrl != null)
                             Artwork(
@@ -354,7 +443,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               height: 250,
                             )
                           else
-                            _fallbackBackground(playlist),
+                            _fallbackBackground(),
                           const DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
@@ -401,6 +490,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             child: Text('Download playlist'),
                           ),
                           const PopupMenuItem(
+                            value: 'rename',
+                            child: Text('Rename playlist'),
+                          ),
+                          const PopupMenuItem(
                             value: 'cover',
                             child: Text('Change cover'),
                           ),
@@ -437,6 +530,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               index: 0,
                               queueOrigin: 'playlist',
                             );
+                          } else if (value == 'rename') {
+                            await _renamePlaylist();
                           } else if (value == 'cover') {
                             final picked = await _pickPlaylistCover(context);
                             if (picked != null && mounted) {
@@ -452,7 +547,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             }
                             if (mounted) {
                               setState(() {
-                                _playlist = _playlist.withCover(null);
+                                _playlist = _playlist.copyWith(coverPath: null);
                               });
                             }
                           } else if (value == 'delete') {
@@ -547,52 +642,112 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                     SliverList(
                       delegate: SliverChildBuilderDelegate(
                         (context, index) {
-                          return SongTile(
-                            song: songs[index],
-                            onTap: () {
-                              playSongs(
-                                context,
-                                song: songs[index],
-                                queue: songs,
-                                index: index,
-                                queueOrigin: 'playlist',
-                              );
-                            },
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: _likedIds
-                                          .contains(songs[index].id)
-                                      ? 'Unlike'
-                                      : 'Like',
-                                  icon: Icon(
-                                    _likedIds
-                                            .contains(songs[index].id)
-                                        ? Icons.favorite
-                                        : Icons.favorite_border,
-                                    size: 20,
-                                    color: AppColors.ink,
-                                  ),
-                                  onPressed: () => _toggleLike(songs[index]),
-                                ),
-                                if (!(playlist.isDownloaded &&
-                                    playlist.downloadedSongIds
-                                        .contains(songs[index].id)))
-                                  PopupMenuButton(
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(
-                                        value: 'remove',
-                                        child: Text('Remove from Playlist'),
+                          final s = songs[index];
+                          final selected = _selected.contains(index);
+                          final isDownloaded =
+                              _downloadedIds.contains(s.id);
+                          return MotionPress(
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 4),
+                              onLongPress: _selecting
+                                  ? null
+                                  : () => _startSelection(index),
+                              leading: Stack(
+                                children: [
+                                  Artwork(s.thumbnailUrl, size: 50, radius: 8),
+                                  Positioned(
+                                    bottom: 0,
+                                    right: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.black54,
+                                        shape: BoxShape.circle,
                                       ),
-                                    ],
-                                    onSelected: (value) {
-                                      if (value == 'remove') {
-                                        _removeSong(songs[index]);
-                                      }
-                                    },
+                                      child: const Icon(Icons.play_arrow,
+                                          color: Colors.white, size: 14),
+                                    ),
                                   ),
-                              ],
+                                  // Online-only tracks show a tappable
+                                  // download sign on the left.
+                                  if (!isDownloaded)
+                                    Positioned(
+                                      bottom: 0,
+                                      left: 0,
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: _selecting
+                                            ? null
+                                            : () => _downloadOne(s),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(3),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.black54,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                              Icons.download_for_offline_outlined,
+                                              color: Colors.white,
+                                              size: 14),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              title: Text(s.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w500)),
+                              subtitle: Text(s.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: AppColors.inkSoft, fontSize: 13)),
+                              trailing: _selecting
+                                  ? SelectionCheck(selected)
+                                  : Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: _likedIds.contains(s.id)
+                                              ? 'Unlike'
+                                              : 'Like',
+                                          icon: Icon(
+                                            _likedIds.contains(s.id)
+                                                ? Icons.favorite
+                                                : Icons.favorite_border,
+                                            size: 20,
+                                            color: AppColors.ink,
+                                          ),
+                                          onPressed: () => _toggleLike(s),
+                                        ),
+                                        SongMenuButton(
+                                          song: s,
+                                          queue: songs,
+                                          index: index,
+                                          queueOrigin: 'playlist',
+                                          // Removing a track from a playlist
+                                          // also deletes its download.
+                                          onRemoveFromPlaylist: () =>
+                                              _removeSong(s),
+                                        ),
+                                      ],
+                                    ),
+                              onTap: () {
+                                if (_selecting) {
+                                  _toggle(index);
+                                  return;
+                                }
+                                playSongs(
+                                  context,
+                                  song: s,
+                                  queue: songs,
+                                  index: index,
+                                  queueOrigin: 'playlist',
+                                );
+                              },
                             ),
                           );
                         },
@@ -605,11 +760,50 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               if (hasSong)
                 const Positioned(
                     left: 16, right: 16, bottom: 8, child: MiniPlayer()),
+              if (_selecting)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: hasSong ? 100 : 16,
+                  child: _selectionBar(),
+                ),
             ],
           ),
         ),
       ),
+      ),
     );
+  }
+
+  Future<void> _renamePlaylist() async {
+    final ctrl = TextEditingController(text: _playlist.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: const Text('Rename playlist'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+              hintText: 'Playlist name', border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (name == null || name.isEmpty) return;
+    await _storage.renamePlaylist(_playlist.id, name);
+    if (!mounted) return;
+    setState(() => _playlist = _playlist.copyWith(name: name));
   }
 
   Future<File?> _pickPlaylistCover(BuildContext context) async {
@@ -626,7 +820,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     await _storage.updateCover(widget.playlist.id, dest.path);
     if (mounted) {
       setState(() {
-        _playlist = _playlist.withCover(dest.path);
+        _playlist = _playlist.copyWith(coverPath: dest.path);
       });
     }
     return dest;

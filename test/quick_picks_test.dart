@@ -192,35 +192,6 @@ void main() {
     });
   });
 
-  group('collaborative blend', () {
-    test('strong collab signal can win without data weakness', () {
-      final picks = QuickPicksEngine.rank(
-        recent: recent,
-        candidates: [
-          _s('Fan Favorite', 'Some Artist', 200, id: 'fav'),
-          _s('After Hours', 'The Weeknd', 200, id: 'c2'),
-        ],
-        collaborative: {
-          for (var i = 0; i < 60; i++) 'pad$i': 1,
-          'fav': 500,
-        },
-      );
-      expect(picks.first.song.id, 'fav');
-    });
-
-    test('weak collab falls back to content similarity', () {
-      final picks = QuickPicksEngine.rank(
-        recent: recent,
-        candidates: [
-          _s('Fan Favorite', 'Some Artist', 200, id: 'fav'),
-          _s('After Hours', 'The Weeknd', 200, id: 'c2'),
-        ],
-        collaborative: {'fav': 2},
-      );
-      expect(picks.first.song.id, 'c2');
-    });
-  });
-
   group('diversity + language', () {
     test('one stretch pick sits in the middle, varied slot', () {
       final pool = [
@@ -254,6 +225,18 @@ void main() {
         sessionLanguage: MusicLanguage.hindi,
       );
       expect(picks.first.song.id, 'hi');
+    });
+
+    test('maxPerArtist cap is configurable', () {
+      final pool = [
+        for (var i = 0; i < 5; i++)
+          _s('Track $i', 'One Artist', 200, id: 'x$i'),
+      ];
+      final strict = QuickPicksEngine.rank(recent: recent, candidates: pool);
+      expect(strict.length, 2);
+      final relaxed = QuickPicksEngine.rank(recent: recent,
+          candidates: pool, maxPerArtist: 4, includeStretchPick: false);
+      expect(relaxed.length, 4);
     });
   });
 }

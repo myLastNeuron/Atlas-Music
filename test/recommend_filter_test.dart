@@ -33,16 +33,6 @@ void main() {
     expect(out.map((s) => s.title), ['Track Name (Official Audio)']);
   });
 
-  test('popular filter drops clips and movies, keeps browse tracks', () {
-    final out = filterPopularSongs([
-      _s('Short TikTok', 'A', 25),
-      _s('Movie Soundtrack', 'A', 900),
-      _s('Normal Song', 'A', 200),
-      _s('Unknown Length', 'A', 0),
-    ]);
-    expect(out.map((s) => s.title), ['Normal Song']);
-  });
-
   test('drops remix/edit/slowed/reverb variants', () {
     final out = filterRecommendedSongs([
       _s('Kesariya (Slowed + Reverb)', 'Arijit Singh', 200),

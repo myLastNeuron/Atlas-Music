@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,7 +14,6 @@ class StorageService extends ChangeNotifier {
   static const String _recentlyPlayedKey = 'recently_played';
   static const String _listeningStatsKey = 'listening_stats';
   static const String _topArtistsKey = 'top_artists';
-  static const String _topGenresKey = 'top_genres';
   static const String _searchHistoryKey = 'search_history';
   static const String _downloadedSongsKey = 'downloaded_songs';
   static const String downloadedPlaylistId = 'downloaded_music';
@@ -23,10 +23,18 @@ class StorageService extends ChangeNotifier {
   // recordListen per track change) silently lose updates. Route every
   // mutator through this tail future so writes run one at a time. The tail
   // is kept resolved, so it never retains an error and never grows.
+  //
+  // Reentrant: a serialized action may await another serialized method. The
+  // first (outer) call owns the queue; a nested call sees the zone marker and
+  // runs inline instead of deadlocking behind the action awaiting it.
+  static final Object _writeZoneKey = Object();
   Future<void> _writeTail = Future<void>.value();
 
   Future<T> _serialized<T>(Future<T> Function() action) {
-    final result = _writeTail.then((_) => action());
+    if (Zone.current[_writeZoneKey] == true) return action();
+    final result = _writeTail.then(
+      (_) => runZoned(action, zoneValues: {_writeZoneKey: true}),
+    );
     _writeTail = result.then((_) {}, onError: (_) {});
     return result;
   }
@@ -81,7 +89,7 @@ class StorageService extends ChangeNotifier {
         }
       }
       if (target == null) return;
-      // System Downloaded Music is managed via deleteDownloadedPlaylist().
+      // System Downloaded Music is managed separately.
       if (target.id == downloadedPlaylistId) return;
       // Protected while it still holds offline content. Must be cleared via
       // Offline Content first. Once downloadedSongIds is empty and
@@ -104,24 +112,15 @@ class StorageService extends ChangeNotifier {
       final idx = playlists.indexWhere((p) => p.id == playlistId);
       if (idx < 0) return;
       final p = playlists[idx];
-      // Downloaded/protected playlists are read-only; manage via Offline Content.
+      // The system Downloaded Music list is managed by downloads, not manually.
       if (p.id == downloadedPlaylistId) return;
-      if (p.isDownloaded || p.downloadedSongIds.isNotEmpty) return;
-      if (p.isSystemManaged) return;
       if (p.songs.any((s) => s.id == song.id)) return;
-      playlists[idx] = Playlist(
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        thumbnailUrl: p.thumbnailUrl,
-        coverPath: p.coverPath,
-        songs: [...p.songs, song],
-        createdAt: p.createdAt,
-        source: p.source,
-        isDownloaded: p.isDownloaded,
-        downloadedSongIds: p.downloadedSongIds,
-        isSystemManaged: p.isSystemManaged,
-      );
+      // A user playlist that holds offline tracks is still editable: adding an
+      // online-only song simply clears the "fully downloaded" flag.
+      final songs = [...p.songs, song];
+      final isDl = p.downloadedSongIds.isNotEmpty &&
+          p.downloadedSongIds.length == songs.length;
+      playlists[idx] = p.copyWith(songs: songs, isDownloaded: isDl);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
         _playlistsKey,
@@ -131,8 +130,7 @@ class StorageService extends ChangeNotifier {
     });
   }
 
-  Future<void> removeSongFromPlaylist(
-      String playlistId, String songId) {
+  Future<void> removeSongFromPlaylist(String playlistId, String songId) {
     return _serialized(() async {
       // System Downloaded Music has its own removal path that also cleans
       // the global downloaded list.
@@ -144,24 +142,18 @@ class StorageService extends ChangeNotifier {
       final idx = playlists.indexWhere((p) => p.id == playlistId);
       if (idx < 0) return;
       final p = playlists[idx];
-      // Downloaded songs must be removed via Offline Content so cache +
-      // flags stay in sync. Online-only songs can be removed directly.
-      // Once all offline content is gone the playlist is normal again.
-      if (p.isDownloaded && p.downloadedSongIds.contains(songId)) return;
+      // A downloaded song must go through [removeSongAndDownload] so the cache
+      // and global list stay in sync. Online-only songs can be removed here
+      // even when the playlist also holds offline tracks.
       if (p.downloadedSongIds.contains(songId)) return;
-      if (p.isSystemManaged && p.downloadedSongIds.isNotEmpty) return;
-      playlists[idx] = Playlist(
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        thumbnailUrl: p.thumbnailUrl,
-        coverPath: p.coverPath,
-        songs: p.songs.where((s) => s.id != songId).toList(),
-        createdAt: p.createdAt,
-        source: p.source,
-        isSystemManaged: p.isSystemManaged,
-        isDownloaded: p.isDownloaded,
-        downloadedSongIds: p.downloadedSongIds,
+      final nextSongs = p.songs.where((s) => s.id != songId).toList();
+      final isDl = p.downloadedSongIds.isNotEmpty &&
+          p.downloadedSongIds.length == nextSongs.length;
+      final sys = p.downloadedSongIds.isNotEmpty ? p.isSystemManaged : false;
+      playlists[idx] = p.copyWith(
+        songs: nextSongs,
+        isDownloaded: isDl,
+        isSystemManaged: sys,
       );
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
@@ -177,12 +169,28 @@ class StorageService extends ChangeNotifier {
       final playlists = await getPlaylists();
       final index = playlists.indexWhere((p) => p.id == playlistId);
       if (index < 0) return;
-      playlists[index] = playlists[index].withCover(path);
+      playlists[index] = playlists[index].copyWith(coverPath: path);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
         _playlistsKey,
         json.encode(playlists.map((p) => p.toJson()).toList()),
       );
+    });
+  }
+
+  /// Renames a playlist. Caller validates a non-empty name.
+  Future<void> renamePlaylist(String playlistId, String name) {
+    return _serialized(() async {
+      final playlists = await getPlaylists();
+      final index = playlists.indexWhere((p) => p.id == playlistId);
+      if (index < 0) return;
+      playlists[index] = playlists[index].copyWith(name: name);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _playlistsKey,
+        json.encode(playlists.map((p) => p.toJson()).toList()),
+      );
+      notifyListeners();
     });
   }
 
@@ -231,7 +239,11 @@ class StorageService extends ChangeNotifier {
   Future<void> addToRecentlyPlayed(Song song) {
     return _serialized(() async {
       final recentlyPlayed = await getRecentlyPlayed();
-      recentlyPlayed.removeWhere((s) => s.id == song.id);
+      // Play-order history: collapse only CONSECUTIVE repeats.
+      // A,A,A -> A. A,B,A -> A,B,A (both A's kept). A,B,C,A -> A,B,C,A.
+      if (recentlyPlayed.isNotEmpty && recentlyPlayed.first.id == song.id) {
+        return; // already the newest entry; no write, no notify
+      }
       recentlyPlayed.insert(0, song);
       if (recentlyPlayed.length > 50) {
         recentlyPlayed.removeRange(50, recentlyPlayed.length);
@@ -244,13 +256,34 @@ class StorageService extends ChangeNotifier {
     });
   }
 
-  /// Removes a single song from listening history. Other data (listening
-  /// stats, playlists) is untouched.
-  Future<void> removeFromRecentlyPlayed(String songId) {
+  /// Deletes selected history entries in one serialized write.
+  /// [allCopies] true  -> remove every entry whose id is selected.
+  /// [allCopies] false -> drop exactly as many occurrences as are selected.
+  /// Occurrences are indistinguishable, so dropping one copy is
+  /// position-independent.
+  Future<void> removeRecentEntries(List<Song> selected,
+      {required bool allCopies}) {
     return _serialized(() async {
       final recentlyPlayed = await getRecentlyPlayed();
       final before = recentlyPlayed.length;
-      recentlyPlayed.removeWhere((s) => s.id == songId);
+      if (allCopies) {
+        final ids = selected.map((s) => s.id).toSet();
+        recentlyPlayed.removeWhere((s) => ids.contains(s.id));
+      } else {
+        final counts = <String, int>{};
+        for (final s in selected) {
+          counts[s.id] = (counts[s.id] ?? 0) + 1;
+        }
+        counts.forEach((id, n) {
+          recentlyPlayed.removeWhere((s) {
+            if (n > 0 && s.id == id) {
+              n--;
+              return true;
+            }
+            return false;
+          });
+        });
+      }
       if (recentlyPlayed.length == before) return;
       final prefs = await SharedPreferences.getInstance();
       final jsonList = recentlyPlayed.map((s) => s.toJson()).toList();
@@ -311,9 +344,8 @@ class StorageService extends ChangeNotifier {
         // Skip timestamps power time-decayed skip penalties (Quick Picks):
         // recent repeated skips weigh strongly, >90d less than half, >1yr
         // effectively ignored. Capped so the blob never grows.
-        final times = ((entry['skipTimes'] as List?) ?? [])
-            .whereType<int>()
-            .toList();
+        final times =
+            ((entry['skipTimes'] as List?) ?? []).whereType<int>().toList();
         times.add(now);
         entry['skipTimes'] =
             times.length > 20 ? times.sublist(times.length - 20) : times;
@@ -348,34 +380,6 @@ class StorageService extends ChangeNotifier {
   Future<List<String>> getTopArtists({int limit = 5}) async {
     final artists = await _getTopArtists();
     final sorted = artists.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return sorted.take(limit).map((e) => e.key).toList();
-  }
-
-  Future<Map<String, int>> _getTopGenres() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_topGenresKey);
-    final decoded = _safeDecode<Map<String, dynamic>>(raw);
-    if (decoded == null) return {};
-    return Map<String, int>.from(decoded);
-  }
-
-  Future<void> recordGenre(String genre) {
-    return _serialized(() async {
-      if (genre.isEmpty) return;
-      final genres = await _getTopGenres();
-      genres[genre] = (genres[genre] ?? 0) + 1;
-      final prefs = await SharedPreferences.getInstance();
-      final sorted = genres.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final top = Map.fromEntries(sorted.take(10));
-      await prefs.setString(_topGenresKey, json.encode(top));
-    });
-  }
-
-  Future<List<String>> getTopGenres({int limit = 3}) async {
-    final genres = await _getTopGenres();
-    final sorted = genres.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     return sorted.take(limit).map((e) => e.key).toList();
   }
@@ -420,7 +424,9 @@ class StorageService extends ChangeNotifier {
     final jsonString = prefs.getString(_downloadedSongsKey);
     final jsonList = _safeDecode<List<dynamic>>(jsonString);
     if (jsonList == null) return [];
-    return jsonList.map((j) => Song.fromJson(j as Map<String, dynamic>)).toList();
+    return jsonList
+        .map((j) => Song.fromJson(j as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> addDownloadedSong(Song song) {
@@ -435,25 +441,27 @@ class StorageService extends ChangeNotifier {
               .toList();
       if (!list.any((s) => s.id == song.id)) {
         list.add(song);
-        await prefs.setString(
-            _downloadedSongsKey, json.encode(list.map((s) => s.toJson()).toList()));
+        await prefs.setString(_downloadedSongsKey,
+            json.encode(list.map((s) => s.toJson()).toList()));
       }
     });
   }
 
-  Future<void> removeDownloadedSong(String songId) {
-    return _serialized(() async {
-      final prefs = await SharedPreferences.getInstance();
-      final jsonString = prefs.getString(_downloadedSongsKey);
-      final decoded = _safeDecode<List<dynamic>>(jsonString);
-      if (decoded != null) {
-        final List<Song> list = decoded
-            .map((j) => Song.fromJson(j as Map<String, dynamic>))
-            .toList();
-        list.removeWhere((s) => s.id == songId);
-        await prefs.setString(
-            _downloadedSongsKey, json.encode(list.map((s) => s.toJson()).toList()));
-      }
+  /// Drops a song from the global downloaded list, every playlist's offline
+  /// set, and the (hidden) system Downloaded Music playlist. Caller deletes
+  /// the cached file.
+  Future<void> _removeDownloadEverywhere(String songId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(_downloadedSongsKey);
+    final decoded = _safeDecode<List<dynamic>>(jsonString);
+    if (decoded != null) {
+      final List<Song> list = decoded
+          .map((j) => Song.fromJson(j as Map<String, dynamic>))
+          .toList();
+      list.removeWhere((s) => s.id == songId);
+      await prefs.setString(_downloadedSongsKey,
+          json.encode(list.map((s) => s.toJson()).toList()));
+    }
     // Also drop it from every playlist's offline set. Online copies in
     // playlist.songs are preserved. When a playlist's offline set becomes
     // empty it is unprotected so it behaves normally again (deletable).
@@ -461,11 +469,16 @@ class StorageService extends ChangeNotifier {
     bool changed = false;
     for (var i = 0; i < playlists.length; i++) {
       final p = playlists[i];
-      if (!p.downloadedSongIds.contains(songId)) continue;
+      final isSystem = p.id == downloadedPlaylistId;
+      if (!p.downloadedSongIds.contains(songId) && !isSystem) continue;
       final nextIds = Set<String>.from(p.downloadedSongIds)..remove(songId);
-      final isDl = nextIds.isNotEmpty && nextIds.length == p.songs.length;
-      if (p.id == downloadedPlaylistId) {
+      final nextSongs = isSystem
+          ? p.songs.where((s) => s.id != songId).toList()
+          : p.songs;
+      final isDl = nextIds.isNotEmpty && nextIds.length == nextSongs.length;
+      if (isSystem) {
         playlists[i] = p.copyWith(
+          songs: nextSongs,
           isDownloaded: isDl,
           downloadedSongIds: nextIds,
         );
@@ -484,17 +497,46 @@ class StorageService extends ChangeNotifier {
       changed = true;
     }
     if (changed) {
-      await prefs.setString(
-          _playlistsKey, json.encode(playlists.map((p) => p.toJson()).toList()));
-      notifyListeners();
+      await prefs.setString(_playlistsKey,
+          json.encode(playlists.map((p) => p.toJson()).toList()));
     }
+    notifyListeners();
+  }
+
+  Future<void> removeDownloadedSong(String songId) {
+    return _serialized(() => _removeDownloadEverywhere(songId));
+  }
+
+  /// Removes a song from [playlistId] AND deletes its download everywhere.
+  /// Used when deleting a downloaded track from a playlist; caller deletes
+  /// the cached file.
+  Future<void> removeSongAndDownload(String playlistId, String songId) {
+    return _serialized(() async {
+      final playlists = await getPlaylists();
+      final idx = playlists.indexWhere((p) => p.id == playlistId);
+      if (idx >= 0) {
+        final p = playlists[idx];
+        final nextSongs = p.songs.where((s) => s.id != songId).toList();
+        final nextIds = Set<String>.from(p.downloadedSongIds)..remove(songId);
+        final isDl = nextIds.isNotEmpty && nextIds.length == nextSongs.length;
+        playlists[idx] = p.copyWith(
+          songs: nextSongs,
+          downloadedSongIds: nextIds,
+          isDownloaded: isDl,
+          isSystemManaged: nextIds.isNotEmpty ? p.isSystemManaged : false,
+        );
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_playlistsKey,
+            json.encode(playlists.map((p) => p.toJson()).toList()));
+      }
+      await removeDownloadedSong(songId);
     });
   }
 
   Future<Playlist> ensureDownloadedPlaylist() {
     return _serialized(() async {
       final playlists = await getPlaylists();
-      var pl = playlists.firstWhere(
+      final pl = playlists.firstWhere(
         (p) => p.id == downloadedPlaylistId,
         orElse: () => Playlist(
           id: downloadedPlaylistId,
@@ -520,24 +562,10 @@ class StorageService extends ChangeNotifier {
       if (idx >= 0) {
         final existing = playlists[idx];
         if (!existing.songs.any((s) => s.id == song.id)) {
-          // Rebuild rather than mutate in place: Playlist is a value object
-          // everywhere else, and the live instance may already be on screen.
-          playlists[idx] = Playlist(
-            id: existing.id,
-            name: existing.name,
-            description: existing.description,
-            thumbnailUrl: existing.thumbnailUrl,
-            coverPath: existing.coverPath,
-            songs: [...existing.songs, song],
-            createdAt: existing.createdAt,
-            source: existing.source,
-            isDownloaded: existing.isDownloaded,
-            downloadedSongIds: existing.downloadedSongIds,
-            isSystemManaged: existing.isSystemManaged,
-          );
+          playlists[idx] = existing.copyWith(songs: [...existing.songs, song]);
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(
-              _playlistsKey, json.encode(playlists.map((p) => p.toJson()).toList()));
+          await prefs.setString(_playlistsKey,
+              json.encode(playlists.map((p) => p.toJson()).toList()));
           notifyListeners();
         }
       }
@@ -550,162 +578,35 @@ class StorageService extends ChangeNotifier {
       final idx = playlists.indexWhere((p) => p.id == downloadedPlaylistId);
       if (idx >= 0) {
         final pl = playlists[idx];
-        playlists[idx] = Playlist(
-          id: pl.id,
-          name: pl.name,
-          description: pl.description,
-          thumbnailUrl: pl.thumbnailUrl,
-          coverPath: pl.coverPath,
-          songs: pl.songs.where((s) => s.id != songId).toList(),
-          createdAt: pl.createdAt,
-          source: pl.source,
-          isDownloaded: pl.isDownloaded,
-          downloadedSongIds: pl.downloadedSongIds,
-          isSystemManaged: pl.isSystemManaged,
-        );
+        playlists[idx] =
+            pl.copyWith(songs: pl.songs.where((s) => s.id != songId).toList());
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(
-            _playlistsKey, json.encode(playlists.map((p) => p.toJson()).toList()));
+        await prefs.setString(_playlistsKey,
+            json.encode(playlists.map((p) => p.toJson()).toList()));
       }
-    // Keep global downloaded list in sync, but preserve it if another
-    // downloaded playlist still references this song offline.
-    final fresh = await getPlaylists();
-    final stillNeeded =
-        fresh.any((pl) => pl.downloadedSongIds.contains(songId));
-    if (stillNeeded) {
-      notifyListeners();
-      return;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString(_downloadedSongsKey);
-    final decoded = _safeDecode<List<dynamic>>(jsonString);
-    if (decoded != null) {
-      final List<Song> list = decoded
-          .map((j) => Song.fromJson(j as Map<String, dynamic>))
-          .toList();
-      final before = list.length;
-      list.removeWhere((s) => s.id == songId);
-      if (list.length != before) {
-        await prefs.setString(
-            _downloadedSongsKey, json.encode(list.map((s) => s.toJson()).toList()));
-      }
-    }
-    notifyListeners();
-    });
-  }
-
-  /// Removes one offline track from a downloaded playlist via Offline Content.
-  /// Preserves the online playlist and its songs; only clears offline flags.
-  /// When the last offline track is removed the playlist is unprotected
-  /// (isDownloaded=false, isSystemManaged=false) so it becomes deletable.
-  Future<void> removeOfflineSongFromPlaylist(
-      String playlistId, String songId) {
-    return _serialized(() async {
-      if (playlistId == downloadedPlaylistId) {
-        await removeSongFromDownloadedPlaylist(songId);
-        return;
-      }
-      final playlists = await getPlaylists();
-      final idx = playlists.indexWhere((p) => p.id == playlistId);
-      if (idx < 0) return;
-      final p = playlists[idx];
-      if (!p.downloadedSongIds.contains(songId)) return;
-      final nextIds = Set<String>.from(p.downloadedSongIds)..remove(songId);
-      final isDl = nextIds.isNotEmpty && nextIds.length == p.songs.length;
-      final sys = nextIds.isNotEmpty ? p.isSystemManaged : false;
-      playlists[idx] = p.copyWith(
-        isDownloaded: isDl,
-        downloadedSongIds: nextIds,
-        isSystemManaged: sys,
-      );
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-          _playlistsKey, json.encode(playlists.map((p) => p.toJson()).toList()));
-
-    // Drop from global downloaded list if no other playlist still needs it.
-    final stillNeeded = playlists.any((pl) =>
-        pl.id != playlistId && pl.downloadedSongIds.contains(songId));
-    final sysPl = playlists.firstWhere(
-      (pl) => pl.id == downloadedPlaylistId,
-      orElse: () => Playlist(id: '', name: '', songs: [], createdAt: DateTime.now()),
-    );
-    final inSys = sysPl.id.isNotEmpty && sysPl.songs.any((s) => s.id == songId);
-    if (!stillNeeded && !inSys) {
-      final js = prefs.getString(_downloadedSongsKey);
-      final decoded = _safeDecode<List<dynamic>>(js);
-      if (decoded != null) {
-        final List<Song> list = decoded
-            .map((j) => Song.fromJson(j as Map<String, dynamic>))
-            .toList();
-        list.removeWhere((s) => s.id == songId);
-        await prefs.setString(
-            _downloadedSongsKey, json.encode(list.map((s) => s.toJson()).toList()));
-      }
-    }
-    notifyListeners();
-    });
-  }
-
-  /// Clears all offline state for a playlist via Offline Content.
-  /// Online playlist and its songs are preserved; only download flags,
-  /// protection, and global downloaded entries are removed.
-  Future<void> clearPlaylistDownload(String playlistId) {
-    return _serialized(() async {
-      if (playlistId == downloadedPlaylistId) return;
-      final playlists = await getPlaylists();
-      final idx = playlists.indexWhere((p) => p.id == playlistId);
-      if (idx < 0) return;
-      final p = playlists[idx];
-      final removedIds = Set<String>.from(p.downloadedSongIds);
-      playlists[idx] = p.copyWith(
-        isDownloaded: false,
-        downloadedSongIds: <String>{},
-        isSystemManaged: false,
-      );
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-          _playlistsKey, json.encode(playlists.map((p) => p.toJson()).toList()));
-      if (removedIds.isNotEmpty) {
-        // Remove orphaned ids from global list (keep those still needed elsewhere).
-        final needed = <String>{};
-        for (final pl in playlists) {
-          if (pl.id == playlistId) continue;
-          needed.addAll(pl.downloadedSongIds);
-        }
-        final sysIdx =
-            playlists.indexWhere((pl) => pl.id == downloadedPlaylistId);
-        if (sysIdx >= 0) {
-          for (final s in playlists[sysIdx].songs) {
-            needed.add(s.id);
-          }
-        }
-        final js = prefs.getString(_downloadedSongsKey);
-        final decoded = _safeDecode<List<dynamic>>(js);
+      // Keep global downloaded list in sync, but preserve it if another
+      // downloaded playlist still references this song offline.
+      final stillNeeded =
+          playlists.any((pl) => pl.downloadedSongIds.contains(songId));
+      if (!stillNeeded) {
+        final prefs = await SharedPreferences.getInstance();
+        final jsonString = prefs.getString(_downloadedSongsKey);
+        final decoded = _safeDecode<List<dynamic>>(jsonString);
         if (decoded != null) {
           final List<Song> list = decoded
               .map((j) => Song.fromJson(j as Map<String, dynamic>))
               .toList();
-          list.removeWhere(
-              (s) => removedIds.contains(s.id) && !needed.contains(s.id));
-          await prefs.setString(
-              _downloadedSongsKey, json.encode(list.map((s) => s.toJson()).toList()));
+          final before = list.length;
+          list.removeWhere((s) => s.id == songId);
+          if (list.length != before) {
+            await prefs.setString(_downloadedSongsKey,
+                json.encode(list.map((s) => s.toJson()).toList()));
+          }
         }
       }
       notifyListeners();
     });
   }
 
-  Future<void> deleteDownloadedPlaylist() {
-    return _serialized(() async {
-      final playlists = await getPlaylists();
-      final filtered =
-          playlists.where((p) => p.id != downloadedPlaylistId).toList();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-          _playlistsKey, json.encode(filtered.map((p) => p.toJson()).toList()));
-      // also clear downloaded songs
-      await prefs.remove(_downloadedSongsKey);
-      notifyListeners();
-    });
-  }
 }
+

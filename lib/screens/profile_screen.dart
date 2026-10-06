@@ -2,14 +2,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import '../models/playlist.dart';
 import '../services/storage_service.dart';
 import '../services/system_permissions.dart';
 import '../services/user_prefs.dart';
 import '../services/spotify_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
-import '../media/cache_service.dart';
 import '../widgets/liquid_background.dart';
 import 'liked_songs_screen.dart';
 
@@ -305,220 +303,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
-  Future<void> _openOfflineContents() async {
-    if (!mounted) return;
-    final cache = CacheService();
-    Future<void> refreshDialog(
-        void Function(void Function()) setStateDialog) async {
-      setStateDialog(() {});
-    }
-
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setStateDialog) {
-          return AlertDialog(
-            backgroundColor: AppColors.card,
-            title: const Text('Offline Contents'),
-            content: SizedBox(
-              width: 360,
-              height: 320,
-              child: FutureBuilder<List<Playlist>>(
-                future: _storage.getPlaylists(),
-                builder: (context, snap) {
-                  if (!snap.hasData) return const SizedBox.shrink();
-                  // Show any playlist with offline flags OR the system list with songs.
-                  var playlists = snap.data!
-                      .where((p) =>
-                          p.isDownloaded ||
-                          p.downloadedSongIds.isNotEmpty ||
-                          (p.id == StorageService.downloadedPlaylistId &&
-                              p.songs.isNotEmpty))
-                      .toList();
-                  if (playlists.isEmpty) {
-                    return const Center(child: Text('No downloaded playlists'));
-                  }
-                  return ListView.builder(
-                    itemCount: playlists.length,
-                    itemBuilder: (_, i) {
-                      final p = playlists[i];
-                      final isSys = p.id == StorageService.downloadedPlaylistId;
-                      final offlineCount =
-                          isSys ? p.songs.length : p.downloadedSongIds.length;
-                      return MotionPress(
-                        scale: 0.99,
-                        child: ListTile(
-                          leading: const Icon(Icons.offline_bolt),
-                          title: Text(p.name, maxLines: 1),
-                          subtitle: Text(
-                              '$offlineCount/${p.songs.length} tracks offline'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 18),
-                            tooltip: isSys
-                                ? 'Clear downloads'
-                                : 'Remove offline copy (keeps playlist)',
-                            onPressed: () async {
-                              if (isSys) {
-                                // Clear system downloads song by song to also
-                                // clean global list + cache files.
-                                final ids = p.songs.map((s) => s.id).toList();
-                                for (final id in ids) {
-                                  final song = p.songs.firstWhere(
-                                    (s) => s.id == id,
-                                    orElse: () => p.songs.first,
-                                  );
-                                  await _storage
-                                      .removeSongFromDownloadedPlaylist(id);
-                                  try {
-                                    await cache.invalidate(song);
-                                  } catch (_) {}
-                                }
-                              } else {
-                                // Preserve online playlist + songs; only clear
-                                // offline flags/protection + orphaned globals.
-                                final songs = List.of(p.songs);
-                                await _storage.clearPlaylistDownload(p.id);
-                                for (final s in songs) {
-                                  if (p.downloadedSongIds.contains(s.id)) {
-                                    try {
-                                      await cache.invalidate(s);
-                                    } catch (_) {}
-                                  }
-                                }
-                              }
-                              await refreshDialog(setStateDialog);
-                            },
-                          ),
-                          onTap: () async {
-                            // Re-read fresh playlist for the inner list.
-                            final all = await _storage.getPlaylists();
-                            final fresh = all.firstWhere(
-                              (pl) => pl.id == p.id,
-                              orElse: () => p,
-                            );
-                            if (!context.mounted) return;
-                            await showDialog(
-                              context: context,
-                              builder: (_) => StatefulBuilder(
-                                builder: (innerCtx, setInner) => AlertDialog(
-                                  backgroundColor: AppColors.card,
-                                  title: Text(fresh.name),
-                                  content: SizedBox(
-                                    width: 300,
-                                    height: 260,
-                                    child: FutureBuilder<List<Playlist>>(
-                                      future: _storage.getPlaylists(),
-                                      builder: (c2, s2) {
-                                        if (!s2.hasData) {
-                                          return const SizedBox.shrink();
-                                        }
-                                        final cur = s2.data!.firstWhere(
-                                          (pl) => pl.id == fresh.id,
-                                          orElse: () => fresh,
-                                        );
-                                        if (cur.songs.isEmpty) {
-                                          return const Center(
-                                              child: Text(
-                                                  'No songs — offline cleared, playlist is normal again'));
-                                        }
-                                        return ListView.builder(
-                                          itemCount: cur.songs.length,
-                                          itemBuilder: (_, idx) {
-                                            final s = cur.songs[idx];
-                                            final curIsSys = cur.id ==
-                                                StorageService
-                                                    .downloadedPlaylistId;
-                                            final isDl = curIsSys
-                                                ? true
-                                                : cur.downloadedSongIds
-                                                    .contains(s.id);
-                                            return ListTile(
-                                              dense: true,
-                                              title: Text(s.title, maxLines: 1),
-                                              subtitle:
-                                                  Text(s.artist, maxLines: 1),
-                                              trailing: isDl
-                                                  ? IconButton(
-                                                      icon: const Icon(
-                                                          Icons.delete_outline,
-                                                          size: 18),
-                                                      tooltip:
-                                                          'Remove download',
-                                                      onPressed: () async {
-                                                        if (curIsSys) {
-                                                          await _storage
-                                                              .removeSongFromDownloadedPlaylist(
-                                                                  s.id);
-                                                        } else {
-                                                          await _storage
-                                                              .removeOfflineSongFromPlaylist(
-                                                                  cur.id, s.id);
-                                                        }
-                                                        try {
-                                                          await cache
-                                                              .invalidate(s);
-                                                        } catch (_) {}
-                                                        // Also drop from global downloaded list if orphaned.
-                                                        try {
-                                                          final rest =
-                                                              await _storage
-                                                                  .getPlaylists();
-                                                          final stillNeeded =
-                                                              rest.any((pl) => pl
-                                                                  .downloadedSongIds
-                                                                  .contains(
-                                                                      s.id));
-                                                          if (!stillNeeded) {
-                                                            await _storage
-                                                                .removeDownloadedSong(
-                                                                    s.id);
-                                                          }
-                                                        } catch (_) {}
-                                                        setInner(() {});
-                                                        await refreshDialog(
-                                                            setStateDialog);
-                                                      },
-                                                    )
-                                                  : const Icon(Icons.cloud_off,
-                                                      size: 18),
-                                            );
-                                          },
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: const Text('Close'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                            await refreshDialog(setStateDialog);
-                          },
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    // Refresh profile stats after offline changes.
-    _loadStats();
-  }
-
   @override
   Widget build(BuildContext context) {
     final initial = _name.isNotEmpty ? _name.trim()[0].toUpperCase() : '?';
@@ -629,14 +413,17 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ),
             const SizedBox(height: 14),
-            Row(
-              children: [
-                _stat('$_recent', 'Recent'),
-                const SizedBox(width: 10),
-                _stat('$_liked', 'Liked', onTap: _openLiked),
-                const SizedBox(width: 10),
-                _stat('$_playlists', 'Playlists'),
-              ],
+            Stagger(
+              index: 1,
+              child: Row(
+                children: [
+                  _stat('$_recent', 'Recent'),
+                  const SizedBox(width: 10),
+                  _stat('$_liked', 'Liked', onTap: _openLiked),
+                  const SizedBox(width: 10),
+                  _stat('$_playlists', 'Playlists'),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             GlassPanel(
@@ -731,19 +518,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                       trailing: const Icon(Icons.chevron_right,
                           color: AppColors.mute),
                       onTap: _reset,
-                    ),
-                  ),
-                  const Divider(height: 1, color: AppColors.line),
-                  MotionPress(
-                    scale: 0.99,
-                    child: ListTile(
-                      leading: const Icon(Icons.offline_bolt, size: 20),
-                      title: const Text('Offline Contents',
-                          style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('Manage downloaded music'),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: AppColors.mute),
-                      onTap: _openOfflineContents,
                     ),
                   ),
                   const Divider(height: 1, color: AppColors.line),

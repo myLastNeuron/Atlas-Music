@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
-import '../services/user_prefs.dart';
 import '../services/song_filter.dart';
 import '../services/youtube_service.dart';
 import '../theme/app_theme.dart';
@@ -12,6 +11,7 @@ import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/play_helper.dart';
+import '../widgets/song_actions.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -60,13 +60,13 @@ class _SearchScreenState extends State<SearchScreen> {
     await _loadHistory();
     if (!mounted || gen != _searchGen) return;
     try {
-      final r = await _yt.search(q.trim());
+      final r = await _yt.searchAll(q.trim(), limit: 25);
       if (!mounted || gen != _searchGen) return;
       setState(() {
-        // Search: strict discovery gate — duration window, no unknown
-        // durations, no music videos / long-form uploads, language free.
-        final filtered =
-            SongFilter.applyDiscovery(r, language: MusicLanguage.all);
+        // Search: explicit request — keep every music upload (slowed/reverb,
+        // remix, lyric, sped-up, official video) while stripping non-music
+        // (trailers, movies, TV, podcasts, long-form).
+        final filtered = SongFilter.applySearch(r);
         _results = filtered.where((s) => s.videoId != null).toList();
         _loading = false;
         _searched = true;
@@ -85,7 +85,7 @@ class _SearchScreenState extends State<SearchScreen> {
     }
   }
 
-  Future<void> _play(Song s, int i) async {
+  Future<void> _play(Song s) async {
     // Search plays ONLY the tapped song, then seed-based radio keeps
     // playing tracks similar to it (see _playSeedRadio). The result
     // list is not a queue: finishing never walks down the list.
@@ -98,59 +98,6 @@ class _SearchScreenState extends State<SearchScreen> {
     try {
       await _storage.addToRecentlyPlayed(s);
     } catch (_) {}
-  }
-
-  Future<void> _addToPlaylist(Song song) async {
-    final playlists = await _storage.getPlaylists();
-    if (!mounted) return;
-    if (playlists.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('Create a playlist first from the Home or Library tab')),
-      );
-      return;
-    }
-    final chosen = await showDialog<String>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        backgroundColor: AppColors.card,
-        title: const Text('Add to playlist'),
-        children: playlists
-            .map((p) => SimpleDialogOption(
-                  onPressed: () => Navigator.pop(ctx, p.id),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.queue_music,
-                          size: 20, color: AppColors.inkSoft),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(p.name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w500)),
-                            Text('${p.songs.length} songs',
-                                style: const TextStyle(
-                                    fontSize: 12, color: AppColors.inkSoft)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ))
-            .toList(),
-      ),
-    );
-    if (chosen == null) return;
-    await _storage.addSongToPlaylist(chosen, song);
-    if (mounted) {
-      final pl = playlists.firstWhere((p) => p.id == chosen);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added to "${pl.name}"')),
-      );
-    }
   }
 
   @override
@@ -221,19 +168,10 @@ class _SearchScreenState extends State<SearchScreen> {
             const SizedBox(height: 8),
             Expanded(
               child: AnimatedSwitcher(
-                duration: AppMotion.micro,
+                duration: AppMotion.dur(context, AppMotion.micro),
                 switchInCurve: AppMotion.curve,
                 switchOutCurve: Curves.easeInCubic,
-                transitionBuilder: (child, animation) => FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, 0.025),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                ),
+                transitionBuilder: fadeRiseTransition,
                 child: _loading
                     ? const Center(
                         key: ValueKey('search-loading'),
@@ -311,7 +249,9 @@ class _SearchScreenState extends State<SearchScreen> {
                                     },
                                   )
                         : ListView.separated(
-                            scrollCacheExtent: const ScrollCacheExtent.pixels(600), key: const ValueKey('search-results'),
+                            scrollCacheExtent:
+                                const ScrollCacheExtent.pixels(600),
+                            key: const ValueKey('search-results'),
                             padding: EdgeInsets.only(
                                 left: 12,
                                 right: 12,
@@ -345,27 +285,13 @@ class _SearchScreenState extends State<SearchScreen> {
                                       style: const TextStyle(
                                           color: AppColors.inkSoft,
                                           fontSize: 12)),
-                                  trailing: PopupMenuButton(
-                                    icon: const Icon(Icons.more_vert, size: 20),
-                                    itemBuilder: (ctx) => [
-                                      const PopupMenuItem(
-                                        value: 'play',
-                                        child: Text('Play'),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'add',
-                                        child: Text('Add to Playlist'),
-                                      ),
-                                    ],
-                                    onSelected: (v) {
-                                      if (v == 'play') {
-                                        _play(s, i);
-                                      } else if (v == 'add') {
-                                        _addToPlaylist(s);
-                                      }
-                                    },
+                                  trailing: SongMenuButton(
+                                    song: s,
+                                    queue: [s],
+                                    index: 0,
+                                    queueOrigin: 'search',
                                   ),
-                                  onTap: () => _play(s, i),
+                                  onTap: () => _play(s),
                                 ),
                               );
                             },

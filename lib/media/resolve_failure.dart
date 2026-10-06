@@ -5,7 +5,6 @@ import 'media_source.dart';
 enum ResolveStage {
   resolution,
   validation,
-  stream,
   download,
   playback,
 }
@@ -14,9 +13,8 @@ enum ResolveStage {
 /// - url: one specific stream URL (expired/throttled) → discard URL, retry.
 /// - song: this song/provider combination (no match, unavailable) →
 ///   never cools the provider; next song attempts fresh.
-/// - instance: one Piped backend host → skip that host, try siblings.
 /// - provider: the backend itself is unreachable → counts toward cooldown.
-enum FailureScope { url, song, instance, provider }
+enum FailureScope { url, song, provider }
 
 /// Structured failure. Original error text is preserved verbatim in
 /// [detail]; nothing is swallowed or summarized away.
@@ -27,7 +25,6 @@ class ResolveFailure {
   final String detail;
   final int? httpStatus;
   final bool retryable;
-  final String? backend;
   final DateTime timestamp;
 
   ResolveFailure({
@@ -37,16 +34,14 @@ class ResolveFailure {
     this.scope = FailureScope.song,
     this.httpStatus,
     this.retryable = true,
-    this.backend,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
   @override
   String toString() {
     final who = provider != null ? provider!.name : 'app';
-    final where = backend != null ? ' $backend' : '';
     final http = httpStatus != null ? ' HTTP $httpStatus' : '';
-    return '[$who/${scope.name} ${stage.name}$http$where] $detail';
+    return '[$who/${scope.name} ${stage.name}$http] $detail';
   }
 }
 
@@ -65,21 +60,18 @@ class PlaybackReport {
       attempts.isNotEmpty && attempts.every((a) => a.retryable);
 
   /// Full chain for logs / bug reports.
-  String toVerboseString() =>
-      attempts.map((a) => a.toString()).join(' | ');
+  String toVerboseString() => attempts.map((a) => a.toString()).join(' | ');
 
   /// Compact message for the error dialog. Keeps HTTP statuses — a
   /// "rejected" without its status code is undiagnosable.
   String toUserMessage() {
     if (attempts.isEmpty) return 'No providers attempted for "$songTitle".';
-    final parts = attempts
-        .map((a) {
-          var d = a.detail.replaceAll(RegExp(r'\s+'), ' ');
-          if (d.length > 200) d = '${d.substring(0, 200)}…';
-          final http = a.httpStatus != null ? ' HTTP ${a.httpStatus}' : '';
-          return '${a.provider?.name ?? '?'}: $d$http';
-        })
-        .join(' | ');
+    final parts = attempts.map((a) {
+      var d = a.detail.replaceAll(RegExp(r'\s+'), ' ');
+      if (d.length > 200) d = '${d.substring(0, 200)}…';
+      final http = a.httpStatus != null ? ' HTTP ${a.httpStatus}' : '';
+      return '${a.provider?.name ?? '?'}: $d$http';
+    }).join(' | ');
     return 'Could not play "$songTitle". $parts';
   }
 }

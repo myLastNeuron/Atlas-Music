@@ -416,7 +416,4 @@ class SpotifyService {
     }
     throw Exception('Invalid Spotify playlist link or ID.');
   }
-
-  Future<String> extractPlaylistId(String url) async =>
-      parsePlaylistId(url);
 }

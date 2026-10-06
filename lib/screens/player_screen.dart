@@ -9,7 +9,7 @@ import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/lyrics_sheet.dart';
-import '../widgets/play_helper.dart' show messengerOf;
+import '../widgets/song_actions.dart';
 
 class PlayerScreen extends StatefulWidget {
   static const routeName = '/player';
@@ -19,12 +19,25 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen>
+    with SingleTickerProviderStateMixin {
   final StorageService _storageService = StorageService();
   bool _isLiked = false;
   String? _likedForId;
   AudioPlayerService? _audio;
   VoidCallback? _audioListener;
+
+  // Slow "breathing" scale on the cover while a track is playing. Driven by
+  // one controller, applied with Transform only (no layout, no repaint).
+  late final AnimationController _breath = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 6),
+  );
+  bool _breathing = false;
+  late final Animation<double> _breathScale = Tween<double>(
+    begin: 1.0,
+    end: 1.02,
+  ).animate(CurvedAnimation(parent: _breath, curve: Curves.easeInOut));
 
   @override
   void initState() {
@@ -33,7 +46,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _audio = audio;
     // Re-check on song change (auto-advance) and on any like toggled
     // elsewhere (Liked page / playlist rows) so the heart never goes stale.
-    _audioListener = _checkIfLiked;
+    // The same tick keeps the cover breath in sync with play/pause.
+    _audioListener = () {
+      _syncLiked();
+      _syncBreath();
+    };
     audio.addListener(_audioListener!);
     _storageService.addListener(_onStorageChanged);
   }
@@ -42,20 +59,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     _audio?.removeListener(_audioListener!);
     _storageService.removeListener(_onStorageChanged);
+    _breath.dispose();
     super.dispose();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _checkIfLiked();
+    _syncLiked();
+    _syncBreath();
+  }
+
+  /// Runs the cover breath only while playing and when motion is allowed;
+  /// a paused player stays completely calm.
+  void _syncBreath() {
+    if (!mounted) return;
+    final should = (_audio?.isPlaying ?? false) && !AppMotion.reduced(context);
+    if (should == _breathing) return;
+    _breathing = should;
+    if (should) {
+      _breath.repeat(reverse: true);
+    } else {
+      _breath.stop();
+      _breath.value = 0;
+    }
   }
 
   void _onStorageChanged() => _syncLiked(force: true);
 
-  void _checkIfLiked({bool force = false}) => _syncLiked(force: force);
-
-  Future<void> _syncLiked({required bool force}) async {
+  Future<void> _syncLiked({bool force = false}) async {
     final audioService = context.read<AudioPlayerService>();
     final cur = audioService.currentSong;
     if (cur == null) return;
@@ -73,7 +105,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await _storageService.toggleLikedSong(audioService.currentSong!);
       // Explicit toggle bypasses song-id guard so heart refreshes.
       _likedForId = null;
-      _checkIfLiked();
+      _syncLiked();
     }
   }
 
@@ -118,8 +150,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         context.select<AudioPlayerService, bool>((s) => s.shuffleEnabled);
     final loop =
         context.select<AudioPlayerService, LoopMode>((s) => s.loopMode);
-    final artSize =
-        (MediaQuery.of(context).size.width - 104).clamp(160.0, 320.0);
+    final artSize = coverLogicalSize(context);
 
     return LiquidBackground(
       child: Scaffold(
@@ -140,9 +171,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
           centerTitle: true,
           actions: [
             IconButton(
-              icon: Icon(
-                _isLiked ? Icons.favorite : Icons.favorite_border,
-                color: _isLiked ? Colors.white : AppColors.mute,
+              icon: AnimatedSwitcher(
+                duration: AppMotion.dur(context, AppMotion.micro),
+                switchInCurve: AppMotion.spring,
+                switchOutCurve: AppMotion.curve,
+                transitionBuilder: (child, animation) => ScaleTransition(
+                  scale: animation,
+                  child: FadeTransition(opacity: animation, child: child),
+                ),
+                child: Icon(
+                  _isLiked ? Icons.favorite : Icons.favorite_border,
+                  key: ValueKey(_isLiked),
+                  color: _isLiked ? Colors.white : AppColors.mute,
+                ),
               ),
               onPressed: _toggleLike,
             ),
@@ -194,22 +235,49 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               const SizedBox(height: 12),
                             ],
                             if (song != null) ...[
-                              RepaintBoundary(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 40),
-                                  child: GlassPanel(
-                                    radius: 28,
-                                    padding: const EdgeInsets.all(12),
-                                    opacity: 0.09,
-                                    child: AspectRatio(
-                                      aspectRatio: 1,
-                                      child: Artwork(
-                                        song.thumbnailUrl,
-                                        filePath: artPath,
-                                        size: artSize,
-                                        radius: 20,
-                                        fit: BoxFit.cover,
+                              ScaleTransition(
+                                scale: _breathScale,
+                                child: RepaintBoundary(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 40),
+                                    child: GlassPanel(
+                                      radius: 28,
+                                      padding: const EdgeInsets.all(12),
+                                      opacity: 0.09,
+                                      child: AspectRatio(
+                                        aspectRatio: 1,
+                                        child: Hero(
+                                          tag: 'player_cover',
+                                          createRectTween: (begin, end) =>
+                                              MaterialRectArcTween(
+                                                  begin: begin, end: end),
+                                          flightShuttleBuilder: (ctx, anim,
+                                                  dir, from, to) =>
+                                              CoverFlightShuttle(
+                                                  song.thumbnailUrl,
+                                                  filePath: artPath,
+                                                  animation: anim),
+                                          child: AnimatedSwitcher(
+                                            duration: AppMotion.dur(
+                                                context, AppMotion.micro),
+                                            switchInCurve: AppMotion.curve,
+                                            switchOutCurve: AppMotion.curve,
+                                            transitionBuilder:
+                                                (child, animation) =>
+                                                    FadeTransition(
+                                                        opacity: animation,
+                                                        child: child),
+                                            child: Artwork(
+                                              song.thumbnailUrl,
+                                              key: ValueKey(song.id),
+                                              filePath: artPath,
+                                              size: artSize,
+                                              radius: 20,
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -256,11 +324,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     MotionPress(
                                       scale: 0.9,
                                       child: IconButton(
-                                        icon: Icon(Icons.shuffle,
-                                            color: shuffle
-                                                ? Colors.white
-                                                : AppColors.mute,
-                                            size: 24),
+                                        icon: AnimatedSwitcher(
+                                          duration: AppMotion.dur(
+                                              context, AppMotion.micro),
+                                          child: Icon(Icons.shuffle,
+                                              key: ValueKey(shuffle),
+                                              color: shuffle
+                                                  ? Colors.white
+                                                  : AppColors.mute,
+                                              size: 24),
+                                        ),
                                         onPressed: audioService.toggleShuffle,
                                       ),
                                     ),
@@ -318,16 +391,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     MotionPress(
                                       scale: 0.9,
                                       child: IconButton(
-                                        icon: Icon(
-                                          loop == LoopMode.one
-                                              ? Icons.repeat_one
-                                              : Icons.repeat,
-                                          color: loop == LoopMode.off
-                                              ? AppColors.mute
-                                              : Colors.white,
-                                          size: 24,
+                                        icon: AnimatedSwitcher(
+                                          duration: AppMotion.dur(
+                                              context, AppMotion.micro),
+                                          child: Icon(
+                                            loop == LoopMode.one
+                                                ? Icons.repeat_one
+                                                : Icons.repeat,
+                                            key: ValueKey(loop == LoopMode.one),
+                                            color: loop == LoopMode.one
+                                                ? Colors.white
+                                                : AppColors.mute,
+                                            size: 24,
+                                          ),
                                         ),
-                                        onPressed: audioService.cycleRepeatMode,
+                                        onPressed: audioService.toggleRepeat,
                                       ),
                                     ),
                                   ],
@@ -386,45 +464,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 20, vertical: 10),
                                       ),
-                                      onPressed: () async {
-                                        // Capture the root navigator up front and
-                                        // dismiss the modal in `finally`: a screen
-                                        // that gets popped mid-download must never
-                                        // orphan this barrierDismissible:false route
-                                        // (there is no other way back).
-                                        final navigator = Navigator.of(
-                                          context,
-                                          rootNavigator: true,
-                                        );
-                                        var dialogOpen = true;
-                                        showDialog(
-                                          context: context,
-                                          barrierDismissible: false,
-                                          builder: (_) => const AlertDialog(
-                                            content: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                CircularProgressIndicator(),
-                                                SizedBox(height: 16),
-                                                Text('Downloading...'),
-                                              ],
-                                            ),
-                                          ),
-                                        ).whenComplete(() => dialogOpen = false);
-                                        final ok = await audioService
-                                            .downloadCurrentSong();
-                                        if (navigator.canPop() && dialogOpen) {
-                                          navigator.pop();
-                                        }
-                                        if (!context.mounted) return;
-                                        messengerOf(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text(ok
-                                                ? 'Download completed'
-                                                : 'Download failed'),
-                                          ),
-                                        );
-                                      },
+                                      onPressed: () => downloadSongFlow(
+                                          context, audioService.currentSong!),
                                     ),
                                   ),
                                 ],

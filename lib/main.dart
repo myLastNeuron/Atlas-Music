@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'app.dart';
 import 'services/atlas_audio_handler.dart';
 import 'services/audio_service.dart';
-import 'services/youtube_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,11 +21,9 @@ void main() async {
   await AudioService.init(
     builder: () => audioHandler,
     config: AudioServiceConfig(
-      androidNotificationChannelId:
-          'com.atlas.music.atlas_music.channel.audio',
+      androidNotificationChannelId: 'com.atlas.music.atlas_music.channel.audio',
       androidNotificationChannelName: 'Audio playback',
-      androidNotificationChannelDescription:
-          'Media playback controls and info',
+      androidNotificationChannelDescription: 'Media playback controls and info',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: false,
       androidNotificationIcon: 'drawable/ic_stat_music',
@@ -44,7 +41,6 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AudioPlayerService()),
-        Provider(create: (_) => YouTubeService()),
       ],
       child: const AtlasMusicApp(),
     ),

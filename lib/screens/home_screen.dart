@@ -15,37 +15,9 @@ import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
 import '../widgets/play_helper.dart';
 import '../widgets/skeleton_card.dart';
+import '../widgets/song_actions.dart';
 import 'history_screen.dart';
 import 'playlist_detail_screen.dart';
-
-const _badPhrases = [
-  'lyric video',
-  'lyrics',
-  'karaoke',
-  'made by',
-  'fan made',
-  'by him',
-  'by me',
-  'sped up',
-  'speed up',
-  'bass boosted',
-  '1 hour',
-  '10 hours',
-  'movie scene',
-  'dialogue',
-  'full movie',
-  'trailer',
-  'teaser',
-  'official trailer',
-  'official teaser',
-  'movie clip',
-  'scene ',
-  'preview',
-  'behind the scenes',
-  'billboard hot 100',
-];
-final _badWords = RegExp(
-    r'\b(remix|remixed|remixaudio|edit|edits|slowed|reverb|short|shorts|tiktok|cover|covers|karaoke|acoustic|instrumental|upload|reupload|loop|looped|extended|8d|10d|podcast|interview|reaction)\b');
 
 const _popularBadPhrases = [
   'viral',
@@ -117,38 +89,8 @@ final _recommendationBadWords = RegExp(
 
 bool _titleLongEnough(String s) => s.trim().split(RegExp(r'\s+')).length >= 2;
 
-bool _isMusicTitle(String t) {
-  // YouTube Music search returns pure song titles.
-  // Keep always true to allow music-only results.
-  return true;
-}
-
-List<Song> filterPopularSongs(List<Song> songs,
-    {String? userName, MusicLanguage language = MusicLanguage.all}) {
-  return songs.where((s) {
-    final t = s.title.toLowerCase();
-    final a = s.artist.toLowerCase();
-    final c = s.channel.toLowerCase();
-    if (!_titleLongEnough(t)) return false;
-    if (s.duration.inSeconds <= 0) return false;
-    // GLOBAL rules: 00:45–07:00 window + strict selected language.
-    if (!SongFilter.inDurationWindow(s)) return false;
-    if (SongFilter.isMusicVideo(s)) return false;
-    if (!SongFilter.matchesLanguage(s, language)) return false;
-    if (!_isMusicTitle(t)) return false;
-    // YT Music's Songs catalogue is already a song-type filter; don't require
-    // an "official" suffix that legitimate catalogue titles often omit.
-    if (_badPhrases.any((b) => t.contains(b) || a.contains(b))) return false;
-    if (_popularBadPhrases.any((b) => t.contains(b))) return false;
-    if (_badWords.hasMatch(t) || _badWords.hasMatch(a)) return false;
-    if (_badChannels.any((b) => c.contains(b))) return false;
-    final uname = userName?.toLowerCase() ?? '';
-    if (uname.length > 2 && (t.contains(uname) || a.contains(uname))) {
-      return false;
-    }
-    return true;
-  }).toList();
-}
+/// Exact size of the RECOMMENDED FOR YOU rail: fill to 15, never exceed it.
+const int _recommendedTarget = 15;
 
 List<Song> filterRecommendedSongs(List<Song> songs,
     {String? userName,
@@ -176,7 +118,6 @@ List<Song> filterRecommendedSongs(List<Song> songs,
     if (!SongFilter.inDurationWindow(s)) return false;
     if (SongFilter.isMusicVideo(s)) return false;
     if (!SongFilter.matchesLanguage(s, language)) return false;
-    if (!_isMusicTitle(t)) return false;
     if (_recommendationBadPhrases.any((b) => t.contains(b) || a.contains(b))) {
       return false;
     }
@@ -248,7 +189,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // false and builds session-driven picks via the listener below.
   bool _qpCold = false;
   ImageProvider? _avatarProvider;
-  Map<String, int> _playlistCounts = {};
   // Last song already recorded to Recently Played. The player notifies
   // listeners every second while playing — without this guard every tick
   // rewrote storage and rebuilt Home, churning the UI constantly.
@@ -358,19 +298,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _loading = true;
     try {
       final recent = await _storage.getRecentlyPlayed();
-      final pls = await _storage.getPlaylists();
+      final pls = (await _storage.getPlaylists())
+          .where((p) => p.id != StorageService.downloadedPlaylistId)
+          .toList();
       final hasHistory = await _storage.hasEnoughHistory();
       if (!mounted) return;
-      final counts = <String, int>{};
-      for (final p in pls) {
-        // Playlists report every song they contain (no language/duration
-        // filtering); discovery surfaces still filter.
-        counts[p.id] = p.songs.length;
-      }
       setState(() {
         _recent = recent;
         _playlists = pls;
-        _playlistCounts = counts;
         _hasHistory = hasHistory;
       });
 
@@ -399,7 +334,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ? _selectedLanguage.name.toLowerCase()
           : '';
       final topArtists = await _storage.getTopArtists(limit: 8);
-      final topGenres = await _storage.getTopGenres(limit: 5);
+
       final liked = await _storage.getLikedSongs();
       final searchHistory = await _storage.getSearchHistory();
 
@@ -421,7 +356,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           addQuery('${song.artist} songs');
         }
       }
-      for (final genre in [..._selectedGenres, ...topGenres].take(5)) {
+      for (final genre in _selectedGenres.take(5)) {
         addQuery('$genre ${langName.isEmpty ? '' : '$langName '}songs');
       }
       for (final query in searchHistory.take(3)) {
@@ -448,7 +383,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // whichever network request happens to finish first.
       final picksFuture = _fetchQuickPicks();
       final resultGroups = await Future.wait(
-        queries.take(6).map((query) => _fetchRecommended(
+        queries.take(8).map((query) => _fetchRecommended(
               query,
               canonicalArtist: canonicalArtistFor(query),
             )),
@@ -464,21 +399,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           .followedBy(_quickPicks.expand(
               (pick) => [pick.song.id, pick.song.videoId ?? pick.song.id]))
           .toSet();
-      final ranked = QuickPicksEngine.rank(
-        recent: recent.take(5).toList(),
-        candidates: candidates,
-        stats: stats,
-        topArtists: topArtists,
-        topGenres: [...topGenres, ..._selectedGenres],
-        likedIds: liked.map((song) => song.id).toSet(),
-        queueIds: queueIds,
-        userLanguage: _selectedLanguage,
-        searchHistory: searchHistory,
-        selectedArtists: _selectedArtists.toList(),
-        count: 25,
-        includeStretchPick: false,
-        requirePersonalSignal: true,
-      );
+      // Taste-only fill: strict personalized picks first; if the narrow
+      // pool falls short of the 15-song rail, a second pass relaxes the
+      // personal-signal gate and the per-artist cap. Never trending/global.
+      List<QuickPick> rankFor(int perArtist, bool personal) =>
+          QuickPicksEngine.rank(
+            recent: recent.take(5).toList(),
+            candidates: candidates,
+            stats: stats,
+            topArtists: topArtists,
+            topGenres: _selectedGenres.toList(),
+            likedIds: liked.map((song) => song.id).toSet(),
+            queueIds: queueIds,
+            userLanguage: _selectedLanguage,
+            searchHistory: searchHistory,
+            selectedArtists: _selectedArtists.toList(),
+            count: _recommendedTarget,
+            maxPerArtist: perArtist,
+            includeStretchPick: false,
+            requirePersonalSignal: personal,
+          );
+      var ranked = rankFor(2, true);
+      if (ranked.length < _recommendedTarget) {
+        final seen = ranked.map((pick) => pick.song.id).toSet();
+        final extra =
+            rankFor(4, false).where((pick) => seen.add(pick.song.id));
+        ranked = [...ranked, ...extra].take(_recommendedTarget).toList();
+      }
       if (!mounted) return;
       setState(() {
         _recommended = ranked.map((pick) => pick.song).toList();
@@ -515,7 +462,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final effectiveSeed = seed ?? (recent.isNotEmpty ? recent.first : null);
       final stats = await _storage.getListeningStats();
       final topArtists = await _storage.getTopArtists(limit: 10);
-      final topGenres = await _storage.getTopGenres(limit: 5);
+
       final liked = await _storage.getLikedSongs();
       final searches = await _storage.getSearchHistory();
       final queueIds = audio.queue
@@ -571,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           addQuery('${song.artist} songs');
         }
       }
-      for (final genre in [..._selectedGenres, ...topGenres].take(3)) {
+      for (final genre in _selectedGenres.take(3)) {
         addQuery('$genre songs');
       }
       for (final query in searches.take(2)) {
@@ -628,11 +575,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         candidates: pool,
         stats: stats,
         topArtists: topArtists,
-        topGenres: [...topGenres, ..._selectedGenres],
+        topGenres: _selectedGenres.toList(),
         likedIds: liked.map((s) => s.id).toSet(),
         queueIds: queueIds,
         userLanguage: lang,
-        collaborative: const {},
         searchHistory: searches,
         selectedArtists: _selectedArtists.toList(),
         count: 10,
@@ -732,15 +678,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         source: 'local',
       ));
       if (!mounted) return;
-      final p = await _storage.getPlaylists();
+      final p = (await _storage.getPlaylists())
+          .where((pl) => pl.id != StorageService.downloadedPlaylistId)
+          .toList();
       if (!mounted) return;
-      final counts = <String, int>{};
-      for (final pl in p) {
-        counts[pl.id] = pl.songs.length;
-      }
       setState(() {
         _playlists = p;
-        _playlistCounts = counts;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Playlist "$name" created')),
@@ -849,7 +792,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return SizedBox(
       height: 84,
       child: ListView.separated(
-        scrollCacheExtent: const ScrollCacheExtent.pixels(600), scrollDirection: Axis.horizontal,
+        scrollCacheExtent: const ScrollCacheExtent.pixels(600),
+        scrollDirection: Axis.horizontal,
         addAutomaticKeepAlives: false,
         addRepaintBoundaries: true,
         itemCount: _playlists.length,
@@ -866,15 +810,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 );
                 // Refresh playlists after returning (song may have been
                 // added/removed).
-                final updated = await _storage.getPlaylists();
+                final updated = (await _storage.getPlaylists())
+                    .where((p) => p.id != StorageService.downloadedPlaylistId)
+                    .toList();
                 if (mounted) {
-                  final counts = <String, int>{};
-                  for (final p in updated) {
-                    counts[p.id] = p.songs.length;
-                  }
                   setState(() {
                     _playlists = updated;
-                    _playlistCounts = counts;
                   });
                 }
               },
@@ -915,7 +856,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   fontSize: 13)),
                           const SizedBox(height: 4),
                           Text(
-                              '${_playlistCounts[p.id] ?? p.songs.length} songs',
+                              '${p.songs.length} songs',
                               style: const TextStyle(
                                   color: AppColors.inkSoft, fontSize: 11)),
                         ],
@@ -929,12 +870,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         },
       ),
     );
-  }
-
-  String _fmtDur(Duration d) {
-    final m = d.inMinutes;
-    final s = d.inSeconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
   }
 
   Widget _recentlyPlayedSection() {
@@ -965,7 +900,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return SizedBox(
       height: 200,
       child: ListView.builder(
-        scrollCacheExtent: const ScrollCacheExtent.pixels(600), scrollDirection: Axis.horizontal,
+        scrollCacheExtent: const ScrollCacheExtent.pixels(600),
+        scrollDirection: Axis.horizontal,
         addAutomaticKeepAlives: false,
         addRepaintBoundaries: true,
         // At most 10 songs, then a "Show all" entry into full history.
@@ -985,8 +921,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(16),
-                      child: Artwork(s.thumbnailUrl,
-                          width: 150, height: 130, radius: 0),
+                      child: Stack(
+                        children: [
+                          Artwork(s.thumbnailUrl,
+                              width: 150, height: 130, radius: 0),
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: SongMenuButton(
+                              compact: true,
+                              song: s,
+                              queue: _recent,
+                              index: i,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(s.title,
@@ -1077,7 +1027,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: items.length > 25 ? 25 : items.length,
+      itemCount: items.length > _recommendedTarget
+          ? _recommendedTarget
+          : items.length,
       separatorBuilder: (_, __) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final s = items[i];
@@ -1096,8 +1048,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: AppColors.inkSoft, fontSize: 11)),
-            trailing: Text(_fmtDur(s.duration),
-                style: const TextStyle(color: AppColors.inkSoft, fontSize: 12)),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(formatClock(s.duration),
+                    style: const TextStyle(
+                        color: AppColors.inkSoft, fontSize: 12)),
+                SongMenuButton(song: s, queue: items, index: i),
+              ],
+            ),
             onTap: () => _play(s, items, i),
           ),
         );
@@ -1292,136 +1251,154 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 8),
                   SizedBox(
                     height: 200,
-                    child: _loading && _quickPicks.isEmpty
-                        ? ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: 10,
-                            itemBuilder: (_, __) => const SkeletonCard(),
-                          )
-                        : _quickPicks.isEmpty
-                            ? Center(
-                                child: _recError
-                                    ? TextButton.icon(
-                                        onPressed: () {
-                                          setState(() => _recError = false);
-                                          _load();
-                                        },
-                                        icon: const Icon(Icons.refresh,
-                                            color: AppColors.inkSoft),
-                                        label: const Text(
-                                            'Couldn\'t load songs — tap to retry',
-                                            style: TextStyle(
-                                                color: AppColors.inkSoft,
-                                                fontSize: 13)),
-                                      )
-                                    : const Text(
-                                        'Play a song to get picks tuned to your session',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                            color: AppColors.mute,
-                                            fontSize: 13)),
-                              )
-                            : Builder(builder: (context) {
-                                final songs =
-                                    _quickPicks.map((e) => e.song).toList();
-                                return ListView.builder(
-                                  scrollCacheExtent: const ScrollCacheExtent.pixels(600), scrollDirection: Axis.horizontal,
-                                  addAutomaticKeepAlives: false,
-                                  addRepaintBoundaries: true,
-                                  itemCount: _quickPicks.length,
-                                  itemBuilder: (context, i) {
-                                    final pick = _quickPicks[i];
-                                    final s = pick.song;
-                                    return MotionPress(
-                                      child: GestureDetector(
-                                        onTap: () => _play(s, songs, i,
-                                            queueOrigin: 'quickPicks'),
-                                        child: Container(
-                                          width: 150,
-                                          margin:
-                                              const EdgeInsets.only(right: 12),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              ClipRRect(
-                                                borderRadius:
-                                                    BorderRadius.circular(16),
-                                                child: Stack(
-                                                  children: [
-                                                    Artwork(s.thumbnailUrl,
-                                                        width: 150,
-                                                        height: 112,
-                                                        radius: 0),
-                                                    Positioned(
-                                                      bottom: 6,
-                                                      right: 6,
-                                                      child: Container(
-                                                        padding:
-                                                            const EdgeInsets
-                                                                .all(6),
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: Colors.white,
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(20),
-                                                          boxShadow: [
-                                                            BoxShadow(
-                                                              color: Colors
-                                                                  .black
-                                                                  .withValues(
-                                                                      alpha:
-                                                                          0.35),
-                                                              blurRadius: 10,
-                                                              offset:
-                                                                  const Offset(
-                                                                      0, 3),
+                    child: AnimatedSwitcher(
+                      duration: AppMotion.dur(context, AppMotion.modal),
+                      switchInCurve: AppMotion.curve,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: fadeRiseTransition,
+                      child: _loading && _quickPicks.isEmpty
+                          ? ListView.builder(
+                              key: const ValueKey('qp_loading'),
+                              scrollDirection: Axis.horizontal,
+                              itemCount: 10,
+                              itemBuilder: (_, __) => const SkeletonCard(),
+                            )
+                          : _quickPicks.isEmpty
+                              ? Center(
+                                  key: const ValueKey('qp_empty'),
+                                  child: _recError
+                                      ? TextButton.icon(
+                                          onPressed: () {
+                                            setState(() => _recError = false);
+                                            _load();
+                                          },
+                                          icon: const Icon(Icons.refresh,
+                                              color: AppColors.inkSoft),
+                                          label: const Text(
+                                              'Couldn\'t load songs — tap to retry',
+                                              style: TextStyle(
+                                                  color: AppColors.inkSoft,
+                                                  fontSize: 13)),
+                                        )
+                                      : const Text(
+                                          'Play a song to get picks tuned to your session',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              color: AppColors.mute,
+                                              fontSize: 13)),
+                                )
+                              : Builder(
+                                  key: const ValueKey('qp_list'),
+                                  builder: (context) {
+                                    final songs =
+                                        _quickPicks.map((e) => e.song).toList();
+                                    return ListView.builder(
+                                      scrollCacheExtent:
+                                          const ScrollCacheExtent.pixels(600),
+                                      scrollDirection: Axis.horizontal,
+                                      addAutomaticKeepAlives: false,
+                                      addRepaintBoundaries: true,
+                                      itemCount: _quickPicks.length,
+                                      itemBuilder: (context, i) {
+                                        final pick = _quickPicks[i];
+                                        final s = pick.song;
+                                        return MotionPress(
+                                          child: GestureDetector(
+                                            onTap: () => _play(s, songs, i,
+                                                queueOrigin: 'quickPicks'),
+                                            child: Container(
+                                              width: 150,
+                                              margin: const EdgeInsets.only(
+                                                  right: 12),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  ClipRRect(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            16),
+                                                    child: Stack(
+                                                      children: [
+                                                        Artwork(s.thumbnailUrl,
+                                                            width: 150,
+                                                            height: 112,
+                                                            radius: 0),
+                                                        Positioned(
+                                                          bottom: 6,
+                                                          right: 6,
+                                                          child: Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .all(6),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color:
+                                                                  Colors.white,
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          20),
+                                                              boxShadow: [
+                                                                BoxShadow(
+                                                                  color: Colors
+                                                                      .black
+                                                                      .withValues(
+                                                                          alpha:
+                                                                              0.35),
+                                                                  blurRadius:
+                                                                      10,
+                                                                  offset:
+                                                                      const Offset(
+                                                                          0, 3),
+                                                                ),
+                                                              ],
                                                             ),
-                                                          ],
+                                                            child: const Icon(
+                                                                Icons
+                                                                    .play_arrow,
+                                                                size: 18,
+                                                                color: AppColors
+                                                                    .charcoal),
+                                                          ),
                                                         ),
-                                                        child: const Icon(
-                                                            Icons.play_arrow,
-                                                            size: 18,
-                                                            color: AppColors
-                                                                .charcoal),
-                                                      ),
+                                                      ],
                                                     ),
-                                                  ],
-                                                ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  Text(s.title,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          color: AppColors.ink,
+                                                          fontSize: 13,
+                                                          fontWeight:
+                                                              FontWeight.w500)),
+                                                  Text(s.artist,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          color:
+                                                              AppColors.inkSoft,
+                                                          fontSize: 11)),
+                                                  Text(pick.reason,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                          color: AppColors.mute,
+                                                          fontSize: 10)),
+                                                ],
                                               ),
-                                              const SizedBox(height: 8),
-                                              Text(s.title,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                      color: AppColors.ink,
-                                                      fontSize: 13,
-                                                      fontWeight:
-                                                          FontWeight.w500)),
-                                              Text(s.artist,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                      color: AppColors.inkSoft,
-                                                      fontSize: 11)),
-                                              Text(pick.reason,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                      color: AppColors.mute,
-                                                      fontSize: 10)),
-                                            ],
+                                            ),
                                           ),
-                                        ),
-                                      ),
+                                        );
+                                      },
                                     );
-                                  },
-                                );
-                              }),
+                                  }),
+                    ),
                   ),
                   const SizedBox(height: 20),
                   _createPlaylistBanner(),
@@ -1440,7 +1417,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           fontSize: 15,
                           fontWeight: FontWeight.w800)),
                   const SizedBox(height: 6),
-                  _recommendedList(),
+                  AnimatedSwitcher(
+                    duration: AppMotion.dur(context, AppMotion.modal),
+                    switchInCurve: AppMotion.curve,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: fadeRiseTransition,
+                    child: _recommendedList(),
+                  ),
                 ],
               ),
             ),

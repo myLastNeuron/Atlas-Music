@@ -30,10 +30,6 @@ import 'quick_picks.dart';
 ///
 /// No provider-specific HTTP, parsing, or ranking logic lives here.
 class AudioPlayerService extends ChangeNotifier {
-  static const _ua =
-      'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
-
   final AudioPlayer _player = AudioPlayer();
 
   /// Metadata only (related/search for autoplay). Streams come from providers.
@@ -58,6 +54,10 @@ class AudioPlayerService extends ChangeNotifier {
   bool _isLoading = false;
   bool _shuffle = false;
   LoopMode _loopMode = LoopMode.off;
+  // Single-slot "Play next": plays once right after the current song, then
+  // normal advance/autofetch resumes. Re-selecting replaces it; a fresh
+  // explicit queue drops it. Never injected into _queue.
+  Song? _playNextOverride;
   final Random _random = Random();
   ProcessingState _processingState = ProcessingState.idle;
   Duration _duration = Duration.zero;
@@ -76,7 +76,8 @@ class AudioPlayerService extends ChangeNotifier {
   /// Live stream subscriptions for [dispose]. Without these, player/state
   /// events keep firing into a disposed notifier (debug assertion, release
   /// warning) and the connectivity stream leaks.
-  final List<StreamSubscription<dynamic>> _subs = <StreamSubscription<dynamic>>[];
+  final List<StreamSubscription<dynamic>> _subs =
+      <StreamSubscription<dynamic>>[];
   bool _disposed = false;
 
   /// Claims the network for a new load and points the provider's staleness
@@ -88,6 +89,7 @@ class AudioPlayerService extends ChangeNotifier {
     _youTube.stale = () => token != _activeLoadToken;
     return token;
   }
+
   Song? _currentSong;
   // Committed player ownership: the song id + gen that actually holds the
   // native source. _currentSong only changes on commit (setAudioSource
@@ -97,16 +99,6 @@ class AudioPlayerService extends ChangeNotifier {
   String? _activeSongId;
   int _activeGen = 0;
   DateTime? _activeSince;
-  // Streaming is DISABLED: every load plays a verified local file. A
-  // googlevideo stream can die mid-track (throttle / expired URL / range
-  // cut), and in the background that death surfaces as the audio simply
-  // stopping a few seconds in, because the player falls to idle and no
-  // recovery runs until the app is foregrounded. Local files have no such
-  // dependency: the preload pipeline (_warmupPrefetch + _ensurePrefetch)
-  // caches the next songs while the current one plays, so a transition
-  // still starts from disk instantly. The flag is checked BEFORE
-  // resolution so no load ever throws.
-  static const bool _streamingEnabled = false;
   // Load watchdog (safety net only): fires if a load never reaches
   // setSource. Bounded awaits + generation checks guard every step.
   Timer? _loadWatchdog;
@@ -317,7 +309,6 @@ class AudioPlayerService extends ChangeNotifier {
       return false;
     }));
   }
-
 
   /// True while [songId] + [gen] still own the active player. Every async
   /// sequence that touches [_player] (loads, nudges, resumes, heals)
@@ -789,6 +780,9 @@ class AudioPlayerService extends ChangeNotifier {
       _currentIndex = at;
       _autoplayOnEnd = autoplayOnEnd;
       _queueOrigin = queueOrigin ?? 'default';
+      // A fresh explicit queue owns the future: a "Play next" from the old
+      // context no longer applies.
+      _playNextOverride = null;
       _preparingContinuation = false;
       // A new queue starts a new offline episode: old known-unavailable
       // memory belongs to a different queue.
@@ -895,11 +889,6 @@ class AudioPlayerService extends ChangeNotifier {
 
       final report =
           PlaybackReport(song.title, songId: song.videoId ?? song.id);
-      // Only a definitive format rejection counts as permanent. Everything
-      // else (timeouts, DNS, throttling, truncation) is transient: retrying
-      // the SAME song is correct, skipping ahead just strands playback on
-      // a later song that fails identically.
-      bool sawPermanentFormat = false;
 
       // 1. CACHE â€” offline-first replay, zero network. Local file wins:
       // no provider is touched when it hits (saves ~2.5s per track).
@@ -1038,52 +1027,8 @@ class AudioPlayerService extends ChangeNotifier {
         return false;
       }
 
-      // 3. STREAM first when enabled: fastest start, and the truncation
-      // guard refuses short snippets up front instead of playing them.
-      // Disabled in this build: skipped BEFORE resolution cost, never
-      // thrown, so no load ever wastes time on a doomed stream attempt.
-      if (_streamingEnabled) {
-        _loadStage = 'stream';
-        try {
-          await _playUrl(source, song, stale, gen);
-          if (stale()) {
-            return false;
-          }
-          _commitSong(song, gen);
-          _finishPlaying();
-          return true;
-        } catch (e) {
-          // Ownership abort is not a stream failure: a superseded load must
-          // never trigger downloads, reports, or retries for a dead attempt.
-          if (stale()) {
-            return false;
-          }
-          // ExoPlayer rejection â€” only a format/codec failure counts as
-          // permanent; network failures stay transient (retry same song).
-          final isNetwork = _isNetworkError(e);
-          final t = e.toString().toLowerCase();
-          final isFormat = !isNetwork &&
-              (t.contains('format') ||
-                  t.contains('codec') ||
-                  t.contains('decoder') ||
-                  t.contains('mime') ||
-                  t.contains('unsupported') ||
-                  t.contains('extractor') ||
-                  t.contains('drm'));
-          report.add(ResolveFailure(
-            provider: source.provider,
-            stage: ResolveStage.playback,
-            detail:
-                'ExoPlayer rejected stream [${_classifyPlayerError(e)}]: $e',
-            retryable: !isFormat,
-          ));
-          if (isFormat) sawPermanentFormat = true;
-          // Fall through to verified download.
-        }
-      } else {
-      }
 
-      // 4. DOWNLOAD the resolved source, verify it, play the file.
+      // 3. DOWNLOAD the resolved source, verify it, play the file.
       // The commit size check rejects truncated and preview-length files,
       // so a short snippet can never pose as a song. The already-resolved
       // source downloads directly (no second manifest fetch); a fresh
@@ -1152,7 +1097,7 @@ class AudioPlayerService extends ChangeNotifier {
         detail: 'all providers failed: ${report.toUserMessage()}',
         retryable: false,
       ));
-      _lastLoadWasTransient = !sawPermanentFormat;
+      _lastLoadWasTransient = true;
       _noteFailure(report.attempts.isNotEmpty
           ? report.attempts.last.detail
           : 'all providers failed');
@@ -1276,8 +1221,7 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   void _cancelBackgroundRetry([String reason = 'new load']) {
-    if (_bgRetryTimer != null) {
-    }
+    if (_bgRetryTimer != null) {}
     _bgRetryTimer?.cancel();
     _bgRetryTimer = null;
   }
@@ -1315,8 +1259,7 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   void _cancelOfflineResumeRetry([String reason = '']) {
-    if (_offlineResumeTimer != null && reason.isNotEmpty) {
-    }
+    if (_offlineResumeTimer != null && reason.isNotEmpty) {}
     _cancelOfflineResumeTimer();
     _offlineResumeAttempt = 0;
   }
@@ -1432,6 +1375,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// Determine which song would play next, respecting shuffle/loop.
   Song? _computeNextSong() {
+    if (_playNextOverride != null) return _playNextOverride;
     if (_queue.isEmpty || _currentIndex < 0) return null;
     if (_shuffle &&
         _queue.length > 1 &&
@@ -1525,8 +1469,7 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   void _cancelPreloadRetry([String reason = 'new load']) {
-    if (_preloadRetryTimer != null) {
-    }
+    if (_preloadRetryTimer != null) {}
     _preloadRetryTimer?.cancel();
     _preloadRetryTimer = null;
   }
@@ -1616,8 +1559,7 @@ class AudioPlayerService extends ChangeNotifier {
       _continuationNotBefore = null;
       notifyListeners();
       // Next song now known: resolve + cache its file immediately.
-      unawaited(_preloadNextSong(songs.first).catchError((Object e) {
-      }));
+      unawaited(_preloadNextSong(songs.first).catchError((Object e) {}));
     } catch (_) {
       // Timed out or failed late: the preload is abandoned this pass.
       _continuationNotBefore = now.add(const Duration(seconds: 30));
@@ -1637,7 +1579,6 @@ class AudioPlayerService extends ChangeNotifier {
       final recent = await _storage.getRecentlyPlayed();
       final stats = await _storage.getListeningStats();
       final topArtists = await _storage.getTopArtists(limit: 10);
-      final topGenres = await _storage.getTopGenres(limit: 5);
       final liked = await _storage.getLikedSongs();
       final searches = await _storage.getSearchHistory();
       MusicLanguage lang = MusicLanguage.all;
@@ -1703,7 +1644,7 @@ class AudioPlayerService extends ChangeNotifier {
         candidates: pool,
         stats: stats,
         topArtists: topArtists,
-        topGenres: [...topGenres, ...selGenres],
+        topGenres: selGenres.toList(),
         likedIds: liked.map((s) => s.id).toSet(),
         queueIds: playedIds,
         userLanguage: lang,
@@ -1857,8 +1798,7 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   void _cancelLoadWatchdog({bool silent = false}) {
-    if (_loadWatchdog != null && !silent) {
-    }
+    if (_loadWatchdog != null && !silent) {}
     _loadWatchdog?.cancel();
     _loadWatchdog = null;
   }
@@ -2231,61 +2171,6 @@ class AudioPlayerService extends ChangeNotifier {
     return null;
   }
 
-  Map<String, String> _headersFor(MediaSource source) {
-    // googlevideo checks Origin/Referer consistency; plain CDNs/proxies
-    // only need a browser UA.
-    if (source.provider == MediaProvider.youTube && !source.isProxy) {
-      return {
-        'User-Agent': _ua,
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Origin': 'https://www.youtube.com',
-        'Referer': 'https://www.youtube.com/',
-        'Connection': 'keep-alive',
-      };
-    }
-    return {'User-Agent': _ua};
-  }
-
-  /// Buckets player failures so the report says *why* (network vs
-  /// format) instead of one opaque line. Heuristic on exception text.
-  String _classifyPlayerError(Object e) {
-    final t = e.toString().toLowerCase();
-    if (t.contains('socket') ||
-        t.contains('timeout') ||
-        t.contains('timed out') ||
-        t.contains('host lookup') ||
-        t.contains('connection') ||
-        t.contains('network') ||
-        t.contains('unreachable') ||
-        t.contains('certificate') ||
-        t.contains('handshake')) {
-      return 'network';
-    }
-    if (t.contains('format') ||
-        t.contains('codec') ||
-        t.contains('decoder') ||
-        t.contains('mime') ||
-        t.contains('unsupported') ||
-        t.contains('extractor') ||
-        t.contains('drm')) {
-      return 'format';
-    }
-    return 'unknown';
-  }
-
-  /// Returns true when the error is a transient network issue (DNS,
-  /// host lookup, connection) that should not count as a permanent
-  /// provider failure.
-  bool _isNetworkError(Object e) {
-    final t = e.toString().toLowerCase();
-    return t.contains('socket') ||
-        t.contains('timeout') ||
-        t.contains('host lookup') ||
-        t.contains('connection') ||
-        t.contains('network') ||
-        t.contains('unreachable');
-  }
 
   /// Online gate. Fast path: connectivity_plus confirms network interface
   /// is up (no DNS needed). Slow path: DNS lookup when connectivity_plus
@@ -2364,8 +2249,7 @@ class AudioPlayerService extends ChangeNotifier {
               index: skipIndex,
               autoplayOnEnd: _autoplayOnEnd,
               queueOrigin: _queueOrigin)
-          .then((_) {}, onError: (Object e) {
-      }));
+          .then((_) {}, onError: (Object e) {}));
       return true;
     }
     // (b) No cached songs ahead. If NOT in degraded mode, try the
@@ -2386,8 +2270,7 @@ class AudioPlayerService extends ChangeNotifier {
                 index: i,
                 autoplayOnEnd: _autoplayOnEnd,
                 queueOrigin: _queueOrigin)
-            .then((_) {}, onError: (Object e) {
-        }));
+            .then((_) {}, onError: (Object e) {}));
         return true;
       }
     }
@@ -2407,8 +2290,7 @@ class AudioPlayerService extends ChangeNotifier {
               index: fallback,
               autoplayOnEnd: _autoplayOnEnd,
               queueOrigin: _queueOrigin)
-          .then((_) {}, onError: (Object e) {
-      }));
+          .then((_) {}, onError: (Object e) {}));
       return true;
     }
     // Nothing cached at all (truly offline, empty cache): pause.
@@ -2562,83 +2444,6 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  /// Loads [source] into the ACTIVE player and starts it. [stale] is the
-  /// owning load's token check: after the 30s setAudioSource await a
-  /// newer tap may own the player, and playing then would blast the wrong
-  /// (or a half-torn-down) source â€” so a superseded load throws instead.
-  /// NOTE: never called while [_streamingEnabled] is false; the caller
-  /// skips the stream attempt before resolution so no load ever throws
-  /// "Streaming disabled".
-  Future<void> _playUrl(
-      MediaSource source, Song song, bool Function() stale, int gen) async {
-    // If the SAME song is already playing past 5 s, absorb this load â€”
-    // a second setSource would reset position to 0 and cause a restart.
-    if (_currentSong?.id == song.id &&
-        _player.playing &&
-        _position.inSeconds > 5) {
-      return;
-    }
-    // Reset pos/dur BEFORE setAudioSource so no downstream event ever reads
-    // the previous track's time for this one.
-    _position = Duration.zero;
-    _duration = Duration.zero;
-    _lastNotifiedSecond = -1;
-    try {
-      await _player
-          .setAudioSource(
-            AudioSource.uri(Uri.parse(source.url),
-                headers: _headersFor(source), tag: mediaTagFor(song)),
-          )
-          .timeout(const Duration(seconds: 30));
-      _loadStage = 'setSource';
-    } catch (e) {
-      rethrow;
-    }
-    if (stale()) {
-      throw StateError('superseded during setAudioSource');
-    }
-    // Truncation guard: refuse to START a stream whose container duration
-    // is far shorter than the manifest promises (throttled range, preview
-    // clip). Playing it would stop seconds in and look like a skip.
-    // Unknown lengths are allowed â€” the guard only fires on contradiction.
-    Duration? actual = _player.duration;
-    if (actual == null || actual == Duration.zero) {
-      actual = await _player.durationStream
-          .firstWhere((d) => d != null && d > Duration.zero, orElse: () => null)
-          .timeout(const Duration(seconds: 5), onTimeout: () => null);
-    }
-    // Preview guard: YouTube sometimes serves 15s previews. Reject any stream
-    // with player-reported duration <60s. This forces download fallback and avoids
-    // the 15s stop-and-restart loop. Metadata missing case is covered too.
-    if (actual != null && actual.inSeconds > 0 && actual.inSeconds < 60) {
-      throw StateError('preview/short stream (${actual.inSeconds}s) rejected');
-    }
-    final totalBytes = source.contentLength;
-    final bps = source.bitrate;
-    if (actual != null &&
-        totalBytes != null &&
-        totalBytes > 0 &&
-        bps != null &&
-        bps > 0) {
-      final expectedSec = totalBytes * 8 / bps;
-      if (expectedSec > 0 && actual.inSeconds < expectedSec * 0.6) {
-        throw StateError(
-            'truncated stream (${actual.inSeconds}s vs ~${expectedSec.round()}s expected)');
-      }
-    }
-    // play() completes when playback STOPS, not when it starts â€” never
-    // await it. Fire, derive state from playerStateStream.
-    unawaited(_player.play().then((_) {
-      if (stale()) {
-        return;
-      }
-    }).catchError((Object e) {
-      if (stale()) {
-        return;
-      }
-    }));
-  }
-
   Future<void> _playFile(
       String path, Song song, bool Function() stale, int gen) async {
     // If the SAME song is already playing past 5 s, absorb this load.
@@ -2664,8 +2469,8 @@ class AudioPlayerService extends ChangeNotifier {
       throw StateError('superseded during setAudioSource');
     }
     // Preview/truncation guard for cached files: a short or bad download
-    // must not start and then stop seconds in, looking like a skip. Mirrors
-    // the stream guard in [_playUrl]. The commit size check already rejects
+    // must not start and then stop seconds in, looking like a skip. The
+    // commit size check already rejects
     // gross truncation; this catches a file whose container duration is far
     // shorter than the song's known length.
     Duration? actual = _player.duration;
@@ -2849,8 +2654,7 @@ class AudioPlayerService extends ChangeNotifier {
         // play() completes when playback STOPS: never await it here, or
         // the await can hang ~20s and stall the watchdog chain.
         unawaited(_player.play().then((_) {
-          if (!_stillCurrent(nudgeId, nudgeGen)) {
-          }
+          if (!_stillCurrent(nudgeId, nudgeGen)) {}
         }).catchError((Object e) {
           try {
             syncPlaybackState();
@@ -2998,6 +2802,21 @@ class AudioPlayerService extends ChangeNotifier {
         if (at != -1) _currentIndex = at;
       }
       final baseIndex = fromIndex ?? _pendingIndex ?? _currentIndex;
+      // Explicit "Play next" wins over shuffle, loop and queue-end growth.
+      // fromIndex==null covers both genuine completion and the Next button;
+      // failure paths pass an explicit index and must not re-take it.
+      final override = _playNextOverride;
+      if (override != null &&
+          fromIndex == null &&
+          _queue.isNotEmpty &&
+          _currentIndex >= 0) {
+        _playNextOverride = null;
+        final oIdx = _queue.indexWhere((s) => s.id == override.id);
+        if (await _playWithRetry(override, oIdx >= 0 ? oIdx : baseIndex)) {
+          return true;
+        }
+        // Failed after retries: fall through to the normal advance.
+      }
       int? nextIndex;
       if (_shuffle &&
           _queue.length > 1 &&
@@ -3100,8 +2919,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (_player.playing) return; // a new source owns playback
       if (_pausedForOffline) return; // offline pause owns recovery
       if (retryGen != _playGen) return; // newer load superseded
-      unawaited(_playQueueEnd().then((_) {}, onError: (Object e) {
-      }));
+      unawaited(_playQueueEnd().then((_) {}, onError: (Object e) {}));
     });
   }
 
@@ -3459,15 +3277,10 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cycles off â†’ all â†’ one. Repeat-one is handled by the player itself;
-  /// repeat-all is handled manually in [playNext]/[playPrevious] because
-  /// the player only ever holds a single source.
-  Future<void> cycleRepeatMode() async {
-    _loopMode = switch (_loopMode) {
-      LoopMode.off => LoopMode.all,
-      LoopMode.all => LoopMode.one,
-      LoopMode.one => LoopMode.off,
-    };
+  /// Loop the current song on/off. Replaces the old off→all→one cycle;
+  /// repeat-all is no longer reachable from the UI.
+  Future<void> toggleRepeat() async {
+    _loopMode = _loopMode == LoopMode.one ? LoopMode.off : LoopMode.one;
     try {
       await _player.setLoopMode(
         _loopMode == LoopMode.one ? LoopMode.one : LoopMode.off,
@@ -3475,6 +3288,13 @@ class AudioPlayerService extends ChangeNotifier {
     } catch (e) {
       // Cosmetic on failure; manual repeat logic still applies.
     }
+    notifyListeners();
+  }
+
+  /// Queue [song] to play once, immediately after the current song. A second
+  /// call replaces the pending slot; a fresh explicit queue drops it.
+  void setPlayNext(Song song) {
+    _playNextOverride = song;
     notifyListeners();
   }
 
@@ -3533,8 +3353,7 @@ class AudioPlayerService extends ChangeNotifier {
       notifyListeners();
       _startStallTimer();
       unawaited(_player.play().then((_) {
-        if (resumeGen != _playGen) {
-        }
+        if (resumeGen != _playGen) {}
       }).catchError((Object e) {
         try {
           syncPlaybackState();
@@ -3637,22 +3456,6 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  void setQueue(List<Song> songs, {int startIndex = 0}) {
-    _queue = songs;
-    _currentIndex = startIndex;
-    _clearPreloadState();
-    _preparingContinuation = false;
-    _bgRetrySongCounts.clear();
-    _completionGuardSongCounts.clear();
-    notifyListeners();
-  }
-
-  Future<bool> downloadCurrentSong() async {
-    final song = _currentSong;
-    if (song == null) return false;
-    return downloadCurrentSongForSong(song);
-  }
-
   Future<bool> downloadCurrentSongForSong(Song song,
       {bool addToDownloadedPlaylist = true}) async {
     try {
@@ -3722,8 +3525,7 @@ class AudioPlayerService extends ChangeNotifier {
                 index: resumeIdx,
                 autoplayOnEnd: _autoplayOnEnd,
                 queueOrigin: _queueOrigin)
-            .then((_) {}, onError: (Object e) {
-        }));
+            .then((_) {}, onError: (Object e) {}));
       }
       return true;
     } catch (e) {

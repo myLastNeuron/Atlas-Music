@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_transitions.dart';
 import '../widgets/liquid_background.dart';
 
 /// First-run input. Content only — parent provides [LiquidBackground].
 /// Redesigned: glass card with welcome prompt, no ugly underline input,
 /// premium gradient continue button, clean typographic hierarchy.
+/// Elements stagger in so the card assembles rather than appearing at once.
 class OnboardingContent extends StatefulWidget {
   final ValueChanged<String> onContinue;
   const OnboardingContent({super.key, required this.onContinue});
@@ -65,123 +67,138 @@ class _OnboardingContentState extends State<OnboardingContent>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Decorative orb.
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Colors.white, Color(0xFFD4D4D8)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.white24,
-                          blurRadius: 28,
-                          offset: Offset(0, 8),
+                  Stagger(
+                    index: 0,
+                    child: Container(
+                      width: 64,
+                      height: 64,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          colors: [Colors.white, Color(0xFFD4D4D8)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
                         ),
-                      ],
-                    ),
-                    child: const Icon(Icons.music_note_rounded,
-                        color: AppColors.charcoal, size: 32),
-                  ),
-                  const SizedBox(height: 28),
-                  Text(
-                    "What's your name?",
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.3,
-                          color: AppColors.ink,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Your music. Your atmosphere.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.inkSoft,
-                          fontSize: 13,
-                        ),
-                  ),
-                  const SizedBox(height: 28),
-                  // Glass input — no underline.
-                  Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.mist,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: AppColors.line,
-                      ),
-                    ),
-                    child: TextField(
-                      key: const ValueKey('name_input'),
-                      controller: _ctrl,
-                      focusNode: _focus,
-                      textCapitalization: TextCapitalization.words,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: AppColors.ink,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText: 'Enter your name',
-                        hintStyle: TextStyle(
-                          color: AppColors.mute,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w400,
-                        ),
-                        prefixIcon: Icon(
-                          Icons.person_outline_rounded,
-                          size: 20,
-                          color: AppColors.mute,
-                        ),
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 16),
-                      ),
-                      onSubmitted: (_) => _go(),
-                      textInputAction: TextInputAction.done,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  // Gradient continue button.
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        gradient: const LinearGradient(
-                          colors: [Colors.white, Color(0xFFE4E4E7)],
-                        ),
-                        boxShadow: const [
+                        boxShadow: [
                           BoxShadow(
                             color: Colors.white24,
-                            blurRadius: 20,
+                            blurRadius: 28,
                             offset: Offset(0, 8),
                           ),
                         ],
                       ),
-                      child: ElevatedButton(
-                        key: const ValueKey('name_continue'),
-                        onPressed: _go,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          shadowColor: Colors.transparent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+                      child: const Icon(Icons.music_note_rounded,
+                          color: AppColors.charcoal, size: 32),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  Stagger(
+                    index: 1,
+                    child: Text(
+                      "What's your name?",
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                            color: AppColors.ink,
                           ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Stagger(
+                    index: 2,
+                    child: Text(
+                      'Your music. Your atmosphere.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.inkSoft,
+                            fontSize: 13,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  // Glass input — no underline.
+                  Stagger(
+                    index: 3,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.mist,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppColors.line,
                         ),
-                        child: const Text(
-                          'Continue',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.charcoal,
-                            letterSpacing: 0.2,
+                      ),
+                      child: TextField(
+                        key: const ValueKey('name_input'),
+                        controller: _ctrl,
+                        focusNode: _focus,
+                        textCapitalization: TextCapitalization.words,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.ink,
+                        ),
+                        decoration: const InputDecoration(
+                          hintText: 'Enter your name',
+                          hintStyle: TextStyle(
+                            color: AppColors.mute,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w400,
+                          ),
+                          prefixIcon: Icon(
+                            Icons.person_outline_rounded,
+                            size: 20,
+                            color: AppColors.mute,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 16),
+                        ),
+                        onSubmitted: (_) => _go(),
+                        textInputAction: TextInputAction.done,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Gradient continue button.
+                  Stagger(
+                    index: 4,
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: const LinearGradient(
+                            colors: [Colors.white, Color(0xFFE4E4E7)],
+                          ),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.white24,
+                              blurRadius: 20,
+                              offset: Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton(
+                          key: const ValueKey('name_continue'),
+                          onPressed: _go,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          child: const Text(
+                            'Continue',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.charcoal,
+                              letterSpacing: 0.2,
+                            ),
                           ),
                         ),
                       ),

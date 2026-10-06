@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class SkeletonCard extends StatelessWidget {
-  final double width;
-  final double height;
-  const SkeletonCard({super.key, this.width = 150, this.height = 200});
+  const SkeletonCard({super.key});
 
   @override
   Widget build(BuildContext context) {
+    const width = 150.0;
     return Container(
       width: width,
       margin: const EdgeInsets.only(right: 12),
