@@ -391,6 +391,9 @@ class YouTubeProvider extends MediaResolver {
         try {
           if (await file.exists()) await file.delete();
         } catch (_) {}
+        // Superseded: stop immediately instead of resolving fresh alternates
+        // for a track nobody is waiting on.
+        if (stale?.call() ?? false) break;
         // Do not resolve a fresh candidate after the final attempt: the
         // answer would be discarded by the loop condition, so the manifest
         // fetch + URL probes are pure waste on the throttled path.
@@ -501,7 +504,17 @@ class YouTubeProvider extends MediaResolver {
         }
         var wrote = 0;
         await for (final chunkBytes in resp.stream) {
-          if (stale?.call() ?? false) return; // aborted, not corrupt
+          if (stale?.call() ?? false) {
+            // Superseded mid-download: fail, don't return normally. A normal
+            // return would make download() report success and let the caller
+            // commit this half-written file to the cache.
+            throw ResolveFailure(
+              provider: provider,
+              stage: ResolveStage.download,
+              detail: 'download superseded for $url',
+              retryable: false,
+            );
+          }
           sink.add(chunkBytes);
           wrote += chunkBytes.length;
           start += chunkBytes.length;
@@ -520,9 +533,7 @@ class YouTubeProvider extends MediaResolver {
     // connection can drop mid-file with no error. Against a known total
     // that is truncation, not EOF: fail so download() retries a fresh
     // itag instead of caching a file that plays seconds then stops.
-    // A stale abort returns from inside the try above, so this check is
-    // skipped for aborts — reporting an intentional cancel as corruption
-    // would turn every supersede into an extra resolve + download.
+    // (A stale abort throws from inside the try above and never reaches here.)
     // A server that ignores the range parameter and returns the whole body
     // repeats it every iteration, so the request cap alone still allows
     // ~4 GB written to one staging file. Bound the bytes too.

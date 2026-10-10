@@ -21,6 +21,11 @@ class SongCollectionScreen extends StatefulWidget {
   final Future<List<Song>> Function() load;
   final Widget Function(Song, int, List<Song>) trailing;
 
+  /// Remote lists (an artist's release) load once; local collections
+  /// (liked/downloads) reload on any storage change. Remote reloads would
+  /// otherwise re-hit the network on every like or download anywhere.
+  final bool reloadOnStorage;
+
   const SongCollectionScreen({
     super.key,
     required this.title,
@@ -30,6 +35,7 @@ class SongCollectionScreen extends StatefulWidget {
     required this.emptyHint,
     required this.load,
     required this.trailing,
+    this.reloadOnStorage = true,
   });
 
   @override
@@ -44,18 +50,25 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
   @override
   void initState() {
     super.initState();
-    _storage.addListener(_load);
+    if (widget.reloadOnStorage) _storage.addListener(_load);
     _load();
   }
 
   @override
   void dispose() {
-    _storage.removeListener(_load);
+    if (widget.reloadOnStorage) _storage.removeListener(_load);
     super.dispose();
   }
 
   Future<void> _load() async {
-    final songs = await widget.load();
+    List<Song> songs;
+    try {
+      songs = await widget.load();
+    } catch (_) {
+      // A throwing loader (e.g. an album fetch while offline) must not leave
+      // the screen spinning forever.
+      songs = const [];
+    }
     if (!mounted) return;
     setState(() {
       _songs = songs;

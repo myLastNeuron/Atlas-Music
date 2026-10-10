@@ -460,11 +460,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
 
   Widget _buildLanguageChips() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.glassBorder),
-      ),
+      decoration: liquidGlassDecoration(16),
       padding: const EdgeInsets.all(8),
       child: Wrap(
         spacing: 8,
@@ -503,13 +499,7 @@ Widget _buildMultiSelectChips(
     Function(List<String>) onChanged,
   ) {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.glassBorder,
-        ),
-      ),
+      decoration: liquidGlassDecoration(16),
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Wrap(

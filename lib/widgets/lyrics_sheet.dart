@@ -30,6 +30,9 @@ class _LyricsSheetState extends State<LyricsSheet> {
   final ScrollController _scroll = ScrollController();
   final Map<int, GlobalKey> _keys = {};
   int _current = -1;
+  List<String>? _translated;
+  bool _showTranslated = false;
+  bool _translating = false;
 
   @override
   void initState() {
@@ -43,6 +46,29 @@ class _LyricsSheetState extends State<LyricsSheet> {
     _service.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  Future<void> _toggleTranslation(List<String> lines, String target) async {
+    if (_showTranslated) {
+      setState(() => _showTranslated = false);
+      return;
+    }
+    if (_translated != null) {
+      setState(() => _showTranslated = true);
+      return;
+    }
+    setState(() => _translating = true);
+    final result = await _service.translate(lines, target);
+    if (!mounted) return;
+    setState(() {
+      _translated = result;
+      _showTranslated = result != null;
+      _translating = false;
+    });
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Translation unavailable')));
+    }
   }
 
   void _maybeScroll(int next) {
@@ -70,7 +96,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
     return Container(
       height: MediaQuery.of(context).size.height * 0.72,
       decoration: const BoxDecoration(
-        color: AppColors.card,
+        color: AppColors.glass,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         border: Border(top: BorderSide(color: AppColors.line)),
       ),
@@ -104,6 +130,34 @@ class _LyricsSheetState extends State<LyricsSheet> {
                               fontSize: 12, color: AppColors.inkSoft)),
                     ],
                   ),
+                ),
+                FutureBuilder<SyncedLyrics?>(
+                  future: _future,
+                  builder: (context, snap) {
+                    final d = snap.data;
+                    if (d == null || d.instrumental) {
+                      return const SizedBox.shrink();
+                    }
+                    final lines = d.isSynced
+                        ? d.lines.map((l) => l.text).toList()
+                        : (d.plain ?? '').split('\n');
+                    if (lines.every((l) => l.trim().isEmpty)) {
+                      return const SizedBox.shrink();
+                    }
+                    final target = Localizations.localeOf(context).languageCode;
+                    return TextButton.icon(
+                      icon: _translating
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.translate, size: 18),
+                      label: Text(_showTranslated ? 'Original only' : 'Translate'),
+                      onPressed: _translating
+                          ? null
+                          : () => _toggleTranslation(lines, target),
+                    );
+                  },
                 ),
                 IconButton(
                   icon: const Icon(Icons.close, size: 22),
@@ -150,10 +204,34 @@ class _LyricsSheetState extends State<LyricsSheet> {
                       sub: 'Only unsynced text exists.',
                     );
                   }
+                  final src = plain.split('\n');
                   return SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-                    child: Text(plain,
-                        style: const TextStyle(fontSize: 15, height: 1.7)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (var i = 0; i < src.length; i++) ...[
+                          Text(
+                            src[i],
+                            style: const TextStyle(
+                                fontSize: 12.5,
+                                height: 1.5,
+                                color: AppColors.mute),
+                          ),
+                          if (_showTranslated &&
+                              _translated != null &&
+                              i < _translated!.length)
+                            Text(
+                              _translated![i],
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  height: 1.5,
+                                  color: AppColors.inkSoft),
+                            ),
+                          const SizedBox(height: 8),
+                        ],
+                      ],
+                    ),
                   );
                 }
                 for (var i = 0; i < data.lines.length; i++) {
@@ -180,17 +258,40 @@ class _LyricsSheetState extends State<LyricsSheet> {
                             behavior: HitTestBehavior.opaque,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 7),
-                              child: Text(
-                                line.text,
-                                style: TextStyle(
-                                  fontSize: active ? 17 : 15,
-                                  height: 1.45,
-                                  fontWeight: active
-                                      ? FontWeight.w700
-                                      : FontWeight.w400,
-                                  color:
-                                      active ? AppColors.ink : AppColors.mute,
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    line.text,
+                                    style: TextStyle(
+                                      fontSize: active ? 13.5 : 12.5,
+                                      height: 1.4,
+                                      fontWeight: active
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                      color: active
+                                          ? AppColors.inkSoft
+                                          : AppColors.mute,
+                                    ),
+                                  ),
+                                  if (_showTranslated &&
+                                      _translated != null) ...[
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      _translated![i],
+                                      style: TextStyle(
+                                        fontSize: active ? 18 : 16,
+                                        height: 1.4,
+                                        fontWeight: active
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
+                                        color: active
+                                            ? AppColors.ink
+                                            : AppColors.inkSoft,
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                           ),

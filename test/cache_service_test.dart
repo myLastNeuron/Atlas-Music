@@ -86,4 +86,27 @@ void main() {
     await small.sweep();
     expect(await small.getValid(song), isNotNull);
   });
+
+  test('re-download as another container removes the stale variant', () async {
+    final bytes = realisticBytes();
+    final first = File('${dir.path}/a.part')..writeAsBytesSync(bytes);
+    await cache.commit(song, first, src(len: bytes.length)); // m4a
+    final m4a = File('${dir.path}/${cache.keyFor(song)}.m4a');
+    expect(await m4a.exists(), isTrue);
+
+    final second = File('${dir.path}/b.part')..writeAsBytesSync(bytes);
+    final webmSrc = MediaSource(
+      provider: MediaProvider.youTube,
+      url: 'https://x/w',
+      mimeType: 'audio/webm',
+      codec: 'opus',
+      container: 'webm',
+      contentLength: bytes.length,
+      resolvedAt: DateTime.now(),
+    );
+    final committed = await cache.commit(song, second, webmSrc);
+    expect(committed.path, endsWith('.webm'));
+    expect(await m4a.exists(), isFalse, reason: 'stale m4a must be gone');
+    expect((await cache.getValid(song))?.path, committed.path);
+  });
 }

@@ -43,6 +43,13 @@ class Song {
     };
   }
 
+  /// Every credited artist: "A, B & C feat. D" → [A, B, C, D].
+  List<String> get artistNames => artist
+      .split(RegExp(r',|&| x | feat\.? | ft\.? ', caseSensitive: false))
+      .map((n) => n.trim())
+      .where((n) => n.isNotEmpty)
+      .toList();
+
   factory Song.fromJson(Map<String, dynamic> json) {
     return Song(
       id: json['id'] ?? '',

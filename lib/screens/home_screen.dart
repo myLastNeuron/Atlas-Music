@@ -13,6 +13,7 @@ import '../services/youtube_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
+import '../widgets/liquid_background.dart';
 import '../widgets/play_helper.dart';
 import '../widgets/skeleton_card.dart';
 import '../widgets/song_actions.dart';
@@ -88,6 +89,30 @@ final _recommendationBadWords = RegExp(
     r'\b(remix|remixed|remixaudio|edit|edits|cover|covers|short|shorts|tiktok|instrumental|upload|reupload|loop|looped|extended|8d|10d|podcast|interview|tribute|karaoke|live performance|concert)\b');
 
 bool _titleLongEnough(String s) => s.trim().split(RegExp(r'\s+')).length >= 2;
+
+/// Artists the user has shown taste for, from every available signal.
+Set<String> _tasteArtistsOf(
+  Iterable<String> selected,
+  Iterable<String> topArtists,
+  Iterable<Song> recent,
+  Iterable<Song> liked,
+) =>
+    <String>{
+      ...selected,
+      ...topArtists,
+      ...recent.map((s) => s.artist),
+      ...liked.map((s) => s.artist),
+    }..removeWhere(
+        (a) => a.trim().isEmpty || a.toLowerCase() == 'unknown');
+
+/// The taste artist a generated "<artist> songs" query belongs to, or null.
+String? _canonicalArtistFor(String query, Iterable<String> tasteArtists) {
+  final key = query.trim().toLowerCase();
+  for (final artist in tasteArtists) {
+    if (key == '${artist.toLowerCase()} songs') return artist;
+  }
+  return null;
+}
 
 /// Exact size of the RECOMMENDED FOR YOU rail: fill to 15, never exceed it.
 const int _recommendedTarget = 15;
@@ -259,7 +284,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (avatar != _avatarUrl) {
         ImageProvider? provider;
-        if (avatar != null && !_avatarError) {
+        if (avatar != null) {
           try {
             provider = (avatar.startsWith('http')
                 ? NetworkImage(avatar)
@@ -363,20 +388,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         addQuery(query);
       }
 
-      final tasteArtists = <String>{
-        ..._selectedArtists,
-        ...topArtists,
-        ...recent.map((song) => song.artist),
-        ...liked.map((song) => song.artist),
-      }..removeWhere((artist) =>
-          artist.trim().isEmpty || artist.toLowerCase() == 'unknown');
-      String? canonicalArtistFor(String query) {
-        final key = query.trim().toLowerCase();
-        for (final artist in tasteArtists) {
-          if (key == '${artist.toLowerCase()} songs') return artist;
-        }
-        return null;
-      }
+      final tasteArtists =
+          _tasteArtistsOf(_selectedArtists, topArtists, recent, liked);
+      String? canonicalArtistFor(String query) =>
+          _canonicalArtistFor(query, tasteArtists);
 
       // Quick picks remain their own personalized rail. Recommendation
       // results are gathered first and ranked as one pool, not appended in
@@ -422,8 +437,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       var ranked = rankFor(2, true);
       if (ranked.length < _recommendedTarget) {
         final seen = ranked.map((pick) => pick.song.id).toSet();
-        final extra =
-            rankFor(4, false).where((pick) => seen.add(pick.song.id));
+        final extra = rankFor(4, false).where((pick) => seen.add(pick.song.id));
         ranked = [...ranked, ...extra].take(_recommendedTarget).toList();
       }
       if (!mounted) return;
@@ -525,20 +539,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         addQuery(query);
       }
 
-      final tasteArtists = <String>{
-        ..._selectedArtists,
-        ...topArtists,
-        ...recent.map((song) => song.artist),
-        ...liked.map((song) => song.artist),
-      }..removeWhere((artist) =>
-          artist.trim().isEmpty || artist.toLowerCase() == 'unknown');
-      String? canonicalArtistFor(String query) {
-        final key = query.trim().toLowerCase();
-        for (final artist in tasteArtists) {
-          if (key == '${artist.toLowerCase()} songs') return artist;
-        }
-        return null;
-      }
+      final tasteArtists =
+          _tasteArtistsOf(_selectedArtists, topArtists, recent, liked);
+      String? canonicalArtistFor(String query) =>
+          _canonicalArtistFor(query, tasteArtists);
 
       final pool = <Song>[];
       final seen = <String>{};
@@ -625,8 +629,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _play(Song song, List<Song> queue, int index,
       {String? queueOrigin}) async {
-    final safeIndex =
-        queue.indexWhere((s) => s.videoId == song.videoId || s.id == song.id);
+    final safeIndex = queue.indexWhere(
+        (s) => (song.videoId != null && s.videoId == song.videoId) || s.id == song.id);
     final idx = safeIndex >= 0 ? safeIndex : index;
     await playSongs(context,
         song: song, queue: queue, index: idx, queueOrigin: queueOrigin);
@@ -648,7 +652,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('New playlist'),
         content: TextField(
           controller: ctrl,
@@ -702,11 +706,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: _createPlaylistDialog,
         child: Container(
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.glassBorder),
-          ),
+          decoration: liquidGlassDecoration(20),
           child: Row(
             children: [
               Stack(
@@ -767,12 +767,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 22),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color: AppColors.glassBorder, style: BorderStyle.solid),
-              color: Colors.white.withValues(alpha: 0.04),
-            ),
+            decoration: liquidGlassDecoration(16),
             child: const Column(
               children: [
                 Icon(Icons.queue_music, size: 32, color: AppColors.mute),
@@ -822,11 +817,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: Container(
                 width: 220,
                 padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.glassBorder),
-                ),
+                decoration: liquidGlassDecoration(16),
                 child: Row(
                   children: [
                     art.isEmpty
@@ -855,8 +846,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   fontWeight: FontWeight.w600,
                                   fontSize: 13)),
                           const SizedBox(height: 4),
-                          Text(
-                              '${p.songs.length} songs',
+                          Text('${p.songs.length} songs',
                               style: const TextStyle(
                                   color: AppColors.inkSoft, fontSize: 11)),
                         ],
@@ -877,12 +867,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 24),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: AppColors.glassBorder, style: BorderStyle.solid),
-          color: Colors.white.withValues(alpha: 0.04),
-        ),
+        decoration: liquidGlassDecoration(16),
         child: const Column(
           children: [
             Icon(Icons.history, size: 32, color: AppColors.mute),
@@ -1027,9 +1012,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: items.length > _recommendedTarget
-          ? _recommendedTarget
-          : items.length,
+      itemCount:
+          items.length > _recommendedTarget ? _recommendedTarget : items.length,
       separatorBuilder: (_, __) => const SizedBox(height: 4),
       itemBuilder: (context, i) {
         final s = items[i];
@@ -1109,9 +1093,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
+        bottom: false,
         child: RefreshIndicator(
           onRefresh: _onRefresh,
-          backgroundColor: AppColors.card,
+          backgroundColor: AppColors.glass,
           color: AppColors.charcoal,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(

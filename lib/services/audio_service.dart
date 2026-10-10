@@ -20,6 +20,7 @@ import 'storage_service.dart';
 import 'song_filter.dart';
 import 'user_prefs.dart';
 import 'youtube_service.dart';
+import 'lyrics_service.dart';
 import 'quick_picks.dart';
 
 /// Playback brain. Knows queue, ExoPlayer, and cache â€” nothing else.
@@ -38,6 +39,8 @@ class AudioPlayerService extends ChangeNotifier {
   final StorageService _storage = StorageService();
   final YouTubeProvider _youTube = YouTubeProvider();
   late final ResolverStrategy _strategy = ResolverStrategy([_youTube]);
+  /// 0..1 progress of the explicit download in flight; null = unknown.
+  final downloadProgress = ValueNotifier<double?>(null);
 
   // Singleton instance for notification action callbacks.
   static AudioPlayerService? _instance;
@@ -241,6 +244,11 @@ class AudioPlayerService extends ChangeNotifier {
   String? _lastFailure;
   String? get lastFailure => _lastFailure;
 
+  /// Set when the user swipes the app away: playback is released and the
+  /// media notification must go idle. Cleared by the next play/resume.
+  bool _released = false;
+  bool get released => _released;
+
   /// True while the queue is paused waiting for connectivity because the
   /// requested song is neither downloaded nor streamable. UI shows a
   /// persistent notice; playback auto-resumes when connectivity returns.
@@ -283,6 +291,7 @@ class AudioPlayerService extends ChangeNotifier {
       // backoff tick so music resumes as soon as the app is opened.
       _onForeground();
     } else {
+      unawaited(_saveSession());
       // Backgrounding with an offline pause still active must (re-)arm the
       // self-heal: foregrounding cancelled it above and nothing else does,
       // so without this the timer is permanently gone after one open.
@@ -397,6 +406,7 @@ class AudioPlayerService extends ChangeNotifier {
     AtlasAudioHandler.instance?.attach(this);
     // TEMPORARY boot marker: proves which binary is on device.
     _cache.sweep();
+    unawaited(restoreLastSession());
     // Listen to player state for notification updates.
     _subs.add(_player.positionStream.listen((position) {
       _position = position;
@@ -408,6 +418,9 @@ class AudioPlayerService extends ChangeNotifier {
       if (position.inSeconds != _lastNotifiedSecond) {
         _lastNotifiedSecond = position.inSeconds;
         notifyListeners();
+        if (_isPlaying && position.inSeconds % 5 == 0) {
+          unawaited(_saveSession());
+        }
       }
       _maybePreloadNext(position);
     }));
@@ -744,6 +757,7 @@ class AudioPlayerService extends ChangeNotifier {
     // [gen] is this load's ownership token: every await boundary below
     // re-checks it, so a superseded load can never command the player.
     _lastFailure = null;
+    _released = false;
     final int gen = ++_playGen;
     // Newest load claims the network: provider work still running for an
     // older load now reports stale and aborts.
@@ -1743,6 +1757,7 @@ class AudioPlayerService extends ChangeNotifier {
       _pausedForOffline = false;
     }
     _cancelOfflineResumeRetry('playing');
+    unawaited(_saveSession());
   }
 
   /// Arms the load watchdog for [gen]. Safety net only: every await in the
@@ -2175,16 +2190,17 @@ class AudioPlayerService extends ChangeNotifier {
   /// Online gate. Fast path: connectivity_plus confirms network interface
   /// is up (no DNS needed). Slow path: DNS lookup when connectivity_plus
   /// reports none (known false-negative on VPNs/custom DNS setups).
-  Future<bool> _hasConnectivity() async {
-    // 1. Fast path: is a recognized network interface up?
-    try {
-      final results = await Connectivity().checkConnectivity();
-      final connected = results.any((r) =>
+  static bool _anyNetwork(List<ConnectivityResult> results) => results.any(
+      (r) =>
           r == ConnectivityResult.wifi ||
           r == ConnectivityResult.mobile ||
           r == ConnectivityResult.ethernet ||
           r == ConnectivityResult.vpn);
-      if (connected) return true;
+
+  Future<bool> _hasConnectivity() async {
+    // 1. Fast path: is a recognized network interface up?
+    try {
+      if (_anyNetwork(await Connectivity().checkConnectivity())) return true;
     } catch (_) {}
     // 2. Slow path: connectivity_plus may report none on VPNs or custom
     // network setups even when internet works. DNS is the real proof.
@@ -2239,7 +2255,7 @@ class AudioPlayerService extends ChangeNotifier {
   Future<bool> _skipOrWaitOffline(
       Song song, int gen, int base, void Function() revertPending) async {
     // (a) Skip to a cached track. Bounded: one cache-check pass.
-    final skipIndex = await _findNextCachedIndex(base, song.id);
+    final skipIndex = await _findCachedIndex(base, song.id, wrap: false);
     if (skipIndex != null) {
       final target = _queue[skipIndex];
       revertPending();
@@ -2279,7 +2295,7 @@ class AudioPlayerService extends ChangeNotifier {
     // keeps going while the resolver/network recovers. Silence is the worst
     // outcome; a repeat is recoverable by the user. Pause only when nothing
     // at all is cached.
-    final fallback = await _findAnyCachedIndex(base, song.id);
+    final fallback = await _findCachedIndex(base, song.id, wrap: true);
     if (fallback != null) {
       final target = _queue[fallback];
       revertPending();
@@ -2325,70 +2341,26 @@ class AudioPlayerService extends ChangeNotifier {
         if (_currentSong != null) _cache.keyFor(_currentSong!),
       };
 
-  /// Candidate search for skip-unavailable. The candidate set is EVERY
-  /// queued song with a valid local file, excluding ONLY the song being
-  /// skipped â€” earlier songs and the just-completed song are candidates.
-  /// Choice rule: first cached song in circular queue order starting
-  /// immediately AFTER the unavailable one. That resumes forward
-  /// progress whenever anything is cached ahead, otherwise wraps to the
-  /// earliest cached song; every cached song stays reachable, none is
-  /// skipped forever. Null = nothing playable: caller waits.
-  Future<int?> _findNextCachedIndex(int fromIndex, String skipSongId) async {
+  /// First queued song (excluding [skipSongId]) that has a valid local file.
+  /// [wrap] false: only positions after [fromIndex], never wrapping to
+  /// already-played songs (resumes forward progress). [wrap] true: circular
+  /// order from [fromIndex], covering every position (last-resort search so
+  /// a resolver outage still leaves audible music). Null = nothing cached.
+  Future<int?> _findCachedIndex(int fromIndex, String skipSongId,
+      {required bool wrap}) async {
     if (_queue.isEmpty) return null;
     final n = _queue.length;
-
-    Future<bool> hasFile(Song s) async {
-      try {
-        return await _cache.getValid(s) != null;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    final cachedIdx = <int>[];
-    for (var i = 0; i < n; i++) {
-      final s = _queue[i];
-      if (s.id == skipSongId) continue;
-      // Only forward positions can be chosen below, so probing earlier
-      // songs is wasted filesystem work.
-      if (i <= fromIndex) continue;
-      if (await hasFile(s)) {
-        cachedIdx.add(i);
-      }
-    }
-    if (cachedIdx.isEmpty) {
-      return null;
-    }
-    // Only look FORWARD from the unavailable song. Never wrap around to
-    // already-played songs. If nothing cached ahead, return null so the
-    // caller pauses instead of replaying old tracks.
-    return cachedIdx.first;
-  }
-
-  /// Last-resort cache search that WRAPS: any queued song with a valid
-  /// local file, circular order, preferring forward from [fromIndex].
-  /// Used only before silencing playback so a resolver outage still leaves
-  /// audible music. Null = no cached song at all.
-  Future<int?> _findAnyCachedIndex(int fromIndex, String skipSongId) async {
-    if (_queue.isEmpty) return null;
-    final n = _queue.length;
-    Future<bool> hasFile(Song s) async {
-      try {
-        return await _cache.getValid(s) != null;
-      } catch (e) {
-        return false;
-      }
-    }
-
     final start = fromIndex % n;
-    final candidates = <String>[];
-    for (var step = 1; step <= n; step++) {
-      final i = (start + step) % n;
+    final order = wrap
+        ? [for (var step = 1; step <= n; step++) (start + step) % n]
+        : [for (var i = fromIndex + 1; i < n; i++) i];
+    for (final i in order) {
       final s = _queue[i];
       if (s.id == skipSongId) continue;
-      if (await hasFile(s)) {
-        candidates.add(s.id);
-        return i;
+      try {
+        if (await _cache.getValid(s) != null) return i;
+      } catch (_) {
+        // Treat an unreadable cache entry as uncached.
       }
     }
     return null;
@@ -2538,6 +2510,13 @@ class AudioPlayerService extends ChangeNotifier {
       return _cache.commit(song, tmp, fresh, keepKeys: _protectedCacheKeys());
     }
 
+    final total = source.contentLength ?? 0;
+    downloadProgress.value = null;
+    final poll = Timer.periodic(const Duration(milliseconds: 250), (_) async {
+      if (total <= 0) return;
+      final n = await tmp.length().catchError((_) => 0);
+      downloadProgress.value = min(1.0, n / total);
+    });
     try {
       return await commitWith(source);
     } catch (e) {
@@ -2551,6 +2530,8 @@ class AudioPlayerService extends ChangeNotifier {
         }
         rethrow;
       }
+    } finally {
+      poll.cancel();
     }
   }
 
@@ -2859,7 +2840,7 @@ class AudioPlayerService extends ChangeNotifier {
       // first cached song instead (infinite offline loop). Online path
       // and loop settings are untouched.
       if (_loopMode != LoopMode.all && await _hasConnectivity() == false) {
-        final wrapIdx = await _findNextCachedIndex(-1, '');
+        final wrapIdx = await _findCachedIndex(-1, '', wrap: false);
         if (wrapIdx != null) {
           final wrapTarget = _queue[wrapIdx];
           if (await _playWithRetry(wrapTarget, wrapIdx)) {
@@ -3328,6 +3309,7 @@ class AudioPlayerService extends ChangeNotifier {
       // Ignore native errors; UI must stay responsive.
     } finally {
       syncPlaybackState();
+      unawaited(_saveSession());
     }
   }
 
@@ -3340,6 +3322,7 @@ class AudioPlayerService extends ChangeNotifier {
     final resumeGen = _playGen;
     try {
       if (_currentSong == null) return;
+      _released = false;
       await _activateSession();
       if (resumeGen != _playGen) {
         return;
@@ -3408,10 +3391,136 @@ class AudioPlayerService extends ChangeNotifier {
     } catch (_) {
       // Player command is best-effort; state re-syncs from the stream.
     }
+    unawaited(_saveSession());
+  }
+
+  /// Ends playback when the user swipes the app away. The position is saved
+  /// first so the mini-player restores it paused next time. Every recovery
+  /// timer is cancelled and audio focus is given up. The handler then ends
+  /// the media service, which removes the notification.
+  Future<void> releaseForDismiss() async {
+    ++_playGen;
+    await _saveSession();
+    _released = true;
+    _isLoading = false;
+    _isPlaying = false;
+    _cancelStallTimer();
+    _cancelBackgroundRetry('dismissed');
+    _cancelOfflineResumeRetry('dismissed');
+    _cancelLoadWatchdog();
+    _cancelQueueEndRetry();
+    _cancelCompletionGuard();
+    _cancelPreloadRetry();
+    _cancelEndPreload();
+    try {
+      await _player.pause().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Best-effort: the service is ending either way.
+    }
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(false);
+    } catch (_) {
+      // Focus release is best-effort.
+    }
+    notifyListeners();
+  }
+
+  /// Rebuilds the last session paused at its saved position, so the mini
+  /// player comes back with the same song, queue and timeline. Nothing
+  /// starts playing. Only a downloaded file can be restored offline, so a
+  /// missing file clears the session instead of retrying it every launch.
+  Future<void> restoreLastSession() async {
+    try {
+      final saved = await _storage.getPlaybackSession();
+      if (saved == null || _currentSong != null || _isLoading) return;
+      final song =
+          Song.fromJson(Map<String, dynamic>.from(saved['song'] as Map));
+      final file = await _cache.getValid(song);
+      if (file == null) {
+        await _storage.clearPlaybackSession();
+        return;
+      }
+      var queue = ((saved['queue'] as List?) ?? const [])
+          .map((j) => Song.fromJson(Map<String, dynamic>.from(j as Map)))
+          .toList();
+      var index = (saved['index'] as int?) ?? -1;
+      if (index < 0 || index >= queue.length) {
+        queue = [song];
+        index = 0;
+      }
+      final pos = Duration(milliseconds: (saved['positionMs'] as int?) ?? 0);
+      final gen = ++_playGen;
+      _isLoading = true;
+      notifyListeners();
+      try {
+        await _player
+            .setAudioSource(
+              AudioSource.file(file.path, tag: mediaTagFor(song)),
+              initialPosition: pos,
+            )
+            .timeout(const Duration(seconds: 30));
+      } catch (_) {
+        if (gen == _playGen) {
+          _isLoading = false;
+          notifyListeners();
+          await _storage.clearPlaybackSession();
+        }
+        return;
+      }
+      if (gen != _playGen) return;
+      _queue = queue;
+      _currentIndex = index;
+      _queueOrigin = (saved['origin'] as String?) ?? 'default';
+      _autoplayOnEnd = (saved['autoplayOnEnd'] as bool?) ?? true;
+      final seed = saved['seed'];
+      _autoplaySeed =
+          seed is Map ? Song.fromJson(Map<String, dynamic>.from(seed)) : null;
+      _commitSong(song, gen);
+      _position = pos;
+      _lastNotifiedSecond = pos.inSeconds;
+      _duration = _player.duration ?? song.duration;
+      _processingState = _player.processingState;
+      _isPlaying = false;
+      _isLoading = false;
+      notifyListeners();
+    } catch (_) {
+      // Best-effort: a corrupt session must never block startup.
+    }
+  }
+
+  /// Writes the committed song, its queue window and the exact position.
+  /// Skips until the song is loaded, so a pending tap never records the
+  /// new song with the old source's position.
+  Future<void> _saveSession() async {
+    final song = _currentSong;
+    if (song == null || _activeSongId != song.id) return;
+    try {
+      var queue = _queue;
+      var index = _currentIndex;
+      if (index < 0 || index >= queue.length) {
+        queue = [song];
+        index = 0;
+      }
+      final start = max(0, index - 20);
+      final end = min(queue.length, index + 80);
+      await _storage.savePlaybackSession({
+        'song': song.toJson(),
+        'queue': queue.sublist(start, end).map((s) => s.toJson()).toList(),
+        'index': index - start,
+        'origin': _queueOrigin,
+        'autoplayOnEnd': _autoplayOnEnd,
+        'seed': _autoplaySeed?.toJson(),
+        'positionMs': _player.position.inMilliseconds,
+      });
+    } catch (_) {
+      // Saving is best-effort; the next save or pause writes it again.
+    }
   }
 
   Future<void> stop() async {
     ++_playGen;
+    unawaited(_storage.clearPlaybackSession());
     try {
       _cancelStallTimer();
       _cancelBackgroundRetry('stop');
@@ -3458,6 +3567,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<bool> downloadCurrentSongForSong(Song song,
       {bool addToDownloadedPlaylist = true}) async {
+    unawaited(LyricsService.saveForDownload(song));
     try {
       // If already cached, just record it â€” no network, no playback glitch.
       final cached = await _cache.getValid(song);

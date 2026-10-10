@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
@@ -313,7 +314,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
       child: Container(
         width: 250,
         decoration: BoxDecoration(
-          color: AppColors.card,
+          color: AppColors.glass,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: AppColors.glassBorder),
           boxShadow: [
@@ -422,7 +423,7 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
   final chosen = await showDialog<String>(
     context: context,
     builder: (ctx) => SimpleDialog(
-      backgroundColor: AppColors.card,
+      backgroundColor: AppColors.glass,
       title: const Text('Add to playlist'),
       children: playlists
           .map((p) => SimpleDialogOption(
@@ -462,22 +463,29 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
 
 /// Blocking progress dialog. Awaits nothing; call the returned closer once
 /// the work finishes (idempotent, safe after the route is gone).
-Future<void> Function() showBlockingProgress(
-    BuildContext context, String message) {
+final _noProgress = ValueNotifier<double?>(null);
+
+Future<void> Function() showBlockingProgress(BuildContext context, String message,
+    {ValueListenable<double?>? progress}) {
   final navigator = Navigator.of(context, rootNavigator: true);
   var open = true;
   showDialog(
     context: context,
     barrierDismissible: false,
     builder: (_) => AlertDialog(
-      backgroundColor: AppColors.card,
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 14),
-          Text(message),
-        ],
+      backgroundColor: AppColors.glass,
+      content: ValueListenableBuilder<double?>(
+        valueListenable: progress ?? _noProgress,
+        builder: (_, value, __) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(value: value),
+            const SizedBox(height: 14),
+            Text(value == null
+                ? message
+                : '$message ${(value * 100).round()}%'),
+          ],
+        ),
       ),
     ),
   ).whenComplete(() => open = false);
@@ -490,7 +498,8 @@ Future<void> Function() showBlockingProgress(
 /// Shared single-song download flow: progress dialog + result snackbar.
 Future<void> downloadSongFlow(BuildContext context, Song song) async {
   final audio = context.read<AudioPlayerService>();
-  final close = showBlockingProgress(context, 'Downloading...');
+  final close = showBlockingProgress(context, 'Downloading...',
+      progress: audio.downloadProgress);
   final ok = await audio.downloadCurrentSongForSong(song);
   await close();
   if (!context.mounted) return;
@@ -541,7 +550,7 @@ class SelectionBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       decoration: BoxDecoration(
-        color: AppColors.card,
+        color: AppColors.glass,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppColors.glassBorder),
         boxShadow: [

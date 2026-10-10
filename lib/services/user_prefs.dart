@@ -1,8 +1,23 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Signals same-process screens that the shared profile photo changed.
 final userAvatarVersion = ValueNotifier<int>(0);
+
+/// Deletes a previous local avatar file once a new one has replaced it, so
+/// repeated photo changes do not pile up files on disk. Best-effort; remote
+/// URLs and the just-saved file are skipped.
+Future<void> removeOldAvatarFile(String? old, String keep) async {
+  if (old == null || old.isEmpty || old == keep || old.startsWith('http')) {
+    return;
+  }
+  try {
+    final f = File(old);
+    if (await f.exists()) await f.delete();
+  } catch (_) {}
+}
 
 enum MusicLanguage {
   all,
@@ -81,16 +96,12 @@ class UserPrefs {
 
   Future<Set<String>> getGenres() async {
     final prefs = await SharedPreferences.getInstance();
-    final value = prefs.getString(_genresKey);
-    if (value == null) return <String>{};
-    return value.split(',').toSet();
+    return _readStringSet(prefs.getString(_genresKey));
   }
 
   Future<Set<String>> getArtists() async {
     final prefs = await SharedPreferences.getInstance();
-    final value = prefs.getString(_artistsKey);
-    if (value == null) return <String>{};
-    return value.split(',').toSet();
+    return _readStringSet(prefs.getString(_artistsKey));
   }
 
   Future<void> setName(String name) async {
@@ -105,12 +116,29 @@ class UserPrefs {
 
   Future<void> setGenres(Set<String> genres) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_genresKey, genres.join(','));
+    await prefs.setString(_genresKey, json.encode(genres.toList()));
   }
 
   Future<void> setArtists(Set<String> artists) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_artistsKey, artists.join(','));
+    await prefs.setString(_artistsKey, json.encode(artists.toList()));
+  }
+
+  /// Reads a stored string-set. New format is a JSON list; older builds stored
+  /// comma-joined text (which corrupts any name containing a comma, e.g.
+  /// "Tyler, The Creator"), so fall back to splitting for those. The next
+  /// [setGenres]/[setArtists] rewrites the value in the new format.
+  static Set<String> _readStringSet(String? raw) {
+    if (raw == null || raw.isEmpty) return <String>{};
+    try {
+      final decoded = json.decode(raw);
+      if (decoded is List) {
+        return decoded.whereType<String>().where((s) => s.isNotEmpty).toSet();
+      }
+    } catch (_) {
+      // Fall through to the legacy comma-separated format.
+    }
+    return raw.split(',').toSet();
   }
 
   Future<void> clearName() async {

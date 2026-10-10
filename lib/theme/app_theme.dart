@@ -16,9 +16,13 @@ class AppColors {
   static const mute = Color(0xFF9A9AA3);
   static const charcoal = Color(0xFF18181B);
 
-  /// Frosted-glass surface tints (non-const: used with BackdropFilter).
-  static Color get glassBorder => Colors.white.withValues(alpha: 0.14);
-  static Color get glassHighlight => Colors.white.withValues(alpha: 0.06);
+  /// Translucent glass base for menus, dialogs, sheets, cards and panels.
+  /// One shared value so every surface reads as the same material.
+  static const glass = Color(0x99191921);
+
+  /// Frosted-glass rim/highlight tints, kept low so no hard white edge shows.
+  static Color get glassBorder => Colors.white.withValues(alpha: 0.10);
+  static Color get glassHighlight => Colors.white.withValues(alpha: 0.04);
 }
 
 /// `m:ss` clock shared by list rows (no leading zero on minutes).
@@ -131,7 +135,7 @@ class AppTheme {
         },
       ),
       dialogTheme: const DialogThemeData(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(20)),
@@ -148,7 +152,7 @@ class AppTheme {
         ),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -175,7 +179,7 @@ class AppTheme {
         space: 1,
       ),
       popupMenuTheme: PopupMenuThemeData(
-        color: AppColors.card,
+        color: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
@@ -258,7 +262,7 @@ class AppTheme {
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
       cardTheme: const CardThemeData(
-        color: AppColors.card,
+        color: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.black38,
         elevation: 0,

@@ -111,20 +111,30 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   Future<void> _downloadPlaylist() async {
     if (_songs.isEmpty) return;
     final messenger = ScaffoldMessenger.of(context);
-    final close = showBlockingProgress(context, 'Downloading playlist...');
     final audioService = context.read<AudioPlayerService>();
     final downloadedIds = Set<String>.from(_playlist.downloadedSongIds);
+    final overall = ValueNotifier<double?>(0);
+    var finished = _songs.where((s) => downloadedIds.contains(s.id)).length;
+    void tick() => overall.value =
+        (finished + (audioService.downloadProgress.value ?? 0)) / _songs.length;
+    audioService.downloadProgress.addListener(tick);
+    final close = showBlockingProgress(context, 'Downloading playlist...',
+        progress: overall);
     // Dismiss the modal unconditionally once the work is done, even if this
     // screen was popped meanwhile — otherwise the barrier-blocked route
     // outlives its owner and hard-locks the app.
     try {
       for (final song in _songs) {
         if (downloadedIds.contains(song.id)) continue;
+        audioService.downloadProgress.value = null;
         final ok = await audioService.downloadCurrentSongForSong(song,
             addToDownloadedPlaylist: false);
         if (ok) downloadedIds.add(song.id);
+        finished++;
+        tick();
       }
     } finally {
+      audioService.downloadProgress.removeListener(tick);
       await close();
     }
     if (!mounted) return;
@@ -158,7 +168,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppColors.card,
+          backgroundColor: AppColors.glass,
           title: const Text('Add Song'),
           content: SizedBox(
             width: double.maxFinite,
@@ -780,7 +790,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Rename playlist'),
         content: TextField(
           controller: ctrl,

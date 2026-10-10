@@ -10,6 +10,8 @@ import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/lyrics_sheet.dart';
 import '../widgets/song_actions.dart';
+import '../widgets/video_stats_bar.dart';
+import 'artist_screen.dart';
 
 class PlayerScreen extends StatefulWidget {
   static const routeName = '/player';
@@ -136,6 +138,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     final artPath = context.select<AudioPlayerService, String?>(
         (s) => s.highResArtPathFor(s.currentSong));
     final hasSong = song != null;
+    final artistName = song?.artist.trim() ?? '';
+    final canOpenArtist =
+        artistName.isNotEmpty && artistName.toLowerCase() != 'unknown';
     final isLoading =
         context.select<AudioPlayerService, bool>((s) => s.isLoading);
     final isPlaying =
@@ -298,16 +303,54 @@ class _PlayerScreenState extends State<PlayerScreen>
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis),
                                     const SizedBox(height: 6),
-                                    Text(song.artist,
-                                        style: const TextStyle(
-                                            fontSize: 14,
-                                            color: AppColors.inkSoft),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis),
+                                    if (canOpenArtist)
+                                      for (final name in song.artistNames)
+                                        InkWell(
+                                          borderRadius: BorderRadius.circular(8),
+                                          onTap: () => pushAppPage(
+                                            context,
+                                            ArtistScreen(
+                                              name: name,
+                                              thumbnailUrl: song.thumbnailUrl,
+                                            ),
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8, vertical: 4),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Flexible(
+                                                  child: Text(name,
+                                                      style: const TextStyle(
+                                                          fontSize: 14,
+                                                          color: AppColors
+                                                              .inkSoft),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow
+                                                          .ellipsis),
+                                                ),
+                                                const SizedBox(width: 2),
+                                                const Icon(Icons.chevron_right,
+                                                    size: 16,
+                                                    color: AppColors.mute),
+                                              ],
+                                            ),
+                                          ),
+                                        )
+                                    else
+                                      Text(song.artist,
+                                          style: const TextStyle(
+                                              fontSize: 14,
+                                              color: AppColors.inkSoft),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 18),
+                              const SizedBox(height: 12),
+                              VideoStatsBar(videoId: song.videoId ?? song.id),
+                              const SizedBox(height: 12),
                               const Padding(
                                 padding: EdgeInsets.symmetric(horizontal: 32),
                                 child: _PlayerSlider(),

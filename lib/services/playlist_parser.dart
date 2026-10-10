@@ -41,10 +41,13 @@ class PlaylistParser {
     String? token = _collect(data, songs, seen);
     var pages = 1;
     var failures = 0;
-    while (token != null &&
-        token.isNotEmpty &&
-        pages < maxPages &&
-        apiKey != null) {
+    while (token != null && token.isNotEmpty && pages < maxPages) {
+      if (apiKey == null) {
+        // A next page exists but the page HTML carried no continuation key:
+        // fail loudly instead of silently returning only the first page.
+        throw Exception('Playlist import could not continue: YouTube did '
+            'not expose a continuation key.');
+      }
       Map<String, dynamic> cont;
       try {
         cont = await _postContinuation(apiKey, clientVersion, token);
@@ -123,6 +126,10 @@ class PlaylistParser {
   String? _firstMatch(String text, String pattern) {
     return RegExp(pattern).firstMatch(text)?.group(1);
   }
+
+  /// Safe string read: a non-string JSON value yields null instead of
+  /// throwing and aborting the whole import.
+  static String? _asString(dynamic value) => value is String ? value : null;
 
   Future<Map<String, dynamic>> _postContinuation(
       String apiKey, String? clientVersion, String token) async {
@@ -299,7 +306,7 @@ class PlaylistParser {
     final map = vm.cast<String, dynamic>();
     if (map['contentType'] != 'LOCKUP_CONTENT_TYPE_VIDEO') return null;
 
-    String? videoId = map['contentId'] as String?;
+    String? videoId = _asString(map['contentId']);
 
     String? titleText;
     final meta = map['metadata'];
@@ -307,7 +314,7 @@ class PlaylistParser {
       final lmm = meta['lockupMetadataViewModel'];
       if (lmm is Map) {
         final title = lmm['title'];
-        if (title is Map) titleText = title['content'] as String?;
+        if (title is Map) titleText = _asString(title['content']);
       }
     }
 
@@ -411,7 +418,7 @@ class PlaylistParser {
   Song? _parseLegacy(dynamic vm) {
     if (vm is! Map) return null;
     final map = vm.cast<String, dynamic>();
-    final videoId = map['videoId'] as String?;
+    final videoId = _asString(map['videoId']);
     if (videoId == null || videoId.isEmpty) return null;
 
     String title = videoId;
@@ -423,7 +430,7 @@ class PlaylistParser {
       } else {
         final runs = t['runs'];
         if (runs is List && runs.isNotEmpty && runs.first is Map) {
-          title = (runs.first as Map)['text'] as String? ?? title;
+          title = _asString((runs.first as Map)['text']) ?? title;
         }
       }
     }
@@ -433,7 +440,7 @@ class PlaylistParser {
     if (owner is Map) {
       final runs = owner['runs'];
       if (runs is List && runs.isNotEmpty && runs.first is Map) {
-        artist = (runs.first as Map)['text'] as String? ?? '';
+        artist = _asString((runs.first as Map)['text']) ?? '';
       } else if (owner['simpleText'] is String) {
         artist = owner['simpleText'] as String;
       }

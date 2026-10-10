@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import '../media/lyrics_model.dart';
 import '../models/song.dart';
 
@@ -42,13 +43,17 @@ class LyricsService {
       'AtlasMusic/1.0 (https://github.com/anomalyco/atlas-music)';
 
   final http.Client _http;
-  final Directory _dir;
+  // Persistent app folder, not systemTemp: downloaded lyrics must survive
+  // the OS clearing temp files, or they are gone when the device is offline.
+  final Future<Directory> _dir;
   final Map<String, SyncedLyrics?> _mem = {};
 
   LyricsService({http.Client? client, Directory? dir})
       : _http = client ?? http.Client(),
         _owned = client == null,
-        _dir = dir ?? Directory.systemTemp;
+        _dir = dir != null
+            ? Future.value(dir)
+            : getApplicationDocumentsDirectory();
 
   final bool _owned;
 
@@ -56,6 +61,49 @@ class LyricsService {
   /// (no-op): the caller owns that one.
   void dispose() {
     if (_owned) _http.close();
+  }
+
+  /// Fetches and keeps lyrics for a downloaded song. Pinned on disk, so the
+  /// 30-day TTL never removes them and the sheet works offline.
+  static Future<void> saveForDownload(Song song) async {
+    final lyrics = LyricsService();
+    try {
+      final found = await lyrics.fetch(song);
+      if (found != null) {
+        await lyrics._writeDisk(lyrics._cacheKey(song), found, pinned: true);
+      }
+    } finally {
+      lyrics.dispose();
+    }
+  }
+
+  /// Translates lyric lines into [target] (language code) with Google's
+  /// free endpoint. Returns null when offline, on error, or when the
+  /// translated line count does not match, so the caller never misaligns.
+  // ponytail: unofficial endpoint, may break; swap for ML Kit or a paid API if it does.
+  Future<List<String>?> translate(List<String> lines, String target) async {
+    final joined = lines.join('\n');
+    if (joined.trim().isEmpty) return null;
+    try {
+      final uri = Uri.https('translate.googleapis.com', '/translate_a/single', {
+        'client': 'gtx',
+        'sl': 'auto',
+        'tl': target,
+        'dt': 't',
+      });
+      final resp = await _http
+          .post(uri, headers: {'User-Agent': _ua}, body: {'q': joined})
+          .timeout(_netBudget);
+      if (resp.statusCode != 200) return null;
+      final data = json.decode(resp.body) as List;
+      final text = (data[0] as List)
+          .map((seg) => ((seg as List)[0] as String?) ?? '')
+          .join();
+      final out = text.split('\n');
+      return out.length == lines.length ? out : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Strips YouTube junk so "Blinding Lights (Official Video)"
@@ -264,16 +312,24 @@ class LyricsService {
     // Whole network phase shares one budget: true misses must resolve
     // to "not found" in seconds, not after every round times out.
     SyncedLyrics? found;
+    var networkReached = true;
     try {
       found = await _fetchNetwork(song, tracks, artists)
-          .timeout(_netBudget, onTimeout: () => null);
+          .timeout(_netBudget, onTimeout: () {
+        networkReached = false;
+        return null;
+      });
     } catch (_) {
+      networkReached = false;
       found = null;
     }
 
-    // Negative result (found==null) is still cached so repeat opens
-    // are instant, but only for this session — no disk write for miss.
-    _mem[key] = found;
+    // Cache a genuine miss (LRCLIB answered "nothing") so repeat opens are
+    // instant, but only for this session — no disk write for a miss. Do NOT
+    // cache a network failure/timeout: the device may be offline now and
+    // online a moment later, and a memoized failure would keep the sheet
+    // stuck on "not found" until the app restarts.
+    if (networkReached) _mem[key] = found;
     if (found != null) await _writeDisk(key, found);
     return found;
   }
@@ -499,12 +555,13 @@ class LyricsService {
 
   Future<SyncedLyrics?> _readDisk(String key) async {
     try {
-      final f = File('${_dir.path}/$key.json');
+      final f = File('${(await _dir).path}/$key.json');
       if (!await f.exists()) return null;
       final raw = json.decode(await f.readAsString());
       if (raw is! Map<String, dynamic>) return null;
       final at = DateTime.tryParse(raw['fetchedAt'] as String? ?? '');
-      if (at == null || DateTime.now().difference(at) > _diskTtl) {
+      if (raw['pinned'] != true &&
+          (at == null || DateTime.now().difference(at) > _diskTtl)) {
         try {
           await f.delete();
         } catch (_) {}
@@ -553,12 +610,14 @@ class LyricsService {
     }
   }
 
-  Future<void> _writeDisk(String key, SyncedLyrics lyrics) async {
+  Future<void> _writeDisk(String key, SyncedLyrics lyrics,
+      {bool pinned = false}) async {
     try {
-      final f = File('${_dir.path}/$key.json');
+      final f = File('${(await _dir).path}/$key.json');
       await f.writeAsString(json.encode({
         'track': lyrics.track,
         'artist': lyrics.artist,
+        'pinned': pinned,
         'isSynced': lyrics.isSynced,
         'instrumental': lyrics.instrumental,
         'plain': lyrics.plain ?? '',
