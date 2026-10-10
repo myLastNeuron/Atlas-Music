@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/media/atlas-mark.svg" alt="Atlas Music" width="104" />
+<img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="Atlas Music app icon" width="104" />
 
 # Atlas Music
 
