@@ -15,18 +15,29 @@ An open-source Android music player built with Flutter. Discover music, build pl
 [![License](https://img.shields.io/badge/license-Apache--2.0-white)](LICENSE.md)
 [![CI](https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml/badge.svg)](https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml)
 
-[Features](#-features) · [Install](#-get-started) · [Architecture](#-how-it-works) · [Contribute](#-contributing)
+[Screens](#-screenshots) · [Features](#-features) · [Install](#-get-started) · [Architecture](#-how-it-works) · [Contribute](#-contributing)
 
 <br />
-
-<img src="docs/media/atlas-showcase.gif" alt="Animated illustrative preview of Atlas Music's home, search, player and library screens" width="360" />
-
-<sub>Animated UI concept preview—not a screen recording. Actual screens may differ.</sub>
 
 </div>
 
 > [!IMPORTANT]
 > **Android only.** There is no iOS project in this repository, and iOS builds are not currently supported.
+
+---
+
+## 📱 Screenshots
+
+<table align="center">
+  <tr>
+    <td align="center"><strong>HOME</strong><br /><a href="docs/media/home.png"><img src="docs/media/home.png" width="320" alt="Atlas Music Home screen with Quick Picks and playlist sections" /></a></td>
+    <td align="center"><strong>SEARCH</strong><br /><a href="docs/media/search.png"><img src="docs/media/search.png" width="320" alt="Atlas Music Search results for Superman by Eminem" /></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>LIBRARY</strong><br /><a href="docs/media/library.png"><img src="docs/media/library.png" width="320" alt="Atlas Music Library with import, liked songs, recent and offline music" /></a></td>
+    <td align="center"><strong>PROFILE</strong><br /><a href="docs/media/profile.png"><img src="docs/media/profile.png" width="320" alt="Atlas Music Profile and settings screen" /></a></td>
+  </tr>
+</table>
 
 ---
 
@@ -148,7 +159,7 @@ lib/
 ├── theme/                    # Colors, typography, motion, shared theme
 └── widgets/                  # Mini-player, lyrics, artwork, glass navigation
 plugins/audio_service/        # Vendored audio_service Android implementation
-docs/media/                   # README showcase and architecture illustration
+docs/media/                   # App screenshots and architecture illustration
 ```
 
 ---
