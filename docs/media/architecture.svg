@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 270" role="img" aria-label="Atlas Music playback architecture">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#17171d"/><stop offset="1" stop-color="#0e0e12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff" stop-opacity=".13"/><stop offset="1" stop-color="#aaa6bc" stop-opacity=".04"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="998" height="268" rx="24" fill="url(#bg)" stroke="#fff" stroke-opacity=".12"/>
+  <g font-family="Arial, sans-serif" fill="#f5f4f8">
+    <g transform="translate(24 44)">
+      <rect width="165" height="172" rx="18" fill="url(#accent)" stroke="#fff" stroke-opacity=".12"/>
+      <text x="20" y="34" fill="#a9a5b4" font-size="11" font-weight="700" letter-spacing="1.5">01 · DISCOVER</text>
+      <text x="20" y="76" font-size="19" font-weight="700">Music metadata</text>
+      <text x="20" y="105" fill="#c5c3cd" font-size="13">Search · related tracks</text>
+      <text x="20" y="126" fill="#c5c3cd" font-size="13">Artists · playlists</text>
+      <text x="20" y="153" fill="#888793" font-size="11">YouTube Music / YouTube</text>
+    </g>
+    <g transform="translate(218 44)">
+      <rect width="180" height="172" rx="18" fill="url(#accent)" stroke="#fff" stroke-opacity=".12"/>
+      <text x="20" y="34" fill="#a9a5b4" font-size="11" font-weight="700" letter-spacing="1.5">02 · RESOLVE</text>
+      <text x="20" y="76" font-size="19" font-weight="700">MediaResolver</text>
+      <text x="20" y="105" fill="#c5c3cd" font-size="13">Resolve → validate</text>
+      <text x="20" y="126" fill="#c5c3cd" font-size="13">Provider failover</text>
+      <text x="20" y="153" fill="#888793" font-size="11">Retries · cooldowns</text>
+    </g>
+    <g transform="translate(427 44)">
+      <rect width="165" height="172" rx="18" fill="url(#accent)" stroke="#fff" stroke-opacity=".12"/>
+      <text x="20" y="34" fill="#a9a5b4" font-size="11" font-weight="700" letter-spacing="1.5">03 · CACHE</text>
+      <text x="20" y="76" font-size="19" font-weight="700">Offline audio</text>
+      <text x="20" y="105" fill="#c5c3cd" font-size="13">Stage · verify</text>
+      <text x="20" y="126" fill="#c5c3cd" font-size="13">Atomic promotion</text>
+      <text x="20" y="153" fill="#888793" font-size="11">Size cap · eviction</text>
+    </g>
+    <g transform="translate(621 44)">
+      <rect width="165" height="172" rx="18" fill="url(#accent)" stroke="#fff" stroke-opacity=".12"/>
+      <text x="20" y="34" fill="#a9a5b4" font-size="11" font-weight="700" letter-spacing="1.5">04 · PLAY</text>
+      <text x="20" y="76" font-size="19" font-weight="700">Audio queue</text>
+      <text x="20" y="105" fill="#c5c3cd" font-size="13">Preload · shuffle</text>
+      <text x="20" y="126" fill="#c5c3cd" font-size="13">Repeat · recovery</text>
+      <text x="20" y="153" fill="#888793" font-size="11">AudioPlayerService</text>
+    </g>
+    <g transform="translate(815 44)">
+      <rect width="161" height="172" rx="18" fill="url(#accent)" stroke="#fff" stroke-opacity=".12"/>
+      <text x="20" y="34" fill="#a9a5b4" font-size="11" font-weight="700" letter-spacing="1.5">05 · CONTROL</text>
+      <text x="20" y="76" font-size="19" font-weight="700">One player state</text>
+      <text x="20" y="105" fill="#c5c3cd" font-size="13">Notification</text>
+      <text x="20" y="126" fill="#c5c3cd" font-size="13">Mini + full player</text>
+      <text x="20" y="153" fill="#888793" font-size="11">AtlasAudioHandler</text>
+    </g>
+  </g>
+  <g stroke="#aaa6bc" stroke-opacity=".6" stroke-width="2" fill="none">
+    <path d="M193 130h17m-6-6 6 6-6 6"/><path d="M402 130h17m-6-6 6 6-6 6"/>
+    <path d="M596 130h17m-6-6 6 6-6 6"/><path d="M790 130h17m-6-6 6 6-6 6"/>
+  </g>
+</svg>
