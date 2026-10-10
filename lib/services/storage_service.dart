@@ -16,6 +16,7 @@ class StorageService extends ChangeNotifier {
   static const String _topArtistsKey = 'top_artists';
   static const String _searchHistoryKey = 'search_history';
   static const String _downloadedSongsKey = 'downloaded_songs';
+  static const String _playbackSessionKey = 'playback_session';
   static const String downloadedPlaylistId = 'downloaded_music';
 
   // Every mutation is get -> mutate -> set against SharedPreferences with
@@ -50,6 +51,28 @@ class StorageService extends ChangeNotifier {
     } catch (_) {
       return null;
     }
+  }
+
+  // ── Playback session (mini-player restore) ──
+
+  Future<Map<String, dynamic>?> getPlaybackSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    return _safeDecode<Map<String, dynamic>>(
+        prefs.getString(_playbackSessionKey));
+  }
+
+  Future<void> savePlaybackSession(Map<String, dynamic> session) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_playbackSessionKey, json.encode(session));
+    });
+  }
+
+  Future<void> clearPlaybackSession() {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_playbackSessionKey);
+    });
   }
 
   // ── Playlists ──

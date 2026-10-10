@@ -66,7 +66,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     final choosePhoto = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Add a profile photo'),
         content: const Text(
           'Choose a photo from your device, or skip and use your initials.',
@@ -94,11 +94,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       maxHeight: 1024,
     );
     if (picked == null) return;
+    final old = await _prefs.getAvatar();
     final dir = await getApplicationDocumentsDirectory();
     final fileName = 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final newPath = '${dir.path}/$fileName';
     await picked.saveTo(newPath);
     await _prefs.setAvatar(newPath);
+    await removeOldAvatarFile(old, newPath);
     if (mounted) setState(() {});
   }
 

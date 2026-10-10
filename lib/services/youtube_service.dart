@@ -1,6 +1,8 @@
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
+import '../models/artist.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
+import '../models/video_stats.dart';
 import 'playlist_parser.dart';
 import 'ytmusic_search.dart';
 
@@ -104,6 +106,46 @@ class YouTubeService {
     return v.replaceAll(RegExp(r'(topic|vevo|official)$'), '');
   }
 
+  /// Artist page for a plain artist *name* ([Song.artist] is only a string).
+  /// Resolves the YouTube Music channel and reads songs + albums/singles.
+  /// When the artist cannot be resolved (unknown, offline, composite name),
+  /// falls back to a plain song search so the screen still has content.
+  Future<ArtistPage> artistByName(String name,
+      {String? fallbackThumbnail}) async {
+    final clean = name.trim();
+    try {
+      final id = await _ytm.resolveArtistId(clean);
+      if (id != null) {
+        final page = await _ytm.browseArtist(id);
+        if (!page.isEmpty) {
+          var songs = page.songs;
+          final moreId = page.songsBrowseId;
+          if (moreId != null) {
+            try {
+              final all = await _ytm.browseAlbum(moreId);
+              if (all.length > songs.length) songs = all;
+            } catch (_) {
+              // Keep the preview songs when the full list cannot be read.
+            }
+          }
+          return ArtistPage(
+            name: page.name.isEmpty ? clean : page.name,
+            imageUrl: page.imageUrl ?? fallbackThumbnail,
+            songs: songs,
+            albums: page.albums,
+          );
+        }
+      }
+    } catch (_) {
+      // Fall through to the plain song search below.
+    }
+    final songs = await search(clean, limit: 25);
+    return ArtistPage(name: clean, imageUrl: fallbackThumbnail, songs: songs);
+  }
+
+  /// Track list for one album/single browseId returned by [artistByName].
+  Future<List<Song>> albumSongs(String browseId) => _ytm.browseAlbum(browseId);
+
   Future<List<Song>> _legacySearch(String query, {int limit = 20}) async {
     // Uses searchContent (raw SearchResult union) instead of search():
     // search() eagerly maps every item to Video and throws the whole
@@ -165,6 +207,23 @@ class YouTubeService {
       if (parts.length == 1) return Duration(seconds: parts[0]);
     } catch (_) {}
     return Duration.zero;
+  }
+
+  /// Read-only engagement for one exact video. Returns null when the lookup
+  /// fails (network, rate limit, gone) so callers can show "N/A" instead of
+  /// inventing numbers. Dislikes are usually null (YouTube removed them) —
+  /// see [VideoStats].
+  Future<VideoStats?> getVideoStats(String videoId) async {
+    try {
+      final video = await _yt.videos.get(VideoId(videoId)).timeout(_timeout);
+      final engagement = video.engagement;
+      return VideoStats(
+        likes: engagement.likeCount,
+        dislikes: engagement.dislikeCount,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<List<Song>> getRelatedVideos(String videoId, {int limit = 15}) async {

@@ -104,12 +104,14 @@ class _ProfileScreenState extends State<ProfileScreen>
         maxHeight: 1024,
       );
       if (picked == null) return;
+      final old = await _prefs.getAvatar();
       final dir = await getApplicationDocumentsDirectory();
       final file = File(
         '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
       await picked.saveTo(file.path);
       await _prefs.setAvatar(file.path);
+      await removeOldAvatarFile(old, file.path);
       await _refreshAvatar();
     } catch (_) {
       if (!mounted) return;
@@ -164,7 +166,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     final action = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Spotify keys'),
         content: SingleChildScrollView(
           child: Column(
@@ -248,7 +250,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     final v = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Change name'),
         content: TextField(
           controller: ctrl,
@@ -267,6 +269,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         ],
       ),
     );
+    ctrl.dispose();
     if (v == null || v.isEmpty) return;
     await _prefs.setName(v);
     if (!mounted) return;
@@ -281,7 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Reset name?'),
         content: const Text('You will see the setup screen again.'),
         actions: [
@@ -322,7 +325,6 @@ class _ProfileScreenState extends State<ProfileScreen>
               radius: 24,
               padding: const EdgeInsets.all(18),
               opacity: 0.09,
-              blur: 0,
               child: Row(
                 children: [
                   MotionPress(
@@ -430,7 +432,6 @@ class _ProfileScreenState extends State<ProfileScreen>
               radius: 20,
               padding: EdgeInsets.zero,
               opacity: 0.07,
-              blur: 0,
               child: Column(
                 children: [
                   MotionPress(
@@ -474,7 +475,6 @@ class _ProfileScreenState extends State<ProfileScreen>
               radius: 20,
               padding: EdgeInsets.zero,
               opacity: 0.07,
-              blur: 0,
               child: Column(
                 children: [
                   MotionPress(
@@ -506,7 +506,6 @@ class _ProfileScreenState extends State<ProfileScreen>
               radius: 20,
               padding: EdgeInsets.zero,
               opacity: 0.07,
-              blur: 0,
               child: Column(
                 children: [
                   MotionPress(
@@ -534,7 +533,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         showDialog(
                           context: context,
                           builder: (_) => AlertDialog(
-                            backgroundColor: AppColors.card,
+                            backgroundColor: AppColors.glass,
                             title: const Text('About Atlas Music'),
                             content: const SingleChildScrollView(
                               child: Text(
@@ -581,7 +580,6 @@ class _ProfileScreenState extends State<ProfileScreen>
       radius: 18,
       padding: const EdgeInsets.symmetric(vertical: 14),
       opacity: 0.07,
-      blur: 0,
       child: Column(
         children: [
           Text(v,

@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
@@ -8,9 +7,9 @@ import 'app_transitions.dart';
 import 'artwork.dart';
 import '../screens/player_screen.dart';
 
-/// Floating frosted-glass mini player. Thumb+text navigate; transport
+/// Floating transparent glass mini player. Thumb+text navigate; transport
 /// buttons sit strictly outside the nav InkWell so skip taps never
-/// push routes. Backdrop blur keeps the list behind subtly visible.
+/// push routes. No blur: the content behind shows through.
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
@@ -41,30 +40,15 @@ class MiniPlayer extends StatelessWidget {
     }
   }
 
-  static final _blur = ImageFilter.blur(sigmaX: 16, sigmaY: 16);
-  static final _shadow = BoxShadow(
-    color: Colors.black.withValues(alpha: 0.4),
-    blurRadius: 20,
-    offset: const Offset(0, 10),
-  );
-
   Widget _glassBar(Widget child) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: _blur,
-        child: Container(
-          height: 70,
-          padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.09),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.glassBorder),
-            boxShadow: [_shadow],
-          ),
-          child: child,
-        ),
+    return Container(
+      height: 70,
+      padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppColors.glassBorder),
       ),
+      child: child,
     );
   }
 
@@ -98,8 +82,7 @@ class MiniPlayer extends StatelessWidget {
       if (!isLoading) {
         if (!pausedOffline) return const SizedBox.shrink();
         return _glassBar(const Center(
-          child: Text(
-              'Track unavailable — no internet and not downloaded',
+          child: Text('Track unavailable — no internet and not downloaded',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
         ));
@@ -135,151 +118,144 @@ class MiniPlayer extends StatelessWidget {
 
     return _glassBar(Column(
       children: [
+        Expanded(
+          child: Row(
+            children: [
               Expanded(
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          key: const ValueKey('mini_nav_area'),
-                          borderRadius: BorderRadius.circular(14),
-                          onTap: () => _openPlayer(context),
-                          child: Row(
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: const ValueKey('mini_nav_area'),
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () => _openPlayer(context),
+                    child: Row(
+                      children: [
+                        Hero(
+                          tag: 'player_cover',
+                          createRectTween: (begin, end) =>
+                              MaterialRectArcTween(begin: begin, end: end),
+                          flightShuttleBuilder: (ctx, anim, dir, from, to) =>
+                              CoverFlightShuttle(song.thumbnailUrl,
+                                  filePath: artPath, animation: anim),
+                          child: AnimatedSwitcher(
+                            duration: AppMotion.dur(context, AppMotion.micro),
+                            switchInCurve: AppMotion.curve,
+                            switchOutCurve: AppMotion.curve,
+                            transitionBuilder: (child, animation) =>
+                                FadeTransition(
+                              opacity: animation,
+                              child: ScaleTransition(
+                                  scale: animation, child: child),
+                            ),
+                            child: Artwork(
+                              song.thumbnailUrl,
+                              key: ValueKey(song.id),
+                              size: kMiniArtworkSize,
+                              radius: 10,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Hero(
-                                tag: 'player_cover',
-                                createRectTween: (begin, end) =>
-                                    MaterialRectArcTween(
-                                        begin: begin, end: end),
-                                flightShuttleBuilder:
-                                    (ctx, anim, dir, from, to) =>
-                                        CoverFlightShuttle(
-                                            song.thumbnailUrl,
-                                            filePath: artPath,
-                                            animation: anim),
-                                child: AnimatedSwitcher(
-                                  duration:
-                                      AppMotion.dur(context, AppMotion.micro),
-                                  switchInCurve: AppMotion.curve,
-                                  switchOutCurve: AppMotion.curve,
-                                  transitionBuilder: (child, animation) =>
-                                      FadeTransition(
-                                    opacity: animation,
-                                    child: ScaleTransition(
-                                        scale: animation, child: child),
-                                  ),
-                                  child: Artwork(
-                                    song.thumbnailUrl,
-                                    key: ValueKey(song.id),
-                                    size: kMiniArtworkSize,
-                                    radius: 10,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(song.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13,
-                                            color: AppColors.ink)),
-                                    Text(song.artist,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: AppColors.inkSoft,
-                                            fontSize: 11)),
-                                  ],
-                                ),
-                              ),
+                              Text(song.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: AppColors.ink)),
+                              Text(song.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: AppColors.inkSoft, fontSize: 11)),
                             ],
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                    if (loading)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12),
-                        child: SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        ),
-                      )
-                    else ...[
-                      if (degraded)
-                        const Tooltip(
-                          message: 'Offline mode: some queued tracks need '
-                              'internet and will be skipped',
-                          child: Padding(
-                            padding: EdgeInsets.only(right: 2),
-                            child: Icon(Icons.wifi_off,
-                                size: 18, color: AppColors.inkSoft),
-                          ),
-                        ),
-                      MotionPress(
-                        scale: 0.9,
-                        child: IconButton(
-                          key: const ValueKey('mini_prev'),
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.skip_previous,
-                              size: 24, color: AppColors.inkSoft),
-                          onPressed: () =>
-                              _skip(context, audio, audio.playPrevious),
-                        ),
-                      ),
-                      Container(
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                        ),
-                        child: MotionPress(
-                          scale: 0.9,
-                          child: IconButton(
-                            key: const ValueKey('mini_play_pause'),
-                            visualDensity: VisualDensity.compact,
-                            icon: PlayPauseIcon(
-                              playing: playing,
-                              size: 26,
-                              color: AppColors.charcoal,
-                            ),
-                            onPressed: () {
-                              if (playing) {
-                                audio.pause();
-                              } else {
-                                audio.resume();
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                      MotionPress(
-                        scale: 0.9,
-                        child: IconButton(
-                          key: const ValueKey('mini_skip_next'),
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.skip_next,
-                              size: 24, color: AppColors.inkSoft),
-                          onPressed: () => _skip(
-                              context, audio, () => audio.playNext(0, true)),
-                        ),
-                      ),
-                    ],
-                  ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 4),
-              const _MiniProgress(),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  ),
+                )
+              else ...[
+                if (degraded)
+                  const Tooltip(
+                    message: 'Offline mode: some queued tracks need '
+                        'internet and will be skipped',
+                    child: Padding(
+                      padding: EdgeInsets.only(right: 2),
+                      child: Icon(Icons.wifi_off,
+                          size: 18, color: AppColors.inkSoft),
+                    ),
+                  ),
+                MotionPress(
+                  scale: 0.9,
+                  child: IconButton(
+                    key: const ValueKey('mini_prev'),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.skip_previous,
+                        size: 24, color: AppColors.inkSoft),
+                    onPressed: () => _skip(context, audio, audio.playPrevious),
+                  ),
+                ),
+                Container(
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                  child: MotionPress(
+                    scale: 0.9,
+                    child: IconButton(
+                      key: const ValueKey('mini_play_pause'),
+                      visualDensity: VisualDensity.compact,
+                      icon: PlayPauseIcon(
+                        playing: playing,
+                        size: 26,
+                        color: AppColors.charcoal,
+                      ),
+                      onPressed: () {
+                        if (playing) {
+                          audio.pause();
+                        } else {
+                          audio.resume();
+                        }
+                      },
+                    ),
+                  ),
+                ),
+                MotionPress(
+                  scale: 0.9,
+                  child: IconButton(
+                    key: const ValueKey('mini_skip_next'),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.skip_next,
+                        size: 24, color: AppColors.inkSoft),
+                    onPressed: () =>
+                        _skip(context, audio, () => audio.playNext(0, true)),
+                  ),
+                ),
+              ],
             ],
-          ));
+          ),
+        ),
+        const SizedBox(height: 4),
+        const _MiniProgress(),
+      ],
+    ));
   }
 }
 

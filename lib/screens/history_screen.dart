@@ -97,7 +97,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final choice = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(
-          backgroundColor: AppColors.card,
+          backgroundColor: AppColors.glass,
           title: const Text('Delete history'),
           content: const Text(
             'Some of these songs appear more than once. Delete every copy, '
@@ -134,7 +134,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Delete all history?'),
         content: const Text(
           'The action you are gonna do can be severe and it would delete '

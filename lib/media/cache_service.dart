@@ -20,6 +20,9 @@ class CacheService {
   static const ttl = Duration(days: 7);
   static const maxBytes = 1 * 1024 * 1024 * 1024;
 
+  /// Known audio container extensions, in the order [getValid] probes them.
+  static const _audioExts = ['m4a', 'mp3', 'webm'];
+
   final Directory? baseDirOverride;
   Directory? _baseDir;
   Future<Directory>? _baseDirFuture;
@@ -113,7 +116,7 @@ class CacheService {
       final dir = await _resolveBaseDir();
       File? file;
       for (final key in keysFor(song)) {
-        for (final ext in ['m4a', 'mp3', 'webm']) {
+        for (final ext in _audioExts) {
           final f = File('${dir.path}/$key.$ext');
           if (await f.exists()) {
             file = f;
@@ -192,7 +195,15 @@ class CacheService {
       throw StateError(
           'size mismatch (got $bytes, expected ${source.contentLength})');
     }
-    if (await dest.exists()) await dest.delete();
+    // Remove any earlier copy under the other key/extension before promoting:
+    // a re-download can land as a different container (AAC .m4a -> Opus .webm),
+    // and a stale variant would otherwise shadow or outlive the fresh file.
+    for (final key in keysFor(song)) {
+      for (final e in _audioExts) {
+        await _deleteQuiet(File('${dir.path}/$key.$e'));
+        await _deleteQuiet(File('${dir.path}/$key.$e.json'));
+      }
+    }
     await tmp.rename(dest.path);
     await sidecarFor(song, ext: ext).writeAsString(json.encode({
       'songId': song.videoId ?? song.id,
@@ -221,7 +232,7 @@ class CacheService {
   Future<void> invalidate(Song song) async {
     final dir = await _resolveBaseDir();
     for (final key in keysFor(song)) {
-      for (final ext in ['m4a', 'mp3', 'webm']) {
+      for (final ext in _audioExts) {
         await _deleteQuiet(File('${dir.path}/$key.$ext'));
         await _deleteQuiet(File('${dir.path}/$key.$ext.json'));
       }
@@ -250,7 +261,7 @@ class CacheService {
           continue;
         }
         // v1 namespace retired (may hold truncated downloads): evict.
-        if (name.startsWith('atlas_') && !name.startsWith('atlas2_')) {
+        if (name.startsWith('atlas_')) {
           await _deleteQuiet(e);
           await _deleteQuiet(File('${e.path}.json'));
         }
@@ -264,10 +275,9 @@ class CacheService {
       final dir = await _resolveBaseDir();
       // Fast path: the approximate total is trusted and well below the cap,
       // so a full scan would be pure waste on every one of N playlist
-      // downloads. A 10% margin absorbs sidecar drift.
-      if (_approxBytes != null &&
-          _approxBytes! < (maxBytes * 0.9).round() &&
-          keepKeys == null) {
+      // downloads. A 10% margin absorbs sidecar drift. When it is under the
+      // cap there is nothing to evict, so keepKeys is irrelevant here.
+      if (_approxBytes != null && _approxBytes! < (maxBytes * 0.9).round()) {
         return;
       }
       final files = <File>[];
@@ -281,20 +291,17 @@ class CacheService {
         }
       }
       final sizes = <File, int>{};
+      final modified = <File, DateTime>{};
       var total = 0;
       for (final f in files) {
         final st = await f.stat();
         sizes[f] = st.size;
+        modified[f] = st.modified;
         total += st.size;
       }
       _approxBytes = total;
       if (total <= maxBytes) return;
-      // Oldest-first eviction. Use the stat we already paid for instead of
-      // two more synchronous statSync() calls per comparison.
-      final modified = <File, DateTime>{};
-      for (final f in files) {
-        modified[f] = (await f.stat()).modified;
-      }
+      // Oldest-first eviction, reusing the stat already paid for above.
       files.sort((a, b) => modified[a]!.compareTo(modified[b]!));
       for (final f in files) {
         if (total <= maxBytes) break;

@@ -77,10 +77,14 @@ class AtlasAudioHandler extends BaseAudioHandler {
     // and making SystemUI flash its "No media playing" placeholder on every
     // skip. A null song (real stop) already returned above, so idle here is
     // always transient: report loading instead.
+    // A released service (swiped away) is genuinely idle: that is what lets
+    // the plugin tear down the notification.
     final mapped = _mapProcessingState(service.processingState);
-    final effectiveProcessing = mapped == AudioProcessingState.idle
-        ? AudioProcessingState.loading
-        : mapped;
+    final effectiveProcessing = service.released
+        ? AudioProcessingState.idle
+        : mapped == AudioProcessingState.idle
+            ? AudioProcessingState.loading
+            : mapped;
     final playing = service.isPlaying;
     _state = _state.copyWith(
       controls: [
@@ -154,6 +158,15 @@ class AtlasAudioHandler extends BaseAudioHandler {
   @override
   Future<void> stop() async {
     await _service?.stop();
+    await super.stop();
+  }
+
+  /// Swipe-away from Recents. The media service otherwise keeps running
+  /// headless, so end playback here: the notification goes and the service
+  /// stops. The position is kept so the mini-player restores it paused.
+  @override
+  Future<void> onTaskRemoved() async {
+    await _service?.releaseForDismiss();
     await super.stop();
   }
 

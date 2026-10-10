@@ -7,6 +7,7 @@ import '../services/spotify_service.dart';
 import '../services/youtube_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
+import '../widgets/friendly_error.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
 import 'history_screen.dart';
@@ -100,12 +101,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await _importPasted();
       return;
     }
-    final ctrl = TextEditingController();
     if (!mounted) return;
+    final ctrl = TextEditingController();
     final result = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Import YouTube Playlist'),
         content: TextField(
           controller: ctrl,
@@ -151,7 +152,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context: context,
       barrierDismissible: false,
       builder: (_) => const AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         content: Row(children: [
           CircularProgressIndicator(),
           SizedBox(width: 20),
@@ -180,7 +181,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return showDialog<String>(
       context: context,
       builder: (_) => SimpleDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Import playlist'),
         children: [
           SimpleDialogOption(
@@ -269,12 +270,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
         );
         return;
       }
-      final linkCtrl = TextEditingController();
       if (!mounted) return;
+      final linkCtrl = TextEditingController();
       final link = await showDialog<String>(
         context: context,
         builder: (_) => AlertDialog(
-          backgroundColor: AppColors.card,
+          backgroundColor: AppColors.glass,
           title: const Text('Clone Spotify playlist'),
           content: TextField(
             controller: linkCtrl,
@@ -309,7 +310,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           builder: (_, setSt) {
             setProg = setSt;
             return AlertDialog(
-              backgroundColor: AppColors.card,
+              backgroundColor: AppColors.glass,
               content: Row(children: [
                 const CircularProgressIndicator(),
                 const SizedBox(width: 20),
@@ -357,11 +358,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         // Bad secret: forget it so the next attempt re-prompts.
         await sp.clearCredentials();
       }
-      final short = raw.length > 160 ? '${raw.substring(0, 160)}…' : raw;
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Spotify clone failed: $short')),
-      );
+      await showFriendlyError(context,
+          title: 'Couldn\'t clone this Spotify playlist', error: e);
     }
   }
 
@@ -373,7 +372,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final input = await showDialog<List<String>>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Paste track list'),
         content: SizedBox(
           width: double.maxFinite,
@@ -436,7 +435,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         builder: (_, setSt) {
           setProg = setSt;
           return AlertDialog(
-            backgroundColor: AppColors.card,
+            backgroundColor: AppColors.glass,
             content: Row(children: [
               const CircularProgressIndicator(),
               const SizedBox(width: 20),
@@ -475,11 +474,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } catch (e) {
       // Only close the dialog if it is still open (save failure after pop).
       if (dialogOpen && navigator.canPop()) navigator.pop();
-      final raw = e.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
-      final short = raw.length > 160 ? '${raw.substring(0, 160)}…' : raw;
-      messenger.showSnackBar(
-        SnackBar(content: Text('Clone failed: $short')),
-      );
+      if (!mounted) return;
+      await showFriendlyError(context,
+          title: 'Couldn\'t clone this playlist', error: e);
     }
   }
 
@@ -488,7 +485,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.card,
+        backgroundColor: AppColors.glass,
         title: const Text('Create Playlist'),
         content: TextField(
           controller: ctrl,
@@ -625,8 +622,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                         size: 48,
                                         radius: 10,
                                       ),
-                                title: Text(
-                                    p.name,
+                                title: Text(p.name,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis),
                                 subtitle: Text('${p.songs.length} songs',

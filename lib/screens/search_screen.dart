@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
 import '../widgets/app_transitions.dart';
+import '../widgets/friendly_error.dart';
 import '../widgets/play_helper.dart';
 import '../widgets/song_actions.dart';
 
@@ -74,13 +75,8 @@ class _SearchScreenState extends State<SearchScreen> {
     } catch (e) {
       if (!mounted || gen != _searchGen) return;
       setState(() => _loading = false);
-      // Report the actual failure instead of always blaming the
-      // connection: timeouts, provider throttling, and server errors are
-      // not connection problems. Detail is truncated for the snackbar.
-      final raw = e.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
-      final short = raw.length > 160 ? '${raw.substring(0, 160)}…' : raw;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Search failed: $short')),
+        SnackBar(content: Text('Search didn\'t work. ${friendlyError(e)}')),
       );
     }
   }
@@ -233,7 +229,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                               updated.removeAt(i - 1);
                                               await _storage
                                                   .clearSearchHistory();
-                                              for (final item in updated) {
+                                              for (final item
+                                                  in updated.reversed) {
                                                 await _storage
                                                     .addSearchQuery(item);
                                               }

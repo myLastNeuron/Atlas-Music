@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
+import 'friendly_error.dart';
 
 /// `ScaffoldMessenger` lookups that capture the *current* `BuildContext` at
 /// the moment of the call.
@@ -56,22 +57,7 @@ Future<void> playSongs(
     }
   } catch (e) {
     if (context.mounted) {
-      // Full error in a selectable dialog: a snackbar truncates long
-      // messages and hides the actual reason.
-      final msg = e.toString().replaceAll(RegExp(r'\s+'), ' ');
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Play failed'),
-          content: SingleChildScrollView(child: SelectableText(msg)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
+      showFriendlyError(context, title: 'Couldn\'t play this song', error: e);
     }
   }
 }
