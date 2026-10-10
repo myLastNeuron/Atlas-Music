@@ -58,7 +58,7 @@
 | 🎤 | **Artist pages** | Tap an artist's name in the full player to open their page — top songs and albums/singles, straight from YouTube Music. |
 | 🐞 | **Major bug fixes & cleanup** | Fixed significant bugs and removed unused code for a leaner app. |
 | 🔒 | **Loophole fixes & security patches** | Closed major gaps in app logic and applied security hardening. |
-| 🚀 | **Performance boost** | An estimated **2.5–5%** better performance on some devices. |
+| 🚀 | **Performance boost** | An estimated **2.5–5%** better performance on some devices it may vary device to device some devices expect negative performance reduction of (-5% to 10%) in some devices. |
 
 ---
 
