@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/media/banner.svg" alt="Atlas Music. Your music. Your library. Your rules." width="100%" />
+<img src="docs/media/banner-v2.svg" alt="Atlas Music. Your music. Your library. Your rules." width="100%" />
 
 <h1>Atlas Music</h1>
 
