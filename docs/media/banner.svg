@@ -25,9 +25,9 @@
 
   <g transform="translate(96,96)">
     <rect width="128" height="128" rx="32" fill="url(#glass)" stroke="#FFFFFF" stroke-opacity="0.18"/>
-    <g fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="48" cy="88" r="13"/>
-      <path d="M60 88 V40 C63 29 78 27 85 38 C88 44 88 52 85 61"/>
+    <g transform="translate(64 64) scale(1.35) translate(-96.5 -95)" fill="none" stroke="#FFFFFF" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="87.5" cy="107" r="8"/>
+      <path d="M95.5 98 V75 C95.5 71 99 71 103 73 C110 77 116 83 116 92"/>
     </g>
   </g>
 
