@@ -535,20 +535,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                           builder: (_) => AlertDialog(
                             backgroundColor: AppColors.glass,
                             title: const Text('About Atlas Music'),
-                            content: const SingleChildScrollView(
-                              child: Text(
-                                'Atlas Music is a music discovery app.\n\n'
-                                'What we do:\n'
-                                '• Discover songs via YouTube search with heuristic filters.\n'
-                                '• Show Popular and Recommended sections based on your listening history.\n'
-                                '• Play audio streams with ExoPlayer via youtube_explode_dart (YouTube only).\n\n'
-                                'How backend works:\n'
-                                '• Discovery: YouTube search + filters for official/title song, duration 60-420s, bad phrase blacklist.\n'
-                                '• Playback: MediaResolver uses YouTubeProvider with VisionOS client to avoid throttling.\n'
-                                '• Data: Local SharedPreferences for playlists, history, search history. No cloud account needed.\n'
-                                '• Offline: Audio cache stores recent tracks for offline replay.',
-                                style: TextStyle(color: AppColors.inkSoft),
-                              ),
+                            content: const Text(
+                              'Developed by myLastNeuron',
+                              style: TextStyle(color: AppColors.inkSoft),
                             ),
                             actions: [
                               TextButton(
