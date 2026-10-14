@@ -13,6 +13,9 @@ import '../widgets/liquid_background.dart';
 import 'auto_finds_screen.dart';
 import 'liked_songs_screen.dart';
 
+/// Shown in the About row and dialog. Keep in sync with `pubspec.yaml`.
+const String _appVersion = '2.0.0';
+
 /// Settings + identity. Name edit persists and reflects in header.
 class ProfileScreen extends StatefulWidget {
   final String userName;
@@ -324,7 +327,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                     'kept on-device, capped at 1 GB and cleared after 7 days.',
               ),
               const Text(
-                'Developed by myLastNeuron · Apache 2.0 license',
+                'Version $_appVersion · Developed by myLastNeuron · Apache 2.0 license',
                 style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
               ),
             ],
@@ -650,7 +653,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                       leading: const Icon(Icons.info_outline, size: 20),
                       title:
                           const Text('About', style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('v1.1.0',
+                      subtitle: const Text('v$_appVersion',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
                       onTap: _showAbout,
