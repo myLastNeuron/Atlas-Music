@@ -10,6 +10,8 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
@@ -767,9 +769,26 @@ public class AudioService extends MediaBrowserServiceCompat {
 
     private void internalStartForeground() {
         if (Build.VERSION.SDK_INT >= 34) {
-            // Android 14+ requires foreground service type
-            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            // Android 14+ requires foreground service type. Include the
+            // microphone type when we hold RECORD_AUDIO, so "Identify song"
+            // can record from the Quick Settings tile while we are backgrounded
+            // (a mic FGS can only be created while the app is visible).
+            int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK;
+            boolean micGranted = ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            if (micGranted) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            }
+            try {
+                startForeground(NOTIFICATION_ID, buildNotification(), types);
+            } catch (Exception e) {
+                // Mic type refused (e.g. resumed from the background): keep
+                // playback alive with playback type only.
+                startForeground(NOTIFICATION_ID, buildNotification(),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            }
         } else {
+            // Below 34 the manifest's declared types apply.
             startForeground(NOTIFICATION_ID, buildNotification());
         }
         notificationCreated = true;

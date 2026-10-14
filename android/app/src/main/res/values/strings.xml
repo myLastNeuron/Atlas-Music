@@ -1,0 +1,8 @@
+<resources>
+    <string name="identify_tile_label">Find song</string>
+    <string name="identify_channel_name">Find song</string>
+    <string name="auto_listening_title">Listening for music</string>
+    <string name="auto_listening_body">Atlas is naming songs around you</string>
+    <string name="auto_listening_stop">Stop</string>
+    <string name="auto_listen_tile_label">Auto listen</string>
+</resources>

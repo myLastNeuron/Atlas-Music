@@ -62,6 +62,7 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 - Song-focused discovery, related tracks, and autoplay
 - On-device Quick Picks shaped by your listening history
 - Artist pages and read-only video engagement stats
+- Shazam-style **Find song** and hands-free **Auto listen**
 
 </td>
     <td width="33%" valign="top">
@@ -101,6 +102,17 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 <summary><b>Discovery rules</b></summary>
 
 Discovery filters out results with unknown duration and non-music or long-form content. Songs in your library and explicitly downloaded files are never removed by these filters. Search can still surface music uploads such as remixes, slowed versions, and lyric videos.
+
+</details>
+
+<details>
+<summary><b>🎙️ Find song &amp; Auto listen</b></summary>
+
+- **Find song** records about six seconds of what is playing around you, fingerprints it, and names the track. From the result you can play it or add it to a playlist. It also runs from a **Find song Quick Settings tile**, which opens Atlas so it can listen (see the limit below).
+- **Auto listen** keeps naming songs in the background while you use other apps — Instagram, YouTube, a music player. Start it from Profile, the **Auto listen tile**, or the launcher long-press shortcut.
+- Every find is appended to **Auto song fetch history** (Profile) with an exact timestamp. Rows behave like the rest of the library — tap to play, or use the 3-dot menu's **Remove from Song Fetch List** — and the whole list can be cleared. Auto finds are silent: they never post a notification, and the ongoing "Listening for music" notice just updates with the latest match.
+- Identification runs against Shazam's public fingerprint endpoint through the [`shazam_identifier`](https://pub.dev/packages/shazam_identifier) helpers, and the match is resolved to a playable track with the same YouTube search the rest of the app uses.
+- Recording never takes audio focus, so identifying a song does not pause whatever is playing.
 
 </details>
 
@@ -204,7 +216,7 @@ lib/
 ├── media/                  # Resolver contract, provider chain, offline cache
 ├── models/                 # Song, playlist, artist, video stats
 ├── screens/                # Home, search, library, player, profile, …
-├── services/               # Playback, YouTube, lyrics, storage, recommendations
+├── services/               # Playback, YouTube, lyrics, storage, identify, recommendations
 ├── theme/                  # Colors, typography, motion, shared theme
 └── widgets/                # Mini-player, lyrics, artwork, glass navigation
 plugins/audio_service/      # Vendored audio_service Android implementation
@@ -222,7 +234,7 @@ flutter analyze
 flutter test
 ```
 
-GitHub Actions runs both on every push and pull request. The test suite covers content filtering, recommendations, cache and download policy, resolver failover, lyrics, playlist parsing, storage, and UI helpers. The vendored `plugins/audio_service` copy is excluded from project analysis.
+GitHub Actions runs both on every push and pull request. The test suite covers content filtering, recommendations, cache and download policy, resolver failover, lyrics, playlist parsing, storage, song identification, and UI helpers. The vendored `plugins/audio_service` copy is excluded from project analysis.
 
 ---
 
@@ -232,6 +244,7 @@ GitHub Actions runs both on every push and pull request. The test suite covers c
 - No queue-reordering screen, and playback position is not restored after the app restarts.
 - No cloud sync or user accounts. Library data stays on-device.
 - The dark appearance is fixed; there is no theme switcher.
+- One-shot **Find song** needs Atlas on screen: Android grants the microphone only to a visible app, and there is no "always allow" for the mic. **Auto listen** covers background listening, but it must be started from Atlas (its tile or shortcut) and uses more battery.
 - YouTube does not publish dislike counts in general, so unavailable values show as `N/A`.
 
 ---

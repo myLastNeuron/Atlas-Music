@@ -236,20 +236,34 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Widget _header(ArtistPage page) {
     final image = page.imageUrl ?? widget.thumbnailUrl ?? '';
+    final name = page.name.isEmpty ? widget.name : page.name;
+    final songCount = page.songs.length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
       child: Column(
         children: [
           Artwork(image, size: 120, radius: 60, fit: BoxFit.cover),
           const SizedBox(height: 14),
-          Text(page.name.isEmpty ? widget.name : page.name,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.ink)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(name,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.ink)),
+              ),
+              if (songCount > 0) ...[
+                const SizedBox(width: 8),
+                Text('$songCount song${songCount == 1 ? '' : 's'}',
+                    style: const TextStyle(fontSize: 13, color: AppColors.mute)),
+              ],
+            ],
+          ),
           const SizedBox(height: 4),
           const Text('Artist',
               style: TextStyle(fontSize: 13, color: AppColors.mute)),

@@ -21,6 +21,9 @@ dependencies:
   path_provider: ^2.1.6
   audio_service: ^0.18.18
   connectivity_plus: ^7.3.1
+  shazam_identifier: ^1.0.0
+  # Used directly by the identify flow (shazam_identifier pulls it in anyway).
+  record: ^7.1.2
 
 dependency_overrides:
   audio_service:

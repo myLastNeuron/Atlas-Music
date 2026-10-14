@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the Atlas launcher icon -> "Auto listen" turns Auto-listen on. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="auto_listen"
+        android:enabled="true"
+        android:icon="@drawable/ic_identify"
+        android:shortcutShortLabel="@string/auto_listen_tile_label"
+        android:shortcutLongLabel="@string/auto_listen_tile_label">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.atlas.music.atlas_music"
+            android:targetClass="com.atlas.music.atlas_music.MainActivity">
+            <extra android:name="atlas.autoStart" android:value="true" />
+        </intent>
+    </shortcut>
+</shortcuts>

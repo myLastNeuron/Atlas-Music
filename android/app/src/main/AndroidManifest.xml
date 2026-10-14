@@ -6,8 +6,12 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- Lets the tile listen for a song while the app is in the background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- "Identify a song": records ambient audio to fingerprint the track. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
 
     <application
         android:label="Atlas Music"
@@ -28,13 +32,19 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- Launcher shortcut: long-press the icon -> "Auto listen". -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- microphone is included so "Identify song" can record from the
+             tile while the app is backgrounded; see IdentifyTileService. -->
         <service android:name="com.ryanheise.audioservice.AudioService"
-            android:foregroundServiceType="mediaPlayback"
+            android:foregroundServiceType="mediaPlayback|microphone"
             android:exported="true" tools:ignore="Instantiatable">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
@@ -46,6 +56,35 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+        <!-- "Identify song" Quick Settings tile. -->
+        <service
+            android:name=".IdentifyTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_identify"
+            android:label="@string/identify_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- Microphone-typed foreground service for Auto-listen: started while
+             the app is visible, then keeps the mic available in the background
+             so Atlas can name songs playing in other apps. -->
+        <service
+            android:name=".AutoListenService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+        <!-- "Auto listen" Quick Settings tile. -->
+        <service
+            android:name=".AutoListenTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_identify"
+            android:label="@string/auto_listen_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

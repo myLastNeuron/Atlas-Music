@@ -8,7 +8,9 @@ import '../services/user_prefs.dart';
 import '../services/spotify_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
+import '../widgets/identify_sheet.dart';
 import '../widgets/liquid_background.dart';
+import 'auto_finds_screen.dart';
 import 'liked_songs_screen.dart';
 
 /// Settings + identity. Name edit persists and reflects in header.
@@ -280,6 +282,82 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  /// Plain-language explanation of how the app works under the hood — no
+  /// jargon, aimed at a normal listener who taps "About".
+  void _showAbout() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.glass,
+        title: const Text('About Atlas Music'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'A free, open-source music player for Android. Your music, your '
+                'library, your rules — built with Flutter.',
+                style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
+              ),
+              const SizedBox(height: 16),
+              _aboutSection(
+                'Where the music comes from',
+                'Atlas does not store or host any songs. When you search or play, '
+                    'it looks tracks up on YouTube Music and YouTube, then streams '
+                    'the audio straight to your phone.',
+              ),
+              _aboutSection(
+                'Lyrics and translation',
+                'Synced lyrics come from LRCLIB, a free public lyrics database, '
+                    'and translation uses Google Translate. No sign-in needed.',
+              ),
+              _aboutSection(
+                'Playlist import',
+                'Importing a Spotify playlist uses your own free Spotify API '
+                    'keys. They are saved only on this device.',
+              ),
+              _aboutSection(
+                'Your data stays with you',
+                'There are no accounts and no cloud sync. Your playlists, likes, '
+                    'history and settings never leave your phone. Downloads are '
+                    'kept on-device, capped at 1 GB and cleared after 7 days.',
+              ),
+              const Text(
+                'Developed by myLastNeuron · Apache 2.0 license',
+                style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _aboutSection(String title, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 3),
+          Text(body,
+              style:
+                  const TextStyle(fontSize: 12.5, color: AppColors.inkSoft)),
+        ],
+      ),
+    );
+  }
+
   Future<void> _reset() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -314,13 +392,16 @@ class _ProfileScreenState extends State<ProfileScreen>
       body: SafeArea(
         bottom: false,
         child: ListView(
-          physics: const BouncingScrollPhysics(),
-          padding:
-              const EdgeInsets.only(left: 20, right: 20, top: 14, bottom: 190),
+          // Immovable: no bounce, and the content is trimmed to fit so it does
+          // not need to scroll. ponytail: assumes a tall phone viewport — trim
+          // more here if it still scrolls on a short screen.
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.only(
+              left: 20, right: 20, top: 14, bottom: 110),
           children: [
             const Text('Profile',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             GlassPanel(
               radius: 24,
               padding: const EdgeInsets.all(18),
@@ -414,7 +495,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             Stagger(
               index: 1,
               child: Row(
@@ -427,7 +508,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
@@ -470,7 +551,50 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
+            GlassPanel(
+              radius: 20,
+              padding: EdgeInsets.zero,
+              opacity: 0.07,
+              child: Column(
+                children: [
+                  MotionPress(
+                    scale: 0.99,
+                    child: ListTile(
+                      leading: const Icon(Icons.graphic_eq, size: 20),
+                      title: const Text('Find song',
+                          style: TextStyle(fontSize: 14)),
+                      subtitle: const Text('Find song or Auto listen',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.inkSoft)),
+                      trailing: const Icon(Icons.chevron_right,
+                          color: AppColors.mute),
+                      onTap: () => showIdentifyMenu(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            GlassPanel(
+              radius: 20,
+              padding: EdgeInsets.zero,
+              opacity: 0.07,
+              child: MotionPress(
+                scale: 0.99,
+                child: ListTile(
+                  leading: const Icon(Icons.history, size: 20),
+                  title: const Text('Auto song fetch history',
+                      style: TextStyle(fontSize: 14)),
+                  subtitle: const Text('Songs Auto listen named, with times',
+                      style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
+                  trailing: const Icon(Icons.chevron_right,
+                      color: AppColors.mute),
+                  onTap: () => pushAppPage(context, const AutoFindsScreen()),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
@@ -501,7 +625,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
@@ -526,28 +650,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                       leading: const Icon(Icons.info_outline, size: 20),
                       title:
                           const Text('About', style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('v1.0.1',
+                      subtitle: const Text('v1.1.0',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      onTap: () {
-                        showDialog(
-                          context: context,
-                          builder: (_) => AlertDialog(
-                            backgroundColor: AppColors.glass,
-                            title: const Text('About Atlas Music'),
-                            content: const Text(
-                              'Developed by myLastNeuron',
-                              style: TextStyle(color: AppColors.inkSoft),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text('Close'),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                      onTap: _showAbout,
                     ),
                   ),
                 ],

@@ -97,8 +97,14 @@ class YouTubeMusicSearch {
     final seen = {for (final s in out) s.videoId ?? s.id};
     var token = _continuationOf(data);
     for (var page = 0; token != null && page < _maxPages; page++) {
-      final next = await _post(_browseUrl, const {},
-          query: {'ctoken': token, 'continuation': token});
+      final Map<String, dynamic> next;
+      try {
+        next = await _post(_browseUrl, const {},
+            query: {'ctoken': token, 'continuation': token});
+      } catch (_) {
+        // Keep the songs already collected instead of losing the whole list.
+        break;
+      }
       for (final song in _shelfSongs(next)) {
         if (seen.add(song.videoId ?? song.id)) out.add(song);
       }
@@ -257,6 +263,16 @@ class YouTubeMusicSearch {
   static List<Song> _shelfSongs(Map data) {
     final out = <Song>[];
     final seen = <String>{};
+    void add(List<dynamic> contents) {
+      for (final raw in contents) {
+        if (raw is! Map) continue;
+        final renderer = raw['musicResponsiveListItemRenderer'];
+        if (renderer is! Map) continue;
+        final song = _toSong(renderer);
+        if (song != null && seen.add(song.videoId ?? song.id)) out.add(song);
+      }
+    }
+
     for (final key in const [
       'musicShelfRenderer',
       'musicPlaylistShelfRenderer',
@@ -264,15 +280,15 @@ class YouTubeMusicSearch {
     ]) {
       for (final shelf in _findAll(data, key)) {
         final contents = shelf['contents'];
-        if (contents is! List) continue;
-        for (final raw in contents) {
-          if (raw is! Map) continue;
-          final renderer = raw['musicResponsiveListItemRenderer'];
-          if (renderer is! Map) continue;
-          final song = _toSong(renderer);
-          if (song != null && seen.add(song.videoId ?? song.id)) out.add(song);
-        }
+        if (contents is List) add(contents);
       }
+    }
+    // Continuation pages have no shelf wrapper: rows sit directly under
+    // appendContinuationItemsAction.continuationItems. Without this the list
+    // stops at the first page (≤100 songs for popular artists).
+    for (final action in _findAll(data, 'appendContinuationItemsAction')) {
+      final items = action['continuationItems'];
+      if (items is List) add(items);
     }
     return out;
   }

@@ -21,6 +21,7 @@ Future<void> showSongActions(
   Rect? anchor,
   Future<void> Function()? onRemoveFromPlaylist,
   Future<void> Function()? onRemoveFromDownloads,
+  Future<void> Function()? onRemoveFromAutoFinds,
 }) async {
   final storage = StorageService.instance;
   bool liked = false;
@@ -73,6 +74,7 @@ Future<void> showSongActions(
               downloaded: downloaded,
               onRemoveFromPlaylist: onRemoveFromPlaylist,
               onRemoveFromDownloads: onRemoveFromDownloads,
+              onRemoveFromAutoFinds: onRemoveFromAutoFinds,
             ),
           ),
         ),
@@ -130,6 +132,7 @@ class SongMenuButton extends StatelessWidget {
   final String? queueOrigin;
   final Future<void> Function()? onRemoveFromPlaylist;
   final Future<void> Function()? onRemoveFromDownloads;
+  final Future<void> Function()? onRemoveFromAutoFinds;
   final bool compact;
 
   const SongMenuButton({
@@ -140,6 +143,7 @@ class SongMenuButton extends StatelessWidget {
     this.queueOrigin,
     this.onRemoveFromPlaylist,
     this.onRemoveFromDownloads,
+    this.onRemoveFromAutoFinds,
     this.compact = false,
   });
 
@@ -163,6 +167,7 @@ class SongMenuButton extends StatelessWidget {
         anchor: _anchorFrom(context),
         onRemoveFromPlaylist: onRemoveFromPlaylist,
         onRemoveFromDownloads: onRemoveFromDownloads,
+        onRemoveFromAutoFinds: onRemoveFromAutoFinds,
       );
     }
 
@@ -200,6 +205,7 @@ class _SongActionsCard extends StatefulWidget {
   final bool downloaded;
   final Future<void> Function()? onRemoveFromPlaylist;
   final Future<void> Function()? onRemoveFromDownloads;
+  final Future<void> Function()? onRemoveFromAutoFinds;
 
   const _SongActionsCard({
     required this.hostContext,
@@ -211,6 +217,7 @@ class _SongActionsCard extends StatefulWidget {
     required this.downloaded,
     this.onRemoveFromPlaylist,
     this.onRemoveFromDownloads,
+    this.onRemoveFromAutoFinds,
   });
 
   @override
@@ -307,6 +314,13 @@ class _SongActionsCardState extends State<_SongActionsCard> {
     await widget.onRemoveFromDownloads?.call();
   }
 
+  Future<void> _removeFromAutoFinds() async {
+    _pop();
+    final ctx = widget.hostContext;
+    if (!ctx.mounted) return;
+    await widget.onRemoveFromAutoFinds?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -382,6 +396,9 @@ class _SongActionsCardState extends State<_SongActionsCard> {
             if (widget.onRemoveFromDownloads != null)
               _tile(Icons.delete_outline, 'Remove from downloads',
                   _removeFromDownloads),
+            if (widget.onRemoveFromAutoFinds != null)
+              _tile(Icons.playlist_remove, 'Remove from Song Fetch List',
+                  _removeFromAutoFinds),
             const SizedBox(height: 6),
           ],
         ),

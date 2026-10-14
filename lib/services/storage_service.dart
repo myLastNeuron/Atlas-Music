@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
+import '../models/auto_find.dart';
 
 class StorageService extends ChangeNotifier {
   static final StorageService instance = StorageService._internal();
@@ -12,6 +13,7 @@ class StorageService extends ChangeNotifier {
   static const String _playlistsKey = 'playlists';
   static const String _likedSongsKey = 'liked_songs';
   static const String _recentlyPlayedKey = 'recently_played';
+  static const String _autoFindsKey = 'auto_finds';
   static const String _listeningStatsKey = 'listening_stats';
   static const String _topArtistsKey = 'top_artists';
   static const String _searchHistoryKey = 'search_history';
@@ -321,6 +323,54 @@ class StorageService extends ChangeNotifier {
     return _serialized(() async {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_recentlyPlayedKey);
+      notifyListeners();
+    });
+  }
+
+  // ── Auto song fetch (songs Auto-listen identified) ──
+
+  /// Newest first, each with the moment it was heard.
+  Future<List<AutoFind>> getAutoFinds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = _safeDecode<List<dynamic>>(prefs.getString(_autoFindsKey));
+    if (list == null) return [];
+    return list
+        .whereType<Map>()
+        .map((j) => AutoFind.fromJson(Map<String, dynamic>.from(j)))
+        .toList();
+  }
+
+  Future<void> addAutoFind(Song song) {
+    return _serialized(() async {
+      final finds = await getAutoFinds();
+      // Collapse only a consecutive repeat, like the play history.
+      if (finds.isNotEmpty && finds.first.song.id == song.id) return;
+      finds.insert(0, AutoFind(song: song, foundAt: DateTime.now()));
+      if (finds.length > 200) finds.removeRange(200, finds.length);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          _autoFindsKey, json.encode(finds.map((f) => f.toJson()).toList()));
+      notifyListeners();
+    });
+  }
+
+  /// Removes the entry at [index] in the newest-first list.
+  Future<void> removeAutoFind(int index) {
+    return _serialized(() async {
+      final finds = await getAutoFinds();
+      if (index < 0 || index >= finds.length) return;
+      finds.removeAt(index);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          _autoFindsKey, json.encode(finds.map((f) => f.toJson()).toList()));
+      notifyListeners();
+    });
+  }
+
+  Future<void> clearAutoFinds() {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_autoFindsKey);
       notifyListeners();
     });
   }

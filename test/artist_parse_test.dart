@@ -322,6 +322,24 @@ void main() {
     expect(songs.first.duration, const Duration(minutes: 4, seconds: 55));
   });
 
+  test('parseAlbumJson reads continuation pages (no shelf wrapper)', () {
+    final fixture = {
+      'onResponseReceivedActions': [
+        {
+          'appendContinuationItemsAction': {
+            'continuationItems': [
+              songRow(videoId: 'c1', title: 'Extra One', artist: 'Oasis'),
+              songRow(videoId: 'c2', title: 'Extra Two', artist: 'Oasis'),
+            ],
+          },
+        },
+      ],
+    };
+    final songs = YouTubeMusicSearch.parseAlbumJson(fixture);
+    expect(songs.map((s) => s.title), ['Extra One', 'Extra Two']);
+    expect(songs.map((s) => s.videoId), ['c1', 'c2']);
+  });
+
   test('parseArtistJson never throws on hostile data', () {
     expect(() => YouTubeMusicSearch.parseArtistJson(const {}),
         returnsNormally);

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
+import '../screens/player_screen.dart';
 import '../services/audio_service.dart';
+import 'app_transitions.dart';
 import 'friendly_error.dart';
 
 /// `ScaffoldMessenger` lookups that capture the *current* `BuildContext` at
@@ -60,4 +62,19 @@ Future<void> playSongs(
       showFriendlyError(context, title: 'Couldn\'t play this song', error: e);
     }
   }
+}
+
+/// Loads [song] and opens the full player with it loaded but paused — the
+/// "Find song" match lands ready to play, never blasting audio at the user.
+Future<void> openSongPaused(BuildContext context, Song song) async {
+  final audio = context.read<AudioPlayerService>();
+  await playSongs(context,
+      song: song, queue: [song], index: 0, queueOrigin: 'FindSong');
+  // A genuine failure reverts currentSong; don't open the player on the wrong
+  // track (playSongs already surfaced the reason).
+  if (!context.mounted || audio.currentSong?.id != song.id) return;
+  await audio.pause();
+  if (!context.mounted) return;
+  pushAppPage(context, const PlayerScreen(),
+      routeName: PlayerScreen.routeName, slideUp: true);
 }
