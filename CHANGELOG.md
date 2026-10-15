@@ -6,6 +6,15 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Check for updates** (Profile): reads the newest release from the project's
+  GitHub Releases, and when a newer version exists shows what changed, downloads
+  the APK, and hands it to the Android installer. Free and keyless — no server,
+  no API key. Includes the permanent release-signing setup (keystore +
+  `release.yml` workflow) so updates install over previous versions.
+- The Profile version label now comes from the platform (`package_info_plus`)
+  instead of a hand-typed string, so it cannot drift from `pubspec.yaml`.
+
 ### Changed
 - **Full player motion**: the mini-player cover flies into the full player as
   a shared-element (Hero) morph, while the page eases in behind it with a

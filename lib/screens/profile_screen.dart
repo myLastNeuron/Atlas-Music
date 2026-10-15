@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/storage_service.dart';
 import '../services/system_permissions.dart';
@@ -10,11 +11,9 @@ import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/identify_sheet.dart';
 import '../widgets/liquid_background.dart';
+import '../widgets/update_sheet.dart';
 import 'auto_finds_screen.dart';
 import 'liked_songs_screen.dart';
-
-/// Shown in the About row and dialog. Keep in sync with `pubspec.yaml`.
-const String _appVersion = '2.0.2 (beta)';
 
 /// Settings + identity. Name edit persists and reflects in header.
 class ProfileScreen extends StatefulWidget {
@@ -37,6 +36,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _batteryExempt = false;
   bool _spotifyLinked = false;
   String? _spotifyId;
+  String _version = '';
 
   @override
   void initState() {
@@ -47,6 +47,14 @@ class _ProfileScreenState extends State<ProfileScreen>
     _loadStats();
     _loadSpotify();
     _loadBatteryStatus();
+    _loadVersion();
+  }
+
+  /// Reads the real installed version from the platform, so the About text
+  /// can never drift from `pubspec.yaml`.
+  Future<void> _loadVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) setState(() => _version = info.version);
   }
 
   void _onStorageChanged() {
@@ -326,9 +334,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                     'history and settings never leave your phone. Downloads are '
                     'kept on-device, capped at 1 GB and cleared after 30 days.',
               ),
-              const Text(
-                'Version $_appVersion · Developed by myLastNeuron · Apache 2.0 license',
-                style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
+              Text(
+                'Version ${_version.isEmpty ? '…' : _version} · Developed by myLastNeuron · Apache 2.0 license',
+                style: const TextStyle(fontSize: 12, color: AppColors.inkSoft),
               ),
             ],
           ),
@@ -650,11 +658,23 @@ class _ProfileScreenState extends State<ProfileScreen>
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
+                      leading: const Icon(Icons.system_update_alt, size: 20),
+                      title: const Text('Check for updates',
+                          style: TextStyle(fontSize: 14)),
+                      trailing: const Icon(Icons.chevron_right,
+                          color: AppColors.mute),
+                      onTap: () => showUpdateSheet(context),
+                    ),
+                  ),
+                  const Divider(height: 1, color: AppColors.line),
+                  MotionPress(
+                    scale: 0.99,
+                    child: ListTile(
                       leading: const Icon(Icons.info_outline, size: 20),
                       title:
                           const Text('About', style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('v$_appVersion',
-                          style: TextStyle(
+                      subtitle: Text(_version.isEmpty ? '' : 'v$_version',
+                          style: const TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
                       onTap: _showAbout,
                     ),

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- In-app updater downloads land in the app cache; only that subfolder
+         is exposed to the package installer through the FileProvider. -->
+    <cache-path name="updates" path="updates/" />
+</paths>

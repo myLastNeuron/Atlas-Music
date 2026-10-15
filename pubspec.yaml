@@ -24,6 +24,7 @@ dependencies:
   shazam_identifier: ^1.0.0
   # Used directly by the identify flow (shazam_identifier pulls it in anyway).
   record: ^7.1.2
+  package_info_plus: ^10.2.2
 
 dependency_overrides:
   audio_service:

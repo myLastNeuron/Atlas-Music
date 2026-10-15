@@ -1,0 +1,93 @@
+name: Release
+
+# Publishes a signed APK to a GitHub Release whenever a v* tag is pushed.
+# The in-app update checker reads these releases, so the tag MUST match the
+# version in pubspec.yaml: tag `v2.0.3` for `version: 2.0.3+7`. The workflow
+# enforces that below.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   KEYSTORE_BASE64     base64 of the release .jks file
+#   KEYSTORE_PASSWORD   the keystore password
+#   KEY_ALIAS           the key alias (e.g. atlas)
+#   KEY_PASSWORD        the key password
+#
+# Generate KEYSTORE_BASE64 with (Linux/macOS):
+#   base64 -w0 android/app/atlas-release.jks
+# or PowerShell:
+#   [Convert]::ToBase64String([IO.File]::ReadAllBytes("android/app/atlas-release.jks"))
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload the APK
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # The update feature only works if every build shares one signing key.
+      # Refuse to publish a debug-signed APK: it would not install over the
+      # previous version.
+      - name: Verify tag matches pubspec version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(grep -E '^version:' pubspec.yaml | sed -E 's/version: *([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Tag v$tag does not match pubspec version $ver. Bump pubspec.yaml or retag."
+            exit 1
+          fi
+
+      - name: Configure signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is not set — refusing to publish a debug-signed APK."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/atlas-release.jks
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=atlas-release.jks
+          EOF
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Prepare APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Atlas.Music.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Atlas.Music.apk
+          generate_release_notes: true
+
+      - name: Clean up signing material
+        if: always()
+        run: rm -f android/app/atlas-release.jks android/key.properties

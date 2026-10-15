@@ -72,6 +72,7 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 - Import from YouTube, Spotify, or a pasted track list
 - Synced lyrics with line-by-line highlighting and translation
 - Dark liquid-glass design, animated backdrop, floating navigation
+- Check for updates from Profile, and install the new version in place
 
 </td>
   </tr>
@@ -176,6 +177,23 @@ storeFile=atlas-release.jks
 
 > [!WARNING]
 > Back up the keystore and its passwords. If you lose them, you cannot ship updates for existing installs.
+
+### Publishing an update (in-app updater)
+
+The app's **Check for updates** reads the newest **published** GitHub Release and compares its tag with the installed version, so a release *is* the update:
+
+1. Bump `version` in `pubspec.yaml` (e.g. `2.0.3+7`).
+2. Tag it to match and push:
+   ```bash
+   git tag v2.0.3
+   git push origin v2.0.3
+   ```
+3. The `Release` workflow builds the **signed** APK and publishes it as `Atlas.Music.apk` on the release.
+
+Add these repository secrets once (**Settings → Secrets and variables → Actions**): `KEYSTORE_BASE64` (base64 of the `.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. The workflow refuses to publish a debug-signed APK, and it fails if the tag does not match `pubspec.yaml`.
+
+> [!IMPORTANT]
+> The tag must match `pubspec.yaml`, and the release must be **published, not a draft** — drafts are invisible to the updater. Existing installs are debug-signed, so the **first** release under the permanent key needs a one-time uninstall/reinstall (which clears on-device data, since `allowBackup="false"`). Every update after that installs in place.
 
 </details>
 

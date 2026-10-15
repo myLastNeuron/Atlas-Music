@@ -32,4 +32,35 @@ class SystemPermissions {
       await _channel.invokeMethod('requestBatteryExemption');
     } catch (_) {}
   }
+
+  /// True when Atlas may launch the package installer for a downloaded APK.
+  /// Android 8.0+ gates this behind a per-app "install unknown apps" toggle
+  /// that only the user can grant.
+  Future<bool> canInstallPackages() async {
+    try {
+      return await _channel.invokeMethod<bool>('canInstallPackages') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the system "install unknown apps" screen for Atlas so the user can
+  /// grant the permission the installer needs.
+  Future<void> openInstallSettings() async {
+    try {
+      await _channel.invokeMethod('openInstallSettings');
+    } catch (_) {}
+  }
+
+  /// Hands a downloaded APK to the Android package installer. Returns false
+  /// when the platform refused to open the installer.
+  Future<bool> installApk(String path) async {
+    try {
+      return await _channel
+              .invokeMethod<bool>('installApk', {'path': path}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
 }

@@ -13,9 +13,11 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : AudioServiceActivity() {
     private var identifyChannel: MethodChannel? = null
@@ -69,6 +71,17 @@ class MainActivity : AudioServiceActivity() {
                     "requestBatteryExemption" -> {
                         maybeRequestBatteryExemption()
                         result.success(null)
+                    }
+                    // In-app updater: the user taps "Update", Dart downloads
+                    // the APK and asks native to hand it to the installer.
+                    "canInstallPackages" -> result.success(canInstallPackages())
+                    "openInstallSettings" -> {
+                        openInstallSettings()
+                        result.success(null)
+                    }
+                    "installApk" -> {
+                        val path = call.argument<String>("path")
+                        result.success(path != null && installApk(path))
                     }
                     else -> result.notImplemented()
                 }
@@ -271,6 +284,56 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {
                 // Give up silently — the exemption stays optional.
             }
+        }
+    }
+
+    // ---- In-app updater --------------------------------------------------
+
+    /// Android 8.0+ gates the package installer behind a per-app "install
+    /// unknown apps" allowance; earlier versions install freely.
+    private fun canInstallPackages(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            packageManager.canRequestPackageInstalls()
+
+    /// Opens the system "install unknown apps" screen for Atlas so the user can
+    /// grant the permission the installer needs.
+    private fun openInstallSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (_: Exception) {
+            // Some ROMs block the package-scoped intent; fall back to the list.
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES))
+            } catch (_: Exception) {
+                // Give up silently — the updater shows a message either way.
+            }
+        }
+    }
+
+    /// Hands a downloaded APK to the system package installer. A content:// URI
+    /// from the FileProvider is required: a raw file:// is rejected on API 24+.
+    private fun installApk(path: String): Boolean {
+        return try {
+            val file = File(path)
+            if (!file.exists()) return false
+            val uri = FileProvider.getUriForFile(
+                this, "${packageName}.fileprovider", file
+            )
+            startActivity(
+                Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
