@@ -52,7 +52,7 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 - Background playback with lock-screen and notification controls
 - Offline downloads in a validated, size-capped cache
 - Queue, shuffle, repeat, and preloading
-- Automatic provider failover and offline recovery
+- Automatic offline recovery
 
 </td>
     <td width="33%" valign="top">
@@ -81,7 +81,7 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 <summary><b>Playback that keeps going</b></summary>
 
 - Audio continues with the screen off. The notification and in-app player share one queue.
-- Upcoming tracks are preloaded and validated before they play. If one source fails, Atlas tries another provider.
+- Upcoming tracks are preloaded and validated before they play.
 - Auto-play explores related songs, artist and title searches, and your liked or recently played music.
 - Downloads use an oldest-first cache capped at **1 GB** with a **30-day TTL**. The currently playing queue is never evicted.
 - Quick Picks use on-device listening signals, with diversity controls and a short explanation for each pick.
