@@ -311,6 +311,14 @@ class _ProfileScreenState extends State<ProfileScreen>
                 'library, your rules — built with Flutter.',
                 style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
               ),
+              const SizedBox(height: 12),
+              const Text(
+                'Test B1',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink),
+              ),
               const SizedBox(height: 16),
               _aboutSection(
                 'Where the music comes from',
