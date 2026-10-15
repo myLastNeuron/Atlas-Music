@@ -1,0 +1,4 @@
+Atlas Music 2.0.4
+
+* The built-in updater is now hidden in builds installed from F-Droid, which
+  handles updates itself.

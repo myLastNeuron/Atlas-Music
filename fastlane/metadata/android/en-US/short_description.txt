@@ -1,0 +1,1 @@
+Open-source music player with streaming, offline downloads and lyrics.

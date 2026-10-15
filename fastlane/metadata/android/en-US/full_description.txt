@@ -1,0 +1,41 @@
+Atlas Music is a free, open-source Android music player built with Flutter.
+
+Discover songs, build playlists, follow synced lyrics, and keep listening offline, all in a liquid-glass interface with background playback.
+
+LISTEN
+* Background playback with lock-screen and notification controls
+* Offline downloads in a validated, size-capped cache
+* Queue, shuffle, repeat, and preloading
+* Automatic offline recovery
+
+DISCOVER
+* Search YouTube Music and YouTube video results
+* Song-focused discovery, related tracks, and autoplay
+* On-device Quick Picks shaped by your listening history
+* Artist pages and read-only video engagement stats
+* Shazam-style Find song and hands-free Auto listen
+
+MAKE IT YOURS
+* Playlists, liked songs, and listening history
+* Import from YouTube, Spotify, or a pasted track list
+* Synced lyrics with line-by-line highlighting and translation
+* Dark liquid-glass design, animated backdrop, floating navigation
+
+LYRICS, PLAYLISTS AND LIBRARY
+* Synced lyrics come from LRCLIB with no API key. Tap a line to seek, and translate lyrics from the player.
+* Create and edit playlists, add songs from search, change covers, and download a whole playlist for offline listening.
+* Import YouTube and YouTube Music playlists, match Spotify playlists to playable tracks, or paste a track list.
+* Spotify import uses your own Spotify API credentials, stored on-device. Atlas has no accounts and no cloud sync.
+
+FIND SONG AND AUTO LISTEN
+* Find song records about six seconds of what is playing around you, fingerprints it, and names the track. It also runs from a Find song Quick Settings tile.
+* Auto listen keeps naming songs in the background while you use other apps. Start it from Profile, the Auto listen tile, or the launcher long-press shortcut.
+
+PRIVACY
+* No accounts and no cloud sync. Library data stays on-device.
+* No ads, no trackers, no analytics.
+
+NOTES
+* Requires Android 7.0 (API 24) or newer.
+* Uses non-free network services: YouTube, Shazam and Google Translate.
+* This is a mostly AI-generated learning project and has not had a formal security audit. It is provided without warranty.
