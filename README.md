@@ -9,11 +9,15 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 
 <br />
 
+<a href="https://github.com/myLastNeuron/Atlas-Music/releases/latest/download/Atlas.Music.apk"><img src="https://img.shields.io/badge/Download_APK-6D5BE8?style=for-the-badge&logo=android&logoColor=white" alt="Download the latest APK" /></a>
+
+<br />
+
 <p>
   <a href="https://flutter.dev"><img src="https://img.shields.io/badge/Flutter-3.47%2B-54C5F8?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter 3.47+" /></a>
   <a href="https://dart.dev"><img src="https://img.shields.io/badge/Dart-3-0175C2?style=for-the-badge&logo=dart&logoColor=white" alt="Dart 3" /></a>
   <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
-  <img src="https://img.shields.io/badge/Version-2.0.2-9B8CFF?style=for-the-badge" alt="Version 2.0.2 (beta)" />
+  <img src="https://img.shields.io/badge/Version-2.0.3-9B8CFF?style=for-the-badge" alt="Version 2.0.3 (beta)" />
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-Apache--2.0-white?style=for-the-badge" alt="Apache 2.0" /></a>
   <a href="https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml"><img src="https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
 </p>
@@ -120,6 +124,14 @@ Discovery filters out results with unknown duration and non-music or long-form c
 ---
 
 ## 🚀 Quick start
+
+### Download
+
+Get the latest signed APK from the [Releases page](https://github.com/myLastNeuron/Atlas-Music/releases/latest), or download it directly:
+
+**[⬇ Download Atlas Music APK](https://github.com/myLastNeuron/Atlas-Music/releases/latest/download/Atlas.Music.apk)**
+
+Open it on your Android device to install. The app can also update itself afterwards (**Profile → Check for updates**).
 
 ### Requirements
 
