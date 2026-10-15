@@ -56,12 +56,6 @@ class PlaybackReport {
 
   void add(ResolveFailure f) => attempts.add(f);
 
-  bool get allRetryable =>
-      attempts.isNotEmpty && attempts.every((a) => a.retryable);
-
-  /// Full chain for logs / bug reports.
-  String toVerboseString() => attempts.map((a) => a.toString()).join(' | ');
-
   /// Compact message for the error dialog. Keeps HTTP statuses — a
   /// "rejected" without its status code is undiagnosable.
   String toUserMessage() {

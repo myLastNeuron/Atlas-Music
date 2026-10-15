@@ -97,7 +97,6 @@ void main() {
     final report = PlaybackReport('T');
     expect(await s.resolveFirstValid(song, report), isNull);
     expect(report.attempts.length, 2);
-    expect(report.allRetryable, isTrue);
   });
 
   test('repeated provider-level failures cool down, then bypass recovers',

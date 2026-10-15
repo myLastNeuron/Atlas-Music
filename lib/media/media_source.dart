@@ -25,10 +25,6 @@ class MediaSource {
   /// Full content length in bytes, if known.
   final int? contentLength;
 
-  /// True when the URL is a proxy (plain-GET semantics instead of
-  /// googlevideo range semantics).
-  final bool isProxy;
-
   /// When the URL is known to stop working (googlevideo `expire` param).
   final DateTime? expiresAt;
 
@@ -46,7 +42,6 @@ class MediaSource {
     this.container,
     this.bitrate,
     this.contentLength,
-    this.isProxy = false,
     this.expiresAt,
     this.mediaId,
     required this.resolvedAt,
@@ -55,25 +50,8 @@ class MediaSource {
   bool get isExpired =>
       expiresAt != null && DateTime.now().isAfter(expiresAt!);
 
-  /// ExoPlayer on Android reliably handles MP4/AAC and WebM/Opus audio,
-  /// plus plain MP3. Anything else is rejected before playback.
-  bool get hasCompatibleContainer {
-    final c = (container ?? '').toLowerCase();
-    final m = (mimeType ?? '').toLowerCase();
-    if (c.contains('mp4') || c.contains('m4a') || c.contains('mp3')) {
-      return true;
-    }
-    if (c.contains('webm') || m.contains('webm') || m.contains('opus')) {
-      return true;
-    }
-    if (m.contains('audio/mp4') || m.contains('audio/mpeg')) return true;
-    // Unknown container: allow only if codec is a known-good audio codec.
-    final k = (codec ?? '').toLowerCase();
-    return k.contains('mp4a') || k == 'opus' || k.contains('mp3');
-  }
-
   @override
   String toString() =>
       'MediaSource($provider, $container/$codec, ${bitrate ?? '?'}bps, '
-      'len=${contentLength ?? '?'}, proxy=$isProxy)';
+      'len=${contentLength ?? '?'})';
 }

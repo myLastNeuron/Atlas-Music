@@ -194,6 +194,5 @@ void main() {
     await s.resolveFirstValid(songOf('A'), report);
     expect(report.songId, 'A');
     expect(report.attempts.single.scope, FailureScope.song);
-    expect(report.toVerboseString(), contains('/song '));
   });
 }
