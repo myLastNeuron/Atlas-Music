@@ -40,7 +40,7 @@ class LyricsService {
   static const _durationToleranceSec = 10;
   static const _diskTtl = Duration(days: 30);
   static const _ua =
-      'AtlasMusic/1.0 (https://github.com/anomalyco/atlas-music)';
+      'AtlasMusic/2.0.1 (https://github.com/myLastNeuron/Atlas-Music)';
 
   final http.Client _http;
   // Persistent app folder, not systemTemp: downloaded lyrics must survive
