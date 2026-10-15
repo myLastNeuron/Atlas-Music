@@ -37,6 +37,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _spotifyLinked = false;
   String? _spotifyId;
   String _version = '';
+  bool _fromFdroid = false;
 
   @override
   void initState() {
@@ -54,7 +55,14 @@ class _ProfileScreenState extends State<ProfileScreen>
   /// can never drift from `pubspec.yaml`.
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
-    if (mounted) setState(() => _version = info.version);
+    if (!mounted) return;
+    setState(() {
+      _version = info.version;
+      // F-Droid re-signs the APK with its own key, so the GitHub-signed APK
+      // the updater downloads could never install over it. Hide the
+      // self-updater there; F-Droid handles updates instead.
+      _fromFdroid = info.installerStore == 'org.fdroid.fdroid';
+    });
   }
 
   void _onStorageChanged() {
@@ -654,18 +662,23 @@ class _ProfileScreenState extends State<ProfileScreen>
                       onTap: _reset,
                     ),
                   ),
-                  const Divider(height: 1, color: AppColors.line),
-                  MotionPress(
-                    scale: 0.99,
-                    child: ListTile(
-                      leading: const Icon(Icons.system_update_alt, size: 20),
-                      title: const Text('Check for updates',
-                          style: TextStyle(fontSize: 14)),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: AppColors.mute),
-                      onTap: () => showUpdateSheet(context),
+                  // Hidden when F-Droid installed the app: its build is signed
+                  // with F-Droid's key, so the GitHub-signed download the
+                  // updater fetches could never install over it.
+                  if (!_fromFdroid) ...[
+                    const Divider(height: 1, color: AppColors.line),
+                    MotionPress(
+                      scale: 0.99,
+                      child: ListTile(
+                        leading: const Icon(Icons.system_update_alt, size: 20),
+                        title: const Text('Check for updates',
+                            style: TextStyle(fontSize: 14)),
+                        trailing: const Icon(Icons.chevron_right,
+                            color: AppColors.mute),
+                        onTap: () => showUpdateSheet(context),
+                      ),
                     ),
-                  ),
+                  ],
                   const Divider(height: 1, color: AppColors.line),
                   MotionPress(
                     scale: 0.99,
