@@ -1596,12 +1596,10 @@ class AudioPlayerService extends ChangeNotifier {
       final liked = await _storage.getLikedSongs();
       final searches = await _storage.getSearchHistory();
       MusicLanguage lang = MusicLanguage.all;
-      Set<String> selGenres = {};
       Set<String> selArtists = {};
       try {
         final prefs = UserPrefs();
         lang = await prefs.getLanguage();
-        selGenres = await prefs.getGenres();
         selArtists = await prefs.getArtists();
       } catch (_) {
         // Non-fatal: the surrounding watchdog covers this path.
@@ -1658,14 +1656,11 @@ class AudioPlayerService extends ChangeNotifier {
         candidates: pool,
         stats: stats,
         topArtists: topArtists,
-        topGenres: selGenres.toList(),
         likedIds: liked.map((s) => s.id).toSet(),
         queueIds: playedIds,
         userLanguage: lang,
-        searchHistory: searches,
         selectedArtists: selArtists.toList(),
         count: count,
-        seedHint: cur.id.hashCode,
       );
       return picks.map((p) => p.song).toList();
     } catch (e) {

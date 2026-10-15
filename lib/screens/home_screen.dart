@@ -423,15 +423,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             candidates: candidates,
             stats: stats,
             topArtists: topArtists,
-            topGenres: _selectedGenres.toList(),
             likedIds: liked.map((song) => song.id).toSet(),
             queueIds: queueIds,
             userLanguage: _selectedLanguage,
-            searchHistory: searchHistory,
             selectedArtists: _selectedArtists.toList(),
             count: _recommendedTarget,
             maxPerArtist: perArtist,
-            includeStretchPick: false,
             requirePersonalSignal: personal,
           );
       var ranked = rankFor(2, true);
@@ -579,15 +576,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         candidates: pool,
         stats: stats,
         topArtists: topArtists,
-        topGenres: _selectedGenres.toList(),
         likedIds: liked.map((s) => s.id).toSet(),
         queueIds: queueIds,
         userLanguage: lang,
-        searchHistory: searches,
         selectedArtists: _selectedArtists.toList(),
         count: 10,
-        seedHint: (effectiveSeed?.id ?? '').hashCode,
-        includeStretchPick: false,
         requirePersonalSignal: true,
       );
       if (!mounted) return;
