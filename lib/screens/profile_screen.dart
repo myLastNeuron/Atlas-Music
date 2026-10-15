@@ -14,7 +14,7 @@ import 'auto_finds_screen.dart';
 import 'liked_songs_screen.dart';
 
 /// Shown in the About row and dialog. Keep in sync with `pubspec.yaml`.
-const String _appVersion = '2.0.0';
+const String _appVersion = '2.0.1';
 
 /// Settings + identity. Name edit persists and reflects in header.
 class ProfileScreen extends StatefulWidget {
@@ -324,7 +324,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 'Your data stays with you',
                 'There are no accounts and no cloud sync. Your playlists, likes, '
                     'history and settings never leave your phone. Downloads are '
-                    'kept on-device, capped at 1 GB and cleared after 7 days.',
+                    'kept on-device, capped at 1 GB and cleared after 30 days.',
               ),
               const Text(
                 'Version $_appVersion · Developed by myLastNeuron · Apache 2.0 license',

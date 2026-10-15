@@ -10,14 +10,14 @@ import 'media_source.dart';
 ///   once committed as EOF), so old `atlas_` entries are never reused.
 /// - Sidecar metadata: song id/title, provider, source URL, byte count,
 ///   download timestamp. Used for TTL + corruption checks.
-/// - TTL 14 days; total size cap 1GB with oldest-first eviction.
+/// - TTL 30 days; total size cap 1GB with oldest-first eviction.
 /// - Corruption detection: zero-byte files rejected; when the source knew
 ///   its content length, committed size must match exactly.
 /// - Cached replays never touch the network (offline-first).
 /// - Sweep on service init is best-effort only; never evict files currently
 ///   in active playback queue.
 class CacheService {
-  static const ttl = Duration(days: 7);
+  static const ttl = Duration(days: 30);
   static const maxBytes = 1 * 1024 * 1024 * 1024;
 
   /// Known audio container extensions, in the order [getValid] probes them.

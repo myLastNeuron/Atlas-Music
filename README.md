@@ -83,7 +83,7 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
 - Audio continues with the screen off. The notification and in-app player share one queue.
 - Upcoming tracks are preloaded and validated before they play. If one source fails, Atlas tries another provider.
 - Auto-play explores related songs, artist and title searches, and your liked or recently played music.
-- Downloads use an oldest-first cache capped at **1 GB** with a **7-day TTL**. The currently playing queue is never evicted.
+- Downloads use an oldest-first cache capped at **1 GB** with a **30-day TTL**. The currently playing queue is never evicted.
 - Quick Picks use on-device listening signals, with diversity controls and a short explanation for each pick.
 
 </details>
