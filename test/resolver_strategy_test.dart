@@ -99,25 +99,19 @@ void main() {
     expect(report.attempts.length, 2);
   });
 
-  test('repeated provider-level failures cool down, then bypass recovers',
-      () async {
+  test('every pass attempts all providers in order, no cooldown', () async {
     final a = FakeResolver(MediaProvider.youTube, goodOf(MediaProvider.youTube),
         failTimes: 99, failScope: FailureScope.provider);
     final b = FakeResolver(MediaProvider.piped, goodOf(MediaProvider.piped),
         failTimes: 99, failScope: FailureScope.provider);
     final s = ResolverStrategy([a, b]);
-    // Three passes: both fail provider-scoped each time (3 strikes).
-    await s.resolveFirstValid(song, PlaybackReport('T'));
-    await s.resolveFirstValid(song, PlaybackReport('T'));
-    await s.resolveFirstValid(song, PlaybackReport('T'));
+    for (var i = 0; i < 3; i++) {
+      await s.resolveFirstValid(song, PlaybackReport('T'));
+    }
     expect(a.resolveCalls, 3);
-    // Fourth pass: both cooling, but bypass attempts anyway — never an
-    // instant triple-skip. Resolve is still called.
-    final report = PlaybackReport('T');
-    await s.resolveFirstValid(song, report);
+    // A later pass still attempts the first provider fresh.
+    await s.resolveFirstValid(song, PlaybackReport('T'));
     expect(a.resolveCalls, 4);
-    expect(
-        report.attempts.any((f) => f.detail.contains('bypass')), isTrue);
   });
 
   test('resolve budget enforced per provider', () async {

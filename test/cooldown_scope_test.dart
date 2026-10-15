@@ -6,9 +6,8 @@ import 'package:atlas_music/media/resolve_failure.dart';
 import 'package:atlas_music/media/resolver_strategy.dart';
 import 'package:atlas_music/models/song.dart';
 
-/// Cooldown scoping: Song A fails on every provider, then Song B must
-/// still get a fresh YouTube attempt instead of an instant triple
-/// "cooling down" skip.
+/// Provider scoping: Song A failing on every provider must not stop Song B
+/// from getting a fresh attempt through the full chain.
 
 Song songOf(String id) => Song(
       id: id,
@@ -161,7 +160,6 @@ void main() {
       await s.resolveFirstValid(songOf(id), PlaybackReport('t'));
     }
     expect(yt.resolveCalls, 5);
-    expect(s.isAvailable(yt), isTrue);
   });
 
   test('one dead URL triggers a single fresh re-resolve, no cooldown',
@@ -172,7 +170,6 @@ void main() {
     final got = await s.resolveFirstValid(songOf('B'), report);
     expect(got, isNotNull);
     expect(yt.resolves, 2); // initial + one fresh retry
-    expect(s.isAvailable(yt), isTrue);
     expect(report.attempts.first.scope, FailureScope.url);
   });
 
@@ -184,7 +181,6 @@ void main() {
     final got = await s.resolveFirstValid(songOf('B'), report);
     expect(got, isNotNull);
     expect(yt.calls, 2);
-    expect(s.isAvailable(yt), isTrue);
   });
 
   test('failure records carry scope + song identity', () async {
