@@ -14,7 +14,7 @@ import 'auto_finds_screen.dart';
 import 'liked_songs_screen.dart';
 
 /// Shown in the About row and dialog. Keep in sync with `pubspec.yaml`.
-const String _appVersion = '2.0.1';
+const String _appVersion = '2.0.2 (beta)';
 
 /// Settings + identity. Name edit persists and reflects in header.
 class ProfileScreen extends StatefulWidget {
