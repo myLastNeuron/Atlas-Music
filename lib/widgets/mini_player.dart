@@ -6,10 +6,12 @@ import '../theme/app_theme.dart';
 import 'app_transitions.dart';
 import 'artwork.dart';
 import '../screens/player_screen.dart';
+import 'liquid_background.dart';
+import 'song_actions.dart';
 
-/// Floating transparent glass mini player. Thumb+text navigate; transport
-/// buttons sit strictly outside the nav InkWell so skip taps never
-/// push routes. No blur: the content behind shows through.
+/// Floating glass mini player. Thumb+text navigate; transport buttons sit
+/// strictly outside the nav InkWell so skip taps never push routes. The bar
+/// follows the app's transparency setting.
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
@@ -41,14 +43,16 @@ class MiniPlayer extends StatelessWidget {
   }
 
   Widget _glassBar(Widget child) {
-    return Container(
+    // Follows the transparency setting like every other glass surface.
+    return SizedBox(
       height: 70,
-      padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-      decoration: BoxDecoration(
+      child: GlassSurface(
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: AppColors.glassBorder),
+        padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+        strength: 0.05,
+        shadow: false,
+        child: child,
       ),
-      child: child,
     );
   }
 
@@ -133,10 +137,17 @@ class MiniPlayer extends StatelessWidget {
                         Hero(
                           tag: 'player_cover',
                           createRectTween: (begin, end) =>
-                              MaterialRectArcTween(begin: begin, end: end),
+                              PlayerRectTween(begin: begin, end: end),
+                          // The player closing is a sheet slide: both ends keep
+                          // their artwork (placeholders) and no shuttle flies,
+                          // so nothing floats over the queue. Opening still
+                          // morphs the thumb into the big cover.
                           flightShuttleBuilder: (ctx, anim, dir, from, to) =>
-                              CoverFlightShuttle(song.thumbnailUrl,
-                                  filePath: artPath, animation: anim),
+                              dir == HeroFlightDirection.pop
+                                  ? const SizedBox.shrink()
+                                  : CoverFlightShuttle(song.thumbnailUrl,
+                                      filePath: artPath, animation: anim),
+                          placeholderBuilder: (context, size, child) => child,
                           child: AnimatedSwitcher(
                             duration: AppMotion.dur(context, AppMotion.micro),
                             switchInCurve: AppMotion.curve,
@@ -168,11 +179,7 @@ class MiniPlayer extends StatelessWidget {
                                       fontWeight: FontWeight.w600,
                                       fontSize: 13,
                                       color: AppColors.ink)),
-                              Text(song.artist,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: AppColors.inkSoft, fontSize: 11)),
+                              songArtistLine(song),
                             ],
                           ),
                         ),

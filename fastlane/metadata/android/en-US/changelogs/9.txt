@@ -1,0 +1,6 @@
+Atlas Music 2.1.0
+
+* See the next song while you listen, right in the full player.
+* Smoother animations throughout the app.
+* The full player was remapped for a more premium feel.
+* Cleaner codebase under the hood.

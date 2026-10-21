@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
 import '../services/audio_service.dart';
+import '../services/glass_settings.dart';
 import '../services/storage_service.dart';
 import 'dart:io';
 import '../services/user_prefs.dart';
@@ -102,8 +103,7 @@ Set<String> _tasteArtistsOf(
       ...topArtists,
       ...recent.map((s) => s.artist),
       ...liked.map((s) => s.artist),
-    }..removeWhere(
-        (a) => a.trim().isEmpty || a.toLowerCase() == 'unknown');
+    }..removeWhere((a) => a.trim().isEmpty || a.toLowerCase() == 'unknown');
 
 /// The taste artist a generated "<artist> songs" query belongs to, or null.
 String? _canonicalArtistFor(String query, Iterable<String> tasteArtists) {
@@ -407,6 +407,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       final candidates = resultGroups.expand((group) => group).toList();
       final stats = await _storage.getListeningStats();
+      final notInterested = await _storage.getNotInterested();
       if (!mounted) return;
       final audio = context.read<AudioPlayerService>();
       final queueIds = audio.queue
@@ -422,6 +423,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             recent: recent.take(5).toList(),
             candidates: candidates,
             stats: stats,
+            notInterested: notInterested,
             topArtists: topArtists,
             likedIds: liked.map((song) => song.id).toSet(),
             queueIds: queueIds,
@@ -475,6 +477,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final topArtists = await _storage.getTopArtists(limit: 10);
 
       final liked = await _storage.getLikedSongs();
+      final notInterested = await _storage.getNotInterested();
       final searches = await _storage.getSearchHistory();
       final queueIds = audio.queue
           .map((s) => s.videoId ?? s.id)
@@ -543,27 +546,61 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       final pool = <Song>[];
       final seen = <String>{};
-      Future<void> fetchQuery(String q,
+      final sourceScores = <String, double>{};
+
+      Future<List<Song>> fetchQuery(String q,
           {int limit = 12, String? canonicalArtist}) async {
         try {
           final songs = await _yt
               .search(q, limit: limit)
               .timeout(const Duration(seconds: 8));
-          final qualified = filterRecommendedSongs(
+          return filterRecommendedSongs(
             songs,
             userName: widget.userName,
             canonicalArtist: canonicalArtist,
             language: lang,
           );
-          for (final s in qualified) {
-            final vid = s.videoId ?? s.id;
-            if (seen.add(vid)) pool.add(s);
-          }
-        } catch (_) {}
+        } catch (_) {
+          return const [];
+        }
       }
 
-      await Future.wait(queries.take(6).map((q) =>
+      // YouTube Music's radio for the current seed: the only candidate
+      // source that knows genre/co-listen neighbours, not just artists.
+      final seedId = effectiveSeed?.videoId ?? effectiveSeed?.id ?? '';
+      final radioFuture = seedId.isEmpty
+          ? Future.value(const <Song>[])
+          : _yt
+              .getRadioSongs(seedId, limit: 25)
+              .timeout(const Duration(seconds: 8))
+              .catchError((Object _) => const <Song>[]);
+
+      final groups = await Future.wait(queries.take(6).map((q) =>
           fetchQuery(q, limit: 16, canonicalArtist: canonicalArtistFor(q))));
+      final radio = await radioFuture;
+      if (!mounted) return;
+
+      // Fixed assembly order (radio, then rails in query order) so the same
+      // state produces the same pool regardless of which request finished
+      // first.
+      final qualifiedRadio = filterRecommendedSongs(
+        radio.where((s) => s.id != seedId).toList(),
+        userName: widget.userName,
+        language: lang,
+      );
+      for (var i = 0; i < qualifiedRadio.length; i++) {
+        final song = qualifiedRadio[i];
+        final vid = song.videoId ?? song.id;
+        if (!seen.add(vid)) continue;
+        pool.add(song);
+        sourceScores[vid] = 1 - i / qualifiedRadio.length;
+      }
+      for (final group in groups) {
+        for (final song in group) {
+          if (seen.add(song.videoId ?? song.id)) pool.add(song);
+        }
+      }
+
       if (!mounted) return;
       final sessionRecent = effectiveSeed != null
           ? [
@@ -575,6 +612,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         recent: sessionRecent,
         candidates: pool,
         stats: stats,
+        notInterested: notInterested,
+        sourceScores: sourceScores,
         topArtists: topArtists,
         likedIds: liked.map((s) => s.id).toSet(),
         queueIds: queueIds,
@@ -622,8 +661,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _play(Song song, List<Song> queue, int index,
       {String? queueOrigin}) async {
-    final safeIndex = queue.indexWhere(
-        (s) => (song.videoId != null && s.videoId == song.videoId) || s.id == song.id);
+    final safeIndex = queue.indexWhere((s) =>
+        (song.videoId != null && s.videoId == song.videoId) || s.id == song.id);
     final idx = safeIndex >= 0 ? safeIndex : index;
     await playSongs(context,
         song: song, queue: queue, index: idx, queueOrigin: queueOrigin);
@@ -645,7 +684,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('New playlist'),
         content: TextField(
           controller: ctrl,
@@ -699,7 +737,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: _createPlaylistDialog,
         child: Container(
           padding: const EdgeInsets.all(14),
-          decoration: liquidGlassDecoration(20),
+          decoration: liquidGlassDecoration(BorderRadius.circular(20),
+              level: glassLevel(context)),
           child: Row(
             children: [
               Stack(
@@ -760,7 +799,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 22),
-            decoration: liquidGlassDecoration(16),
+            decoration: liquidGlassDecoration(BorderRadius.circular(16),
+                level: glassLevel(context)),
             child: const Column(
               children: [
                 Icon(Icons.queue_music, size: 32, color: AppColors.mute),
@@ -810,7 +850,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: Container(
                 width: 220,
                 padding: const EdgeInsets.all(10),
-                decoration: liquidGlassDecoration(16),
+                decoration: liquidGlassDecoration(BorderRadius.circular(16),
+                    level: glassLevel(context)),
                 child: Row(
                   children: [
                     art.isEmpty
@@ -860,7 +901,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 24),
-        decoration: liquidGlassDecoration(16),
+        decoration: liquidGlassDecoration(BorderRadius.circular(16),
+            level: glassLevel(context)),
         child: const Column(
           children: [
             Icon(Icons.history, size: 32, color: AppColors.mute),
@@ -924,11 +966,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             color: AppColors.ink,
                             fontSize: 13,
                             fontWeight: FontWeight.w500)),
-                    Text(s.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: AppColors.inkSoft, fontSize: 11)),
+                    songArtistLine(s),
                   ],
                 ),
               ),
@@ -1025,15 +1063,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: AppColors.inkSoft, fontSize: 11)),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(formatClock(s.duration),
-                    style: const TextStyle(
-                        color: AppColors.inkSoft, fontSize: 12)),
-                SongMenuButton(song: s, queue: items, index: i),
-              ],
-            ),
+            trailing: songTrailing(s, [
+              SongMenuButton(song: s, queue: items, index: i),
+            ]),
             onTap: () => _play(s, items, i),
           ),
         );
@@ -1080,6 +1112,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // The shell draws the mini player + floating nav over the body
+    // (extendBody). Pad the end of the list above them, or the last rows show
+    // through the glass — which reads as ghosted text on top of the bar.
+    final bool hasSong = context.select<AudioPlayerService, bool>(
+        (s) => s.currentSong != null || s.isLoading);
     // Stable rail: NO seed check here. The picks generated at cold start
     // (or manual refresh) stay put while playing, skipping, pausing, or
     // browsing. Background continuation + preloading never touch them.
@@ -1095,7 +1132,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             physics: const AlwaysScrollableScrollPhysics(
                 parent: BouncingScrollPhysics()),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, hasSong ? 190 : 100),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1353,14 +1390,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                           fontSize: 13,
                                                           fontWeight:
                                                               FontWeight.w500)),
-                                                  Text(s.artist,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: const TextStyle(
-                                                          color:
-                                                              AppColors.inkSoft,
-                                                          fontSize: 11)),
+                                                  songArtistLine(s),
                                                   Text(pick.reason,
                                                       maxLines: 1,
                                                       overflow:

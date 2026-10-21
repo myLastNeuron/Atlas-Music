@@ -1,9 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:atlas_music/widgets/app_transitions.dart';
+import 'package:atlas_music/widgets/artwork.dart';
 import 'package:atlas_music/theme/app_theme.dart';
 
 void main() {
+  test('hero rect tween runs on the player route curve', () {
+    const begin = Rect.fromLTWH(10, 20, 40, 40);
+    const end = Rect.fromLTWH(100, 400, 300, 300);
+    final tween = PlayerRectTween(begin: begin, end: end);
+    for (final t in [0.0, 0.25, 0.5, 0.75, 1.0]) {
+      expect(
+        tween.lerp(t),
+        MaterialRectArcTween(begin: begin, end: end)
+            .lerp(AppMotion.emphasized.transform(t)),
+        reason: 'cover must follow the same curve as its page at t=$t',
+      );
+    }
+  });
   testWidgets('player transition snaps under reduce motion', (tester) async {
     late Widget built;
     await tester.pumpWidget(

@@ -17,32 +17,29 @@ class YouTubeService {
   final PlaylistParser _parser = PlaylistParser();
   final YouTubeMusicSearch _ytm = YouTubeMusicSearch();
 
-  Song _toSong(Video video) {
-    return Song(
-      id: video.id.value,
-      title: video.title,
-      artist: video.author,
-      thumbnailUrl: video.thumbnails.mediumResUrl,
-      duration: video.duration ?? Duration.zero,
-      videoId: video.id.value,
-      channel: video.author,
-    );
-  }
+  /// Recent search results, so repeating a query costs no network. Ten
+  /// minutes is long enough to skip a re-typed search and short enough that
+  /// a fresh release shows up. Static: the service is instantiated per
+  /// consumer, and every one of them wants the same answers.
+  static final Map<String, _CachedSearch> _searchCache = {};
+  static const _searchCacheTtl = Duration(minutes: 10);
+  static const _searchCacheMax = 20;
 
-  Future<List<Song>> search(String query, {int limit = 20}) async {
-    // Preferred path: YouTube Music's "Songs" catalogue. It classifies
-    // results, so it excludes the music videos / lyric uploads / covers that
-    // plain youtube.com search mixes in. Falls back to legacy YouTube search
-    // only when the query has no song entry (some regional/indie tracks exist
-    // only as videos) or YTMusic is unreachable.
-    try {
-      final songs = await _ytm.searchSongs(query, limit: limit);
-      if (songs.isNotEmpty) return songs;
-    } catch (_) {
-      // Fall through to the plain YouTube search below.
-    }
-    return _legacySearch(query, limit: limit);
-  }
+  Future<List<Song>> search(String query, {int limit = 20}) =>
+      _cachedSearch('s:$query:$limit', () async {
+        // Preferred path: YouTube Music's "Songs" catalogue. It classifies
+        // results, so it excludes the music videos / lyric uploads / covers
+        // that plain youtube.com search mixes in. Falls back to legacy YouTube
+        // search only when the query has no song entry (some regional/indie
+        // tracks exist only as videos) or YTMusic is unreachable.
+        try {
+          final songs = await _ytm.searchSongs(query, limit: limit);
+          if (songs.isNotEmpty) return songs;
+        } catch (_) {
+          // Fall through to the plain YouTube search below.
+        }
+        return _legacySearch(query, limit: limit);
+      });
 
   /// Union of YouTube Music "Songs" and plain YouTube video results, for the
   /// explicit Search tab. Keeps user uploads (slowed/reverb, remix, lyric,
@@ -51,28 +48,44 @@ class YouTubeService {
   ///
   /// One source failing must not blank the other: only when BOTH throw is the
   /// error surfaced.
-  Future<List<Song>> searchAll(String query, {int limit = 25}) async {
-    Object? firstError;
-    var anySourceOk = false;
-    final songs = <Song>[];
-    final videos = <Song>[];
+  Future<List<Song>> searchAll(String query, {int limit = 25}) =>
+      _cachedSearch('a:$query:$limit', () async {
+        Object? firstError;
+        var anySourceOk = false;
+        final songs = <Song>[];
+        final videos = <Song>[];
 
-    Future<void> run(
-        Future<List<Song>> Function() fetch, List<Song> sink) async {
-      try {
-        sink.addAll(await fetch());
-        anySourceOk = true;
-      } catch (e) {
-        firstError ??= e;
-      }
+        Future<void> run(
+            Future<List<Song>> Function() fetch, List<Song> sink) async {
+          try {
+            sink.addAll(await fetch());
+            anySourceOk = true;
+          } catch (e) {
+            firstError ??= e;
+          }
+        }
+
+        await Future.wait([
+          run(() => _ytm.searchSongs(query, limit: limit), songs),
+          run(() => _legacySearch(query, limit: limit), videos),
+        ]);
+        if (!anySourceOk) throw firstError ?? Exception('Search failed');
+        return mergeResults(songs, videos, cap: limit * 2);
+      });
+
+  /// Runs a search through the recent-results cache.
+  Future<List<Song>> _cachedSearch(
+      String key, Future<List<Song>> Function() fetch) async {
+    final hit = _searchCache[key];
+    if (hit != null && DateTime.now().difference(hit.at) < _searchCacheTtl) {
+      return List.of(hit.songs);
     }
-
-    await Future.wait([
-      run(() => _ytm.searchSongs(query, limit: limit), songs),
-      run(() => _legacySearch(query, limit: limit), videos),
-    ]);
-    if (!anySourceOk) throw firstError ?? Exception('Search failed');
-    return mergeResults(songs, videos, cap: limit * 2);
+    final songs = await fetch();
+    if (_searchCache.length >= _searchCacheMax) {
+      _searchCache.remove(_searchCache.keys.first);
+    }
+    _searchCache[key] = _CachedSearch(songs, DateTime.now());
+    return songs;
   }
 
   /// Merges catalogue songs with video results, keeping first occurrence by
@@ -226,15 +239,13 @@ class YouTubeService {
     }
   }
 
-  Future<List<Song>> getRelatedVideos(String videoId, {int limit = 15}) async {
+  /// YouTube Music's own "Up next" for [videoId] (its radio), order intact.
+  /// This is the primary autoplay candidate source: YouTube's editorial
+  /// similarity beats plain YouTube "related" videos for music.
+  Future<List<Song>> getRadioSongs(String videoId, {int limit = 30}) async {
     try {
-      final video = await _yt.videos.get(VideoId(videoId)).timeout(_timeout);
-      final related =
-          await _yt.videos.getRelatedVideos(video).timeout(_timeout);
-
-      if (related == null) return [];
-      return related.take(limit).map(_toSong).toList();
-    } catch (e) {
+      return await _ytm.radio(videoId, limit: limit).timeout(_timeout);
+    } catch (_) {
       return [];
     }
   }
@@ -282,4 +293,11 @@ class YouTubeService {
     _ytm.dispose();
     _yt.close();
   }
+}
+
+/// One cached search result set.
+class _CachedSearch {
+  final List<Song> songs;
+  final DateTime at;
+  _CachedSearch(this.songs, this.at);
 }

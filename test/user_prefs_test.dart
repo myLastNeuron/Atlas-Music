@@ -17,4 +17,12 @@ void main() {
     SharedPreferences.setMockInitialValues({'music_artists': 'A,B'});
     expect(await UserPrefs().getArtists(), {'A', 'B'});
   });
+
+  test('terms stay unaccepted until accepted, then never prompt again',
+      () async {
+    final prefs = UserPrefs();
+    expect(await prefs.hasAcceptedTerms(), isFalse);
+    await prefs.acceptTerms();
+    expect(await prefs.hasAcceptedTerms(), isTrue);
+  });
 }

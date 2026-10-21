@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/system_permissions.dart';
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
+import 'liquid_background.dart';
 
 /// Checks GitHub for a newer release and, when one exists, offers to download
 /// and install it. Styled like the app's other translucent-glass sheets.
@@ -127,14 +128,12 @@ class _UpdateSheetState extends State<_UpdateSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassSurface(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      border: const Border(top: BorderSide(color: AppColors.line)),
+      shadow: false,
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, 24 + MediaQuery.of(context).padding.bottom),
-      decoration: const BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

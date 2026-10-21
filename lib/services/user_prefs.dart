@@ -54,6 +54,7 @@ class UserPrefs {
   static const _genresKey = 'music_genres';
   static const _artistsKey = 'music_artists';
   static const _doneKey = 'onboarding_done';
+  static const _termsKey = 'terms_accepted';
 
   Future<String?> getName() async {
     final prefs = await SharedPreferences.getInstance();
@@ -157,6 +158,18 @@ class UserPrefs {
   Future<void> setOnboardingDone() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_doneKey, true);
+  }
+
+  /// True once the first-launch terms are accepted. Declining stores nothing,
+  /// so the next launch asks again.
+  Future<bool> hasAcceptedTerms() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_termsKey) ?? false;
+  }
+
+  Future<void> acceptTerms() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_termsKey, true);
   }
 
   Future<void> clearPreferences() async {

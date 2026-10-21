@@ -17,7 +17,7 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
   <a href="https://flutter.dev"><img src="https://img.shields.io/badge/Flutter-3.47%2B-54C5F8?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter 3.47+" /></a>
   <a href="https://dart.dev"><img src="https://img.shields.io/badge/Dart-3-0175C2?style=for-the-badge&logo=dart&logoColor=white" alt="Dart 3" /></a>
   <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
-  <img src="https://img.shields.io/badge/Version-2.0.4-9B8CFF?style=for-the-badge" alt="Version 2.0.4 (beta)" />
+  <img src="https://img.shields.io/badge/Version-2.1.0-9B8CFF?style=for-the-badge" alt="Version 2.1.0 (beta)" />
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-Apache--2.0-white?style=for-the-badge" alt="Apache 2.0" /></a>
   <a href="https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml"><img src="https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
 </p>
@@ -194,11 +194,11 @@ storeFile=atlas-release.jks
 
 The app's **Check for updates** reads the newest **published** GitHub Release and compares its tag with the installed version, so a release *is* the update:
 
-1. Bump `version` in `pubspec.yaml` (e.g. `2.0.3+7`).
+1. Bump `version` in `pubspec.yaml` (e.g. `2.1.0+9`).
 2. Tag it to match and push:
    ```bash
-   git tag v2.0.3
-   git push origin v2.0.3
+   git tag v2.1.0
+   git push origin v2.1.0
    ```
 3. The `Release` workflow builds the **signed** APK and publishes it as `Atlas.Music.apk` on the release.
 

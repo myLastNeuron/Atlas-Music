@@ -106,7 +106,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Import YouTube Playlist'),
         content: TextField(
           controller: ctrl,
@@ -152,7 +151,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context: context,
       barrierDismissible: false,
       builder: (_) => const AlertDialog(
-        backgroundColor: AppColors.glass,
         content: Row(children: [
           CircularProgressIndicator(),
           SizedBox(width: 20),
@@ -181,7 +179,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return showDialog<String>(
       context: context,
       builder: (_) => SimpleDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Import playlist'),
         children: [
           SimpleDialogOption(
@@ -275,7 +272,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final link = await showDialog<String>(
         context: context,
         builder: (_) => AlertDialog(
-          backgroundColor: AppColors.glass,
           title: const Text('Clone Spotify playlist'),
           content: TextField(
             controller: linkCtrl,
@@ -310,7 +306,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           builder: (_, setSt) {
             setProg = setSt;
             return AlertDialog(
-              backgroundColor: AppColors.glass,
               content: Row(children: [
                 const CircularProgressIndicator(),
                 const SizedBox(width: 20),
@@ -372,7 +367,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final input = await showDialog<List<String>>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Paste track list'),
         content: SizedBox(
           width: double.maxFinite,
@@ -435,7 +429,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         builder: (_, setSt) {
           setProg = setSt;
           return AlertDialog(
-            backgroundColor: AppColors.glass,
             content: Row(children: [
               const CircularProgressIndicator(),
               const SizedBox(width: 20),
@@ -485,7 +478,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Create Playlist'),
         content: TextField(
           controller: ctrl,

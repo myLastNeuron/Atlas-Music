@@ -6,6 +6,7 @@ import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'artwork.dart';
+import 'liquid_background.dart';
 import 'play_helper.dart';
 
 /// Canonical per-song actions, shared by every list that shows a song so the
@@ -122,6 +123,37 @@ class _AnchoredMenuLayout extends SingleChildLayoutDelegate {
   bool shouldRelayout(_AnchoredMenuLayout old) =>
       old.anchor != anchor || old.padding != padding;
 }
+
+/// Track length for a song row's trailing area, shown before the row's menu
+/// so every list reads the same. Renders nothing when the length is unknown
+/// (the model defaults it to zero until the manifest resolves).
+Widget songLength(Song song) => song.duration.inSeconds > 0
+    ? Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: Text(formatClock(song.duration),
+            style: const TextStyle(color: AppColors.mute, fontSize: 12)),
+      )
+    : const SizedBox.shrink();
+
+/// A song row's trailing area: the track length, then the row's actions.
+Widget songTrailing(Song song, List<Widget> actions) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [songLength(song), ...actions],
+    );
+
+/// Artist name with the track length pinned to the right, so a long artist
+/// name can never truncate the length away.
+Widget songArtistLine(Song song) => Row(
+      children: [
+        Expanded(
+          child: Text(song.artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.inkSoft, fontSize: 11)),
+        ),
+        songLength(song),
+      ],
+    );
 
 /// The trailing 3-dot used in list rows. [compact] renders a small
 /// translucent circle for overlaying on artwork cards.
@@ -300,6 +332,22 @@ class _SongActionsCardState extends State<_SongActionsCard> {
     await downloadSongFlow(ctx, widget.song);
   }
 
+  Future<void> _notInterested() async {
+    _pop();
+    final ctx = widget.hostContext;
+    if (!ctx.mounted) return;
+    try {
+      await StorageService.instance.addNotInterested(widget.song);
+    } catch (_) {
+      // Best-effort: the queue dismissal below still takes effect.
+    }
+    if (!ctx.mounted) return;
+    ctx.read<AudioPlayerService>().dismissSong(widget.song);
+    messengerOf(ctx).showSnackBar(
+      const SnackBar(content: Text('Got it — we\'ll play less like this')),
+    );
+  }
+
   Future<void> _removeFromPlaylist() async {
     _pop();
     final ctx = widget.hostContext;
@@ -323,22 +371,10 @@ class _SongActionsCardState extends State<_SongActionsCard> {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        width: 250,
-        decoration: BoxDecoration(
-          color: AppColors.glass,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppColors.glassBorder),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.45),
-              blurRadius: 24,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
+    return SizedBox(
+      width: 250,
+      child: GlassSurface(
+        borderRadius: BorderRadius.circular(18),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -359,11 +395,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
                                 color: AppColors.ink,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600)),
-                        Text(widget.song.artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: AppColors.inkSoft, fontSize: 11)),
+                        songArtistLine(widget.song),
                       ],
                     ),
                   ),
@@ -380,6 +412,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
               _liked ? 'Unlike' : 'Like',
               _toggleLike,
             ),
+            _tile(Icons.block, 'Not interested', _notInterested),
             if (!widget.downloaded)
               _tile(Icons.download_outlined, 'Download', _download),
             if (widget.onRemoveFromPlaylist != null)
@@ -409,6 +442,8 @@ class _SongActionsCardState extends State<_SongActionsCard> {
   Widget _tile(IconData icon, String label, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
+      // Rounded press highlight, like the rest of the app's rows.
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         child: Row(
@@ -440,7 +475,6 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
   final chosen = await showDialog<String>(
     context: context,
     builder: (ctx) => SimpleDialog(
-      backgroundColor: AppColors.glass,
       title: const Text('Add to playlist'),
       children: playlists
           .map((p) => SimpleDialogOption(
@@ -482,7 +516,8 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
 /// the work finishes (idempotent, safe after the route is gone).
 final _noProgress = ValueNotifier<double?>(null);
 
-Future<void> Function() showBlockingProgress(BuildContext context, String message,
+Future<void> Function() showBlockingProgress(
+    BuildContext context, String message,
     {ValueListenable<double?>? progress}) {
   final navigator = Navigator.of(context, rootNavigator: true);
   var open = true;
@@ -490,7 +525,6 @@ Future<void> Function() showBlockingProgress(BuildContext context, String messag
     context: context,
     barrierDismissible: false,
     builder: (_) => AlertDialog(
-      backgroundColor: AppColors.glass,
       content: ValueListenableBuilder<double?>(
         valueListenable: progress ?? _noProgress,
         builder: (_, value, __) => Column(
@@ -498,9 +532,8 @@ Future<void> Function() showBlockingProgress(BuildContext context, String messag
           children: [
             CircularProgressIndicator(value: value),
             const SizedBox(height: 14),
-            Text(value == null
-                ? message
-                : '$message ${(value * 100).round()}%'),
+            Text(
+                value == null ? message : '$message ${(value * 100).round()}%'),
           ],
         ),
       ),
@@ -564,20 +597,9 @@ class SelectionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassSurface(
+      borderRadius: BorderRadius.circular(18),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.glassBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
       child: Row(
         children: [
           Expanded(

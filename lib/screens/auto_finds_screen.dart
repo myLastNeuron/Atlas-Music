@@ -175,13 +175,15 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                                         ),
                                       ),
                                       const SizedBox(width: 8),
-                                      SongMenuButton(
-                                        song: find.song,
-                                        queue: songs,
-                                        index: i,
-                                        onRemoveFromAutoFinds: () =>
-                                            _storage.removeAutoFind(i),
-                                      ),
+                                      songTrailing(find.song, [
+                                        SongMenuButton(
+                                          song: find.song,
+                                          queue: songs,
+                                          index: i,
+                                          onRemoveFromAutoFinds: () =>
+                                              _storage.removeAutoFind(i),
+                                        ),
+                                      ]),
                                     ],
                                   ),
                                 ),

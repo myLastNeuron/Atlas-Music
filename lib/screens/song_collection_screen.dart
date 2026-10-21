@@ -9,6 +9,7 @@ import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/play_helper.dart';
+import '../widgets/song_actions.dart';
 
 /// Shared list scaffold for a stored song collection (liked, downloaded).
 /// Reloads whenever storage notifies, so changes made anywhere reflect here.
@@ -169,8 +170,8 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
                                       style: const TextStyle(
                                           color: AppColors.inkSoft,
                                           fontSize: 12)),
-                                  trailing:
-                                      widget.trailing(s, i, _songs),
+                                  trailing: songTrailing(s,
+                                      [widget.trailing(s, i, _songs)]),
                                   onTap: () => playSongs(context,
                                       song: s, queue: _songs, index: i),
                                 ),

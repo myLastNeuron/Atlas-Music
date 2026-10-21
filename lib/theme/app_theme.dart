@@ -16,9 +16,10 @@ class AppColors {
   static const mute = Color(0xFF9A9AA3);
   static const charcoal = Color(0xFF18181B);
 
-  /// Translucent glass base for menus, dialogs, sheets, cards and panels.
-  /// One shared value so every surface reads as the same material.
-  static const glass = Color(0x99191921);
+  /// Glass base for menus, dialogs, sheets, cards and panels. The transparency
+  /// level (see [GlassSettings]) decides how much of the backdrop shows
+  /// through; this is the solid colour behind it.
+  static const glass = Color(0xFF191921);
 
   /// Frosted-glass rim/highlight tints, kept low so no hard white edge shows.
   static Color get glassBorder => Colors.white.withValues(alpha: 0.10);
@@ -31,6 +32,12 @@ String formatClock(Duration d) {
   final s = d.inSeconds % 60;
   return '$m:${s.toString().padLeft(2, '0')}';
 }
+
+/// Press-highlight shape of a list row. Without a shape an `InkWell` paints
+/// a sharp rectangle when held, so every row gets this rounded one.
+const ShapeBorder kRowPressShape = RoundedRectangleBorder(
+  borderRadius: BorderRadius.all(Radius.circular(20)),
+);
 
 /// Consistent motion: fast, natural, cheap on low-end hardware.
 /// One shared curve with short semantic durations for pages, tabs, modals,
@@ -45,6 +52,7 @@ class AppMotion {
   // snapping; these also set how long the cover flight takes.
   static const playerOpen = Duration(milliseconds: 480);
   static const playerClose = Duration(milliseconds: 420);
+
   static const modal = Duration(milliseconds: 220);
   static const micro = Duration(milliseconds: 180);
   static const entrance = Duration(milliseconds: 320);
@@ -67,6 +75,9 @@ class AppMotion {
 }
 
 class AppTheme {
+  /// The theme is built once and never rebuilt: the app's glass level is
+  /// held by [GlassSettings] and read by the surfaces themselves, so
+  /// changing it never restyles (and never rebuilds) the whole app.
   static ThemeData light() {
     final base = ThemeData(
       brightness: Brightness.dark,
@@ -171,6 +182,10 @@ class AppTheme {
       listTileTheme: const ListTileThemeData(
         iconColor: AppColors.inkSoft,
         textColor: AppColors.ink,
+        // The tile's shape is the press-highlight and ripple clip. Without it
+        // a held row paints a sharp rectangle; with it the highlight follows
+        // the row's rounded shape.
+        shape: kRowPressShape,
       ),
       iconTheme: const IconThemeData(color: AppColors.inkSoft),
       dividerTheme: const DividerThemeData(
@@ -178,14 +193,14 @@ class AppTheme {
         thickness: 1,
         space: 1,
       ),
-      popupMenuTheme: PopupMenuThemeData(
+      popupMenuTheme: const PopupMenuThemeData(
         color: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: const BorderSide(color: AppColors.line),
+          borderRadius: BorderRadius.all(Radius.circular(14)),
+          side: BorderSide(color: AppColors.line),
         ),
-        textStyle: const TextStyle(color: AppColors.ink, fontSize: 14),
+        textStyle: TextStyle(color: AppColors.ink, fontSize: 14),
       ),
       sliderTheme: base.sliderTheme.copyWith(
         activeTrackColor: Colors.white,
@@ -306,9 +321,17 @@ Widget buildAppTransition(
 }
 
 /// Full-player route motion. The mini-player cover flies into the full
-/// player via a [Hero] (see MiniPlayer/PlayerScreen), while the page itself
-/// eases in behind it with a gentle rise. A slower, eased movement is what
-/// reads as "smooth"; the previous instant/short version felt like a jump.
+/// player via a [Hero] (see MiniPlayer/PlayerScreen).
+///
+/// Closing is a single full-height slide of the opaque page, like a sheet.
+/// It is deliberately one transform only: fade/scale layers over a full-screen
+/// page cost frames on device (the drifting background and glass surfaces have
+/// to be recomposited every frame) and they left a visible dark veil over the
+/// page underneath plus an empty cover slot. A slide is one composited layer
+/// and stays smooth.
+///
+/// [AppMotion.emphasized] is shared with the Hero's rect tween
+/// ([PlayerRectTween]) so the cover and the page can not drift apart mid-flight.
 /// Respects reduce-motion.
 Widget buildPlayerTransition(
   BuildContext context,
@@ -317,8 +340,23 @@ Widget buildPlayerTransition(
   Widget child,
 ) {
   if (AppMotion.reduced(context)) return child;
-  final curved =
-      CurvedAnimation(parent: animation, curve: AppMotion.emphasized);
+  final curved = CurvedAnimation(
+    parent: animation,
+    curve: AppMotion.emphasized,
+  );
+  if (animation.status == AnimationStatus.reverse) {
+    // A pop runs the animation 1 -> 0, so the page is in place at 1 and ends a
+    // full screen down at 0. Begin/end follow that exactly: getting them the
+    // other way round starts the page off-screen below and slides it back up,
+    // which is the "player flashes back after closing" report.
+    return SlideTransition(
+      position: Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).animate(curved),
+      child: child,
+    );
+  }
   return FadeTransition(
     opacity: curved,
     child: SlideTransition(

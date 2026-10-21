@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../../models/song.dart';
 import '../media_source.dart';
@@ -15,6 +18,9 @@ import '../resolve_failure.dart';
 /// after a few ranged requests — the exact failure on throttled networks.
 /// VisionOS is a non-Android Apple client, no POT requirement, not subject
 /// to that throttle. Same idea as the Harmony-Music fork of the library.
+/// ANDROID_VR runs only if VISIONOS stalls or is gated, each under its own
+/// short budget. Both carry a per-run `visitorData` token: without it,
+/// bot-gated IPs (UK/EU) refuse every client with LOGIN_REQUIRED.
 ///
 /// Ranking (deterministic, documented):
 ///  1. Compatible container/codec first: MP4/AAC (`mp4a`) beats Opus/WebM.
@@ -27,7 +33,11 @@ import '../resolve_failure.dart';
 ///  4. Absolute quality last: a reliable 48kbps AAC wins over an
 ///     unreliable 160kbps opus. Reliability is established by [validate].
 class YouTubeProvider extends MediaResolver {
-  static const _manifestTimeout = Duration(seconds: 30);
+  /// Per-client and total budgets for one manifest resolve. One stalled
+  /// client must not eat the whole budget: the old single 30s wrapper died
+  /// on the first (watch-page) request in the UK.
+  static const _perClientManifestBudget = Duration(seconds: 10);
+  static const _manifestBudget = Duration(seconds: 25);
 
   /// Download chunk size. 1MB BY MEASUREMENT (live probe 2026-09):
   /// throttled ANDROID URLs 403 open-ended and 10MB ranges, 206 ≤1MB.
@@ -58,17 +68,6 @@ class YouTubeProvider extends MediaResolver {
   /// re-hits the API and a 429 spiral takes playback down entirely.
   final Map<String, _CachedManifest> _manifests = {};
   static const _manifestTtl = Duration(minutes: 20);
-
-  /// True when an error looks like API rate limiting (HTTP 429 family).
-  /// Static for unit tests.
-  static bool isRateLimited(Object e) {
-    final t = e.toString().toLowerCase();
-    return t.contains('429') ||
-        t.contains('rate limit') ||
-        t.contains('rate-limit') ||
-        t.contains('too many requests') ||
-        t.contains('quota exceeded');
-  }
 
   /// Converts an exception to a [FailureScope].
   /// Network/DNS/timeout errors -> provider scope (affects all songs).
@@ -135,8 +134,7 @@ class YouTubeProvider extends MediaResolver {
     for (var attempt = 0; attempt < waits.length; attempt++) {
       if (attempt > 0) await Future.delayed(waits[attempt]);
       try {
-        final m = await _yt.videos.streamsClient.getManifest(VideoId(videoId),
-            ytClients: const [_visionosClient]).timeout(_manifestTimeout);
+        final m = await _fetchUncachedManifest(videoId);
         _manifests[videoId] = _CachedManifest(m, DateTime.now());
         if (_manifests.length > 60) {
           _manifests.remove(_manifests.keys.first);
@@ -148,6 +146,77 @@ class YouTubeProvider extends MediaResolver {
       }
     }
     throw last!;
+  }
+
+  /// Tries each client in order under a per-client and a total budget.
+  /// Throws with the client chain + elapsed time so a regional report names
+  /// the failing path.
+  Future<StreamManifest> _fetchUncachedManifest(String videoId) async {
+    final started = DateTime.now();
+    final chain = _manifestClients.map(_clientName).join(' → ');
+    // Cheap on the happy path (one call per app run) and decisive on
+    // bot-gated IPs: without it every client answers LOGIN_REQUIRED.
+    final visitorData = await _visitorDataOrNull();
+    try {
+      return await attemptWithBudget(
+        clients: _manifestClients
+            .map((c) => withVisitorData(c, visitorData))
+            .toList(),
+        total: _manifestBudget,
+        perClient: _perClientManifestBudget,
+        attempt: (client, budget) async {
+          final m = await _yt.videos.streamsClient
+              .getManifest(
+                VideoId(videoId),
+                ytClients: [client],
+                requireWatchPage: false,
+              )
+              .timeout(budget);
+          if (m.audioOnly.isEmpty) {
+            throw StateError('no audio streams from ${_clientName(client)}');
+          }
+          return m;
+        },
+      );
+    } catch (e) {
+      final text = e.toString().toLowerCase();
+      if (text.contains('bot') || text.contains('sign in')) {
+        _visitorData = null;
+      }
+      throw Exception(
+        'no client resolved after '
+        '${DateTime.now().difference(started).inMilliseconds}ms '
+        '($chain); last: $e',
+      );
+    }
+  }
+
+  static String _clientName(YoutubeApiClient client) =>
+      '${client.payload['context']?['client']?['clientName'] ?? '?'}';
+
+  /// Per-client budget inside a shared total: one stalled client cannot eat
+  /// the whole resolve. Public for the unit test only.
+  @visibleForTesting
+  static Future<T> attemptWithBudget<T>({
+    required List<YoutubeApiClient> clients,
+    required Duration total,
+    required Duration perClient,
+    required Future<T> Function(YoutubeApiClient client, Duration budget)
+        attempt,
+  }) async {
+    final deadline = DateTime.now().add(total);
+    Object? last;
+    for (final client in clients) {
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+      final budget = remaining < perClient ? remaining : perClient;
+      try {
+        return await attempt(client, budget);
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last ?? StateError('manifest budget exhausted');
   }
 
   /// VisionOS YouTube client (from the Harmony-Music fork of
@@ -173,6 +242,94 @@ class YouTubeProvider extends MediaResolver {
       },
     },
   }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
+
+  /// Fallback, used only when VISIONOS stalls or is gated. Measured in the
+  /// UK without `visitorData`: VISIONOS and ANDROID_VR answer
+  /// "Sign in to confirm you're not a bot" (LOGIN_REQUIRED). With the token
+  /// both return direct URLs. IOS was dropped: even when OK it returns no
+  /// usable URL (ciphered, and there is no JS solver here).
+  static const _androidVrClient = YoutubeApiClient({
+    'context': {
+      'client': {
+        'clientName': 'ANDROID_VR',
+        'clientVersion': '1.65.10',
+        'deviceMake': 'Oculus',
+        'deviceModel': 'Quest 3',
+        'androidSdkVersion': 32,
+        'userAgent':
+            'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        'osName': 'Android',
+        'osVersion': '12L',
+        'hl': 'en',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
+      },
+    },
+  }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
+
+  /// Tried in order, one `getManifest` call each: passing them as a list
+  /// would merge streams from clients whose media later 403s.
+  static const _manifestClients = <YoutubeApiClient>[
+    _visionosClient,
+    _androidVrClient,
+  ];
+
+  /// Anonymous player calls from some IPs (UK/EU measured) are refused with
+  /// LOGIN_REQUIRED / "Sign in to confirm you're not a bot". Supplying a
+  /// visitorData token (as yt-dlp/NewPipe do) makes the same client return
+  /// normal streams. Fetched once per app run; a bot-gated failure drops the
+  /// cache so the next resolve gets a fresh token.
+  String? _visitorData;
+
+  Future<String?> _visitorDataOrNull() async {
+    final cached = _visitorData;
+    if (cached != null) return cached;
+    try {
+      final resp = await _http
+          .post(
+            Uri.parse('https://www.youtube.com/youtubei/v1/visitor_id'
+                '?prettyPrint=false'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'context': {
+                'client': {
+                  'clientName': 'WEB',
+                  'clientVersion': '2.20250312.04.00',
+                  'hl': 'en',
+                  'timeZone': 'UTC',
+                  'utcOffsetMinutes': 0,
+                },
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) return null;
+      final vd = (jsonDecode(resp.body)['responseContext']
+          as Map<String, dynamic>?)?['visitorData'] as String?;
+      if (vd == null || vd.isEmpty) return null;
+      return _visitorData = vd;
+    } catch (_) {
+      // No token is better than no resolve: clients still work on IPs that
+      // are not bot-gated.
+      return null;
+    }
+  }
+
+  /// Copies [base] with [visitorData] added to `context.client`. The const
+  /// payloads stay const; the token is per-run, so it cannot live in them.
+  @visibleForTesting
+  static YoutubeApiClient withVisitorData(
+      YoutubeApiClient base, String? visitorData) {
+    if (visitorData == null) return base;
+    final payload = Map<String, dynamic>.from(base.payload);
+    final context = Map<String, dynamic>.from(payload['context'] as Map);
+    context['client'] = {
+      ...(context['client'] as Map),
+      'visitorData': visitorData,
+    };
+    payload['context'] = context;
+    return YoutubeApiClient(payload, base.apiUrl, headers: base.headers);
+  }
 
   @override
   MediaProvider get provider => MediaProvider.youTube;
@@ -570,7 +727,9 @@ class YouTubeProvider extends MediaResolver {
 class _FreshConnectionClient extends http.BaseClient {
   final http.Client _inner;
   _FreshConnectionClient([http.Client? inner])
-      : _inner = inner ?? http.Client();
+      : _inner = inner ??
+            IOClient(HttpClient()
+              ..connectionTimeout = const Duration(seconds: 10));
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {

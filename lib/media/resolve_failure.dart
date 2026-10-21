@@ -1,5 +1,17 @@
 import 'media_source.dart';
 
+/// True when an error looks like API rate limiting (HTTP 429 family).
+/// Shared by the stream resolver and the YouTube Music search client, which
+/// both hit the same InnerTube API and see the same throttling.
+bool isRateLimited(Object e) {
+  final t = e.toString().toLowerCase();
+  return t.contains('429') ||
+      t.contains('rate limit') ||
+      t.contains('rate-limit') ||
+      t.contains('too many requests') ||
+      t.contains('quota exceeded');
+}
+
 /// Pipeline stage where a failure happened. Never guesses: the provider
 /// that hit the error reports the stage it was in.
 enum ResolveStage {

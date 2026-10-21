@@ -12,21 +12,21 @@ void main() {
   });
 
   test('rate-limit detector catches 429 family, ignores the rest', () {
-    expect(YouTubeProvider.isRateLimited(Exception('HTTP 429')), isTrue);
+    expect(isRateLimited(Exception('HTTP 429')), isTrue);
     expect(
-        YouTubeProvider.isRateLimited(
+        isRateLimited(
             Exception('Request failed: too many requests')),
         isTrue);
     expect(
-        YouTubeProvider.isRateLimited(
+        isRateLimited(
             Exception('Rate limit exceeded, retry later')),
         isTrue);
     expect(
-        YouTubeProvider.isRateLimited(
+        isRateLimited(
             Exception('VideoUnavailableException: deleted')),
         isFalse);
     expect(
-        YouTubeProvider.isRateLimited(
+        isRateLimited(
             TimeoutException('manifest', const Duration(seconds: 25))),
         isFalse);
   });

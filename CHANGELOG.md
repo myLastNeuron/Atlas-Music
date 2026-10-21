@@ -4,9 +4,11 @@ All notable changes to Atlas Music are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] - 2026-10-22
 
 ### Added
+- **Up next in the full player**: the upcoming song is now shown while the
+  current track plays, so you can see what is coming without opening the queue.
 - **Check for updates** (Profile): reads the newest release from the project's
   GitHub Releases, and when a newer version exists shows what changed, downloads
   the APK, and hands it to the Android installer. Free and keyless — no server,
@@ -16,10 +18,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   instead of a hand-typed string, so it cannot drift from `pubspec.yaml`.
 
 ### Changed
-- **Full player motion**: the mini-player cover flies into the full player as
-  a shared-element (Hero) morph, while the page eases in behind it with a
-  gentle rise (480 ms open / 420 ms close, emphasized curve). The earlier
-  instant/short version read as a snap rather than a transition.
+- **The full player was remapped for a more premium feel**: cleaner layout,
+  calmer spacing and a firmer visual hierarchy, with the controls and artwork
+  reading as one surface instead of separate stacked blocks.
+- **Smoother animations** across the full player and the app's navigation:
+  the mini-player cover flies into the full player as a shared-element (Hero)
+  morph, the page eases in behind it with a gentle rise (480 ms open / 420 ms
+  close, emphasized curve), and the entrance/glass surfaces no longer stutter.
+- **Full player motion** now reads as a transition, not a snap.
 - **Ambient background**: the drifting washes no longer rebuild/relayout the
   blob stack every frame — each blob is prebuilt with a RepaintBoundary and
   only its transform updates, removing a constant per-frame cost on every
@@ -49,6 +55,26 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - README badges, release-signing guide, and per-ABI build instructions.
 
 ### Fixed
+- The full player's artwork no longer pops into place on open: the landing
+  spot stays empty while the mini-player cover morphs into it, so the cover
+  arrives with the Hero instead of appearing instantly under the fading page.
+- The mini player and the floating tab bar now follow the Transparency setting
+  like every other glass surface (they were pinned to a solid tint).
+- **UK playback stalled for 30s then failed with `manifest failed ...
+  TimeoutException`**: the manifest resolve downloaded YouTube's watch page
+  (~1 MB, UK consent path) before asking the player API, all under one 30s
+  timeout. The watch page is no longer fetched, each YouTube client now gets
+  a 10s budget inside a 25s total, and the failure detail names the client
+  chain and elapsed time.
+- **UK playback still failed after that (`No song playing` in ~1.5s)**: on UK
+  IPs YouTube answers anonymous VISIONOS/ANDROID_VR player calls with
+  `LOGIN_REQUIRED` ("Sign in to confirm you're not a bot"), and IOS returns
+  only ciphered URLs. The provider now fetches a `visitorData` token once per
+  run and injects it into the client payloads — measured: VISIONOS goes from
+  `LOGIN_REQUIRED` to `OK` with direct audio URLs. IOS was dropped (no usable
+  URLs). A first-load failure now also shows its real reason instead of only
+  "No song playing": the player banner and the toast no longer depend on a
+  song still being loaded.
 - **First-run flow flashed the Home screen**: after entering a name,
   `WelcomeScreen` set `_name` while the preferences step was still unflagged,
   so `_stage()` briefly built the Home shell behind the avatar dialog before
@@ -64,6 +90,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   first short read.
 - `test/resolver_strategy_test.dart` asserted the string `bypassed` while the
   resolver emits `bypassing`.
+- Codebase cleanup: removed dead code and unused helpers left behind by the
+  player remap, and brought the touched screens back to a single, smaller shape.
 
 ### Removed
 - Hardcoded InnerTube API key, all debug logging, dead source files, unused

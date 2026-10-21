@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'app.dart';
 import 'services/atlas_audio_handler.dart';
 import 'services/audio_service.dart';
+import 'services/glass_settings.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,12 +38,18 @@ void main() async {
     systemNavigationBarColor: Color(0xFF0E0E12),
     systemNavigationBarIconBrightness: Brightness.light,
   ));
+  // The frost level is read before the first frame, so a stored setting
+  // never flashes the default on startup.
+  final glass = GlassSettings();
+  await glass.load();
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AudioPlayerService()),
       ],
-      child: const AtlasMusicApp(),
+      // The frost level: the surfaces below read it themselves, so changing
+      // it restyles those surfaces and nothing else.
+      child: GlassScope(notifier: glass, child: const AtlasMusicApp()),
     ),
   );
 }

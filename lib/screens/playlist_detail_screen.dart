@@ -168,7 +168,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: AppColors.glass,
           title: const Text('Add Song'),
           content: SizedBox(
             width: double.maxFinite,
@@ -237,10 +236,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     fontSize: 11, color: AppColors.inkSoft)),
-                            trailing: already
-                                ? const Icon(Icons.check,
-                                    color: Colors.white, size: 20)
-                                : null,
+                            trailing: songTrailing(s, [
+                              if (already)
+                                const Icon(Icons.check,
+                                    color: Colors.white, size: 20),
+                            ]),
                             onTap: already ? null : () => Navigator.pop(ctx, s),
                           ),
                         );
@@ -295,8 +295,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   /// badge stay accurate when songs are added or removed.
   Future<void> _syncPlaylistDownloads() async {
     final dl = (await _storage.getDownloadedSongs()).map((s) => s.id).toSet();
-    final ids =
-        _songs.map((s) => s.id).where(dl.contains).toSet();
+    final ids = _songs.map((s) => s.id).where(dl.contains).toSet();
     final isDl = ids.isNotEmpty && ids.length == _songs.length;
     final updated = _playlist.copyWith(
       downloadedSongIds: ids,
@@ -394,8 +393,8 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
           TextButton(
             onPressed: count == 0 ? null : _deleteSelected,
             child: const Text('Delete',
-                style: TextStyle(
-                    color: Colors.red, fontWeight: FontWeight.w600)),
+                style:
+                    TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
           ),
       ],
     );
@@ -414,312 +413,326 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         if (!didPop) _exitSelection();
       },
       child: LiquidBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          bottom: false,
-          child: Stack(
-            children: [
-              CustomScrollView(
-                slivers: [
-                  SliverAppBar(
-                    expandedHeight: 250,
-                    pinned: true,
-                    flexibleSpace: FlexibleSpaceBar(
-                      title: Text(
-                        playlist.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      background: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (playlist.coverPath != null &&
-                              playlist.coverPath!.isNotEmpty)
-                            Image.file(
-                              File(playlist.coverPath!),
-                              fit: BoxFit.cover,
-                              cacheWidth: 1024,
-                              gaplessPlayback: true,
-                              filterQuality: FilterQuality.medium,
-                              errorBuilder: (_, __, ___) =>
-                                  _fallbackBackground(),
-                            )
-                          else if (playlist.thumbnailUrl != null)
-                            Artwork(
-                              playlist.thumbnailUrl!,
-                              radius: 0,
-                              fillWidth: true,
-                              fit: BoxFit.cover,
-                              height: 250,
-                            )
-                          else
-                            _fallbackBackground(),
-                          const DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Colors.transparent, Color(0xFF0D0D0D)],
-                                stops: [0.5, 1.0],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    actions: [
-                      if (songs.isNotEmpty)
-                        IconButton(
-                          icon: const Icon(Icons.play_circle_fill),
-                          onPressed: () {
-                            playSongs(
-                              context,
-                              song: songs.first,
-                              queue: songs,
-                              index: 0,
-                              queueOrigin: 'playlist',
-                            );
-                          },
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: SafeArea(
+            bottom: false,
+            child: Stack(
+              children: [
+                CustomScrollView(
+                  slivers: [
+                    SliverAppBar(
+                      expandedHeight: 250,
+                      pinned: true,
+                      flexibleSpace: FlexibleSpaceBar(
+                        title: Text(
+                          playlist.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                      PopupMenuButton(
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'add_song',
-                            child: Text('Add Song'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'play_all',
-                            child: Text('Play All'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'shuffle',
-                            child: Text('Shuffle'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'download',
-                            child: Text('Download playlist'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'rename',
-                            child: Text('Rename playlist'),
-                          ),
-                          const PopupMenuItem(
-                            value: 'cover',
-                            child: Text('Change cover'),
-                          ),
-                          if (playlist.coverPath != null &&
-                              playlist.coverPath!.isNotEmpty)
-                            const PopupMenuItem(
-                              value: 'remove_cover',
-                              child: Text('Remove cover'),
-                            ),
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Delete Playlist'),
-                          ),
-                        ],
-                        onSelected: (value) async {
-                          if (value == 'download') {
-                            _downloadPlaylist();
-                          } else if (value == 'add_song') {
-                            _addSongDialog();
-                          } else if (value == 'play_all' && songs.isNotEmpty) {
-                            playSongs(
-                              context,
-                              song: songs.first,
-                              queue: songs,
-                              index: 0,
-                              queueOrigin: 'playlist',
-                            );
-                          } else if (value == 'shuffle' && songs.isNotEmpty) {
-                            final shuffled = List<Song>.from(songs)..shuffle();
-                            playSongs(
-                              context,
-                              song: shuffled.first,
-                              queue: shuffled,
-                              index: 0,
-                              queueOrigin: 'playlist',
-                            );
-                          } else if (value == 'rename') {
-                            await _renamePlaylist();
-                          } else if (value == 'cover') {
-                            final picked = await _pickPlaylistCover(context);
-                            if (picked != null && mounted) {
-                              setState(() {});
-                            }
-                          } else if (value == 'remove_cover') {
-                            final old = playlist.coverPath;
-                            await _storage.updateCover(playlist.id, null);
-                            if (old != null && old.isNotEmpty) {
-                              try {
-                                await File(old).delete();
-                              } catch (_) {}
-                            }
-                            if (mounted) {
-                              setState(() {
-                                _playlist = _playlist.copyWith(coverPath: null);
-                              });
-                            }
-                          } else if (value == 'delete') {
-                            final confirm = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('Delete Playlist?'),
-                                content: Text(
-                                  'Delete "${playlist.name}"? This cannot be undone.',
+                        background: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (playlist.coverPath != null &&
+                                playlist.coverPath!.isNotEmpty)
+                              Image.file(
+                                File(playlist.coverPath!),
+                                fit: BoxFit.cover,
+                                cacheWidth: 1024,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.medium,
+                                errorBuilder: (_, __, ___) =>
+                                    _fallbackBackground(),
+                              )
+                            else if (playlist.thumbnailUrl != null)
+                              Artwork(
+                                playlist.thumbnailUrl!,
+                                radius: 0,
+                                fillWidth: true,
+                                fit: BoxFit.cover,
+                                height: 250,
+                              )
+                            else
+                              _fallbackBackground(),
+                            const DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.transparent,
+                                    Color(0xFF0D0D0D)
+                                  ],
+                                  stops: [0.5, 1.0],
                                 ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text('Cancel'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: const Text(
-                                      'Delete',
-                                      style: TextStyle(color: Colors.red),
-                                    ),
-                                  ),
-                                ],
                               ),
-                            );
-                            if (confirm == true) {
-                              await _storage.deletePlaylist(playlist.id);
-                              if (context.mounted) {
-                                Navigator.pop(context);
-                              }
-                            }
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (playlist.description != null &&
-                              playlist.description!.isNotEmpty)
-                            Text(
-                              playlist.description!,
-                              style: const TextStyle(color: AppColors.inkSoft),
-                            ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${songs.length} songs',
-                            style: const TextStyle(color: AppColors.inkSoft),
-                          ),
-                          if (playlist.source != null) ...[
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Icon(
-                                  playlist.source == 'youtube'
-                                      ? Icons.youtube_searched_for
-                                      : Icons.music_note,
-                                  size: 14,
-                                  color: AppColors.mute,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Imported from ${playlist.source}',
-                                  style: const TextStyle(
-                                    color: AppColors.mute,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
                             ),
                           ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (songs.isEmpty)
-                    const SliverFillRemaining(
-                      child: Center(
-                        child: Text(
-                          'No songs yet — tap + to add',
-                          style: TextStyle(color: AppColors.inkSoft),
                         ),
                       ),
-                    )
-                  else
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final s = songs[index];
-                          final selected = _selected.contains(index);
-                          final isDownloaded =
-                              _downloadedIds.contains(s.id);
-                          return MotionPress(
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 4),
-                              onLongPress: _selecting
-                                  ? null
-                                  : () => _startSelection(index),
-                              leading: Stack(
-                                children: [
-                                  Artwork(s.thumbnailUrl, size: 50, radius: 8),
-                                  Positioned(
-                                    bottom: 0,
-                                    right: 0,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: const BoxDecoration(
-                                        color: Colors.black54,
-                                        shape: BoxShape.circle,
+                      actions: [
+                        if (songs.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.play_circle_fill),
+                            onPressed: () {
+                              playSongs(
+                                context,
+                                song: songs.first,
+                                queue: songs,
+                                index: 0,
+                                queueOrigin: 'playlist',
+                              );
+                            },
+                          ),
+                        PopupMenuButton(
+                          // Round press highlight on the trigger, and ink in the
+                          // menu clipped to its own rounded shape.
+                          borderRadius: BorderRadius.circular(20),
+                          clipBehavior: Clip.antiAlias,
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: 'add_song',
+                              child: Text('Add Song'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'play_all',
+                              child: Text('Play All'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'shuffle',
+                              child: Text('Shuffle'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'download',
+                              child: Text('Download playlist'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'rename',
+                              child: Text('Rename playlist'),
+                            ),
+                            const PopupMenuItem(
+                              value: 'cover',
+                              child: Text('Change cover'),
+                            ),
+                            if (playlist.coverPath != null &&
+                                playlist.coverPath!.isNotEmpty)
+                              const PopupMenuItem(
+                                value: 'remove_cover',
+                                child: Text('Remove cover'),
+                              ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Delete Playlist'),
+                            ),
+                          ],
+                          onSelected: (value) async {
+                            if (value == 'download') {
+                              _downloadPlaylist();
+                            } else if (value == 'add_song') {
+                              _addSongDialog();
+                            } else if (value == 'play_all' &&
+                                songs.isNotEmpty) {
+                              playSongs(
+                                context,
+                                song: songs.first,
+                                queue: songs,
+                                index: 0,
+                                queueOrigin: 'playlist',
+                              );
+                            } else if (value == 'shuffle' && songs.isNotEmpty) {
+                              final shuffled = List<Song>.from(songs)
+                                ..shuffle();
+                              playSongs(
+                                context,
+                                song: shuffled.first,
+                                queue: shuffled,
+                                index: 0,
+                                queueOrigin: 'playlist',
+                              );
+                            } else if (value == 'rename') {
+                              await _renamePlaylist();
+                            } else if (value == 'cover') {
+                              final picked = await _pickPlaylistCover(context);
+                              if (picked != null && mounted) {
+                                setState(() {});
+                              }
+                            } else if (value == 'remove_cover') {
+                              final old = playlist.coverPath;
+                              await _storage.updateCover(playlist.id, null);
+                              if (old != null && old.isNotEmpty) {
+                                try {
+                                  await File(old).delete();
+                                } catch (_) {}
+                              }
+                              if (mounted) {
+                                setState(() {
+                                  _playlist =
+                                      _playlist.copyWith(coverPath: null);
+                                });
+                              }
+                            } else if (value == 'delete') {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Delete Playlist?'),
+                                  content: Text(
+                                    'Delete "${playlist.name}"? This cannot be undone.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(context, true),
+                                      child: const Text(
+                                        'Delete',
+                                        style: TextStyle(color: Colors.red),
                                       ),
-                                      child: const Icon(Icons.play_arrow,
-                                          color: Colors.white, size: 14),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirm == true) {
+                                await _storage.deletePlaylist(playlist.id);
+                                if (context.mounted) {
+                                  Navigator.pop(context);
+                                }
+                              }
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (playlist.description != null &&
+                                playlist.description!.isNotEmpty)
+                              Text(
+                                playlist.description!,
+                                style:
+                                    const TextStyle(color: AppColors.inkSoft),
+                              ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '${songs.length} songs',
+                              style: const TextStyle(color: AppColors.inkSoft),
+                            ),
+                            if (playlist.source != null) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(
+                                    playlist.source == 'youtube'
+                                        ? Icons.youtube_searched_for
+                                        : Icons.music_note,
+                                    size: 14,
+                                    color: AppColors.mute,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Imported from ${playlist.source}',
+                                    style: const TextStyle(
+                                      color: AppColors.mute,
+                                      fontSize: 12,
                                     ),
                                   ),
-                                  // Online-only tracks show a tappable
-                                  // download sign on the left.
-                                  if (!isDownloaded)
-                                    Positioned(
-                                      bottom: 0,
-                                      left: 0,
-                                      child: GestureDetector(
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: _selecting
-                                            ? null
-                                            : () => _downloadOne(s),
-                                        child: Container(
-                                          padding: const EdgeInsets.all(3),
-                                          decoration: const BoxDecoration(
-                                            color: Colors.black54,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                              Icons.download_for_offline_outlined,
-                                              color: Colors.white,
-                                              size: 14),
-                                        ),
-                                      ),
-                                    ),
                                 ],
                               ),
-                              title: Text(s.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w500)),
-                              subtitle: Text(s.artist,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: AppColors.inkSoft, fontSize: 13)),
-                              trailing: _selecting
-                                  ? SelectionCheck(selected)
-                                  : Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (songs.isEmpty)
+                      const SliverFillRemaining(
+                        child: Center(
+                          child: Text(
+                            'No songs yet — tap + to add',
+                            style: TextStyle(color: AppColors.inkSoft),
+                          ),
+                        ),
+                      )
+                    else
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final s = songs[index];
+                            final selected = _selected.contains(index);
+                            final isDownloaded = _downloadedIds.contains(s.id);
+                            return MotionPress(
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 4),
+                                onLongPress: _selecting
+                                    ? null
+                                    : () => _startSelection(index),
+                                leading: Stack(
+                                  children: [
+                                    Artwork(s.thumbnailUrl,
+                                        size: 50, radius: 8),
+                                    Positioned(
+                                      bottom: 0,
+                                      right: 0,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: const BoxDecoration(
+                                          color: Colors.black54,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(Icons.play_arrow,
+                                            color: Colors.white, size: 14),
+                                      ),
+                                    ),
+                                    // Online-only tracks show a tappable
+                                    // download sign on the left.
+                                    if (!isDownloaded)
+                                      Positioned(
+                                        bottom: 0,
+                                        left: 0,
+                                        child: MotionPress(
+                                          scale: 0.9,
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: _selecting
+                                                ? null
+                                                : () => _downloadOne(s),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(3),
+                                              decoration: const BoxDecoration(
+                                                color: Colors.black54,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: const Icon(
+                                                  Icons
+                                                      .download_for_offline_outlined,
+                                                  color: Colors.white,
+                                                  size: 14),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                title: Text(s.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w500)),
+                                subtitle: Text(s.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: AppColors.inkSoft,
+                                        fontSize: 13)),
+                                trailing: _selecting
+                                    ? SelectionCheck(selected)
+                                    : songTrailing(s, [
                                         IconButton(
                                           tooltip: _likedIds.contains(s.id)
                                               ? 'Unlike'
@@ -743,44 +756,43 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                           onRemoveFromPlaylist: () =>
                                               _removeSong(s),
                                         ),
-                                      ],
-                                    ),
-                              onTap: () {
-                                if (_selecting) {
-                                  _toggle(index);
-                                  return;
-                                }
-                                playSongs(
-                                  context,
-                                  song: s,
-                                  queue: songs,
-                                  index: index,
-                                  queueOrigin: 'playlist',
-                                );
-                              },
-                            ),
-                          );
-                        },
-                        childCount: songs.length,
+                                      ]),
+                                onTap: () {
+                                  if (_selecting) {
+                                    _toggle(index);
+                                    return;
+                                  }
+                                  playSongs(
+                                    context,
+                                    song: s,
+                                    queue: songs,
+                                    index: index,
+                                    queueOrigin: 'playlist',
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                          childCount: songs.length,
+                        ),
                       ),
-                    ),
-                  const SliverPadding(padding: EdgeInsets.only(bottom: 170)),
-                ],
-              ),
-              if (hasSong)
-                const Positioned(
-                    left: 16, right: 16, bottom: 8, child: MiniPlayer()),
-              if (_selecting)
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: hasSong ? 100 : 16,
-                  child: _selectionBar(),
+                    const SliverPadding(padding: EdgeInsets.only(bottom: 170)),
+                  ],
                 ),
-            ],
+                if (hasSong)
+                  const Positioned(
+                      left: 16, right: 16, bottom: 8, child: MiniPlayer()),
+                if (_selecting)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: hasSong ? 100 : 16,
+                    child: _selectionBar(),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -790,7 +802,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Rename playlist'),
         content: TextField(
           controller: ctrl,

@@ -32,7 +32,6 @@ Future<void> showFriendlyError(
   return showDialog(
     context: context,
     builder: (ctx) => AlertDialog(
-      backgroundColor: AppColors.glass,
       icon: const Icon(Icons.error_outline, color: Color(0xFFFF8A80), size: 32),
       title: Text(title, textAlign: TextAlign.center),
       content: Column(

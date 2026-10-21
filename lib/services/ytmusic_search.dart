@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../media/resolve_failure.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 
@@ -27,10 +28,15 @@ class YouTubeMusicSearch {
 
   static const Duration _timeout = Duration(seconds: 20);
   static const int _maxPages = 30;
+
+  /// Search pages followed per query. Each page is one request, so a
+  /// bounded count keeps a slow connection from stalling the search.
+  static const int _maxSearchPages = 4;
   static const String _searchUrl =
       'https://music.youtube.com/youtubei/v1/search';
   static const String _browseUrl =
       'https://music.youtube.com/youtubei/v1/browse';
+  static const String _nextUrl = 'https://music.youtube.com/youtubei/v1/next';
   static const String _userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) '
       'Gecko/20100101 Firefox/88.0';
@@ -42,8 +48,14 @@ class YouTubeMusicSearch {
 
   /// Songs only (no music videos). Returns an empty list when the query has
   /// no song entries — callers may fall back to video results.
-  Future<List<Song>> searchSongs(String query, {int limit = 20}) =>
-      _search(query, _songsParams, limit: limit);
+  Future<List<Song>> searchSongs(String query, {int limit = 20}) async {
+    final songs = await _search(query, _songsParams, limit: limit);
+    if (songs.isNotEmpty) return songs;
+    // Not in the catalogue (regional / indie tracks exist only as videos).
+    // The same query without the song filter still carries those rows in its
+    // other tabs, so read them before falling back to plain YouTube.
+    return _search(query, '', limit: limit);
+  }
 
   Future<List<Song>> _search(
     String query,
@@ -54,10 +66,33 @@ class YouTubeMusicSearch {
     if (params.isNotEmpty) body['params'] = params;
     final data = await _post(_searchUrl, body);
     final songs = <Song>[];
-    for (final item in _songItems(data)) {
-      if (songs.length >= limit) break;
-      final song = _toSong(item);
-      if (song != null) songs.add(song);
+    final seen = <String>{};
+    void add(Iterable<Map> items) {
+      for (final item in items) {
+        if (songs.length >= limit) return;
+        final song = _toSong(item);
+        if (song == null) continue;
+        if (seen.add(song.videoId ?? song.id)) songs.add(song);
+      }
+    }
+
+    add(_songItems(data));
+    // YouTube Music paginates the list with a continuation token and the
+    // first page holds only ~20-30 songs. Without following it the result
+    // list stops there and long queries look truncated.
+    var token = _continuationOf(data);
+    for (var page = 0;
+        token != null && page < _maxSearchPages && songs.length < limit;
+        page++) {
+      final Map<String, dynamic> next;
+      try {
+        next = await _post(_searchUrl, {'continuation': token});
+      } catch (_) {
+        // Keep the songs already collected instead of losing the whole list.
+        break;
+      }
+      add(_songItems(next));
+      token = _continuationOf(next);
     }
     return songs;
   }
@@ -113,7 +148,47 @@ class YouTubeMusicSearch {
     return out;
   }
 
+  /// The queue YouTube Music itself would play after [videoId]: its radio,
+  /// seeded by the track. Order is YouTube's own ranking (closest match
+  /// first), so callers can use the position as a similarity score.
+  ///
+  /// No account is used, so this carries YouTube's editorial/co-listen
+  /// similarity, not the user's history — Atlas adds that on-device.
+  Future<List<Song>> radio(String videoId, {int limit = 30}) async {
+    final data = await _post(
+      _nextUrl,
+      {
+        'videoId': videoId,
+        // YouTube Music's song-radio playlist id. Without it the `next`
+        // call returns only the seed track instead of the 50-track queue.
+        'playlistId': 'RDAMVM$videoId',
+        'isAudioOnly': true,
+      },
+    );
+    return parseRadioJson(data, limit: limit);
+  }
+
   Future<Map<String, dynamic>> _post(
+    String url,
+    Map<String, dynamic> body, {
+    Map<String, String>? query,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await _postOnce(url, body, query: query);
+      } catch (e) {
+        lastError = e;
+        // Throttling is temporary: wait it out and ask again. Any other
+        // failure (offline, bad payload) is final.
+        if (!isRateLimited(e)) rethrow;
+        await Future.delayed(Duration(milliseconds: 700 * (attempt + 1)));
+      }
+    }
+    throw lastError!;
+  }
+
+  Future<Map<String, dynamic>> _postOnce(
     String url,
     Map<String, dynamic> body, {
     Map<String, String>? query,
@@ -207,10 +282,14 @@ class YouTubeMusicSearch {
   /// The "Songs" shelf only shows a preview; its title / "More" link points at
   /// a playlist-style browse (`VL…`) that lists every song by the artist.
   static String? _songsBrowseId(Map data) {
-    for (final key in const ['musicShelfRenderer', 'musicCarouselShelfRenderer']) {
+    for (final key in const [
+      'musicShelfRenderer',
+      'musicCarouselShelfRenderer'
+    ]) {
       for (final shelf in _findAll(data, key)) {
         final title = (_titleText(shelf) ??
-                _titleText(_findFirst(shelf, 'musicCarouselShelfBasicHeaderRenderer')) ??
+                _titleText(_findFirst(
+                    shelf, 'musicCarouselShelfBasicHeaderRenderer')) ??
                 '')
             .toLowerCase();
         if (!title.contains('song')) continue;
@@ -241,6 +320,37 @@ class YouTubeMusicSearch {
       if (token != null) return token;
     }
     return null;
+  }
+
+  /// Maps a `next` (watch / radio) response to its "Up next" tracks in
+  /// YouTube's order. The queue lives in `playlistPanelRenderer`; a wrapped
+  /// renderer (`playlistPanelVideoWrapperRenderer`) is walked by [_findAll],
+  /// which still sees the primary entry once.
+  static List<Song> parseRadioJson(Map<String, dynamic> data,
+      {int limit = 30}) {
+    final out = <Song>[];
+    final seen = <String>{};
+    for (final item in _findAll(data, 'playlistPanelVideoRenderer')) {
+      if (out.length >= limit) break;
+      final videoId = _string(item, 'videoId');
+      if (videoId == null || videoId.isEmpty) continue;
+      if (!seen.add(videoId)) continue;
+      final title = _titleText(item);
+      if (title == null) continue;
+      final artist = _byline(item);
+      final duration = _clock(item['lengthText']);
+      out.add(Song(
+        id: videoId,
+        title: title,
+        artist: artist.isEmpty ? 'Unknown' : artist,
+        thumbnailUrl: _plainThumb(item['thumbnail']) ??
+            'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+        duration: duration,
+        videoId: videoId,
+        channel: artist,
+      ));
+    }
+    return out;
   }
 
   /// Maps an album `browse` response to its tracks. Falls back to any
@@ -299,8 +409,8 @@ class YouTubeMusicSearch {
     final out = <AlbumRef>[];
     final seen = <String>{};
     for (final carousel in _findAll(data, 'musicCarouselShelfRenderer')) {
-      final title = (_titleText(
-                  _findFirst(carousel, 'musicCarouselShelfBasicHeaderRenderer')) ??
+      final title = (_titleText(_findFirst(
+                  carousel, 'musicCarouselShelfBasicHeaderRenderer')) ??
               '')
           .toLowerCase();
       if (!(title.contains('album') ||
@@ -331,34 +441,55 @@ class YouTubeMusicSearch {
 
   /// Walks the response to the `musicResponsiveListItemRenderer` entries of
   /// every songs shelf. Filtered searches come back under
-  /// `tabbedSearchResultsRenderer`; the plain shape is handled too.
+  /// `tabbedSearchResultsRenderer`; the plain shape is handled too. Every tab
+  /// is read, not just the first: an unfiltered search carries the song rows
+  /// and the upload rows in different tabs.
   static Iterable<Map> _songItems(Map<String, dynamic> data) sync* {
     final contents = data['contents'];
     if (contents is! Map) return;
 
-    List<dynamic>? sections;
+    final sections = <List<dynamic>>[];
     final tabbed = contents['tabbedSearchResultsRenderer'];
     if (tabbed is Map) {
       final tabs = tabbed['tabs'];
-      if (tabs is List && tabs.isNotEmpty) {
-        sections = _dig(tabs.first, [
-          'tabRenderer',
-          'content',
-          'sectionListRenderer',
-          'contents',
-        ]) as List?;
+      if (tabs is List) {
+        for (final tab in tabs) {
+          final list = _dig(tab, [
+            'tabRenderer',
+            'content',
+            'sectionListRenderer',
+            'contents',
+          ]) as List?;
+          if (list != null) sections.add(list);
+        }
       }
     } else {
       final sectionList = contents['sectionListRenderer'];
-      if (sectionList is Map) sections = sectionList['contents'] as List?;
+      if (sectionList is Map) {
+        final list = sectionList['contents'] as List?;
+        if (list != null) sections.add(list);
+      }
     }
-    if (sections == null) return;
 
-    for (final section in sections) {
-      if (section is! Map) continue;
-      final shelf = section['musicShelfRenderer'];
-      if (shelf is! Map) continue;
-      final items = shelf['contents'];
+    for (final list in sections) {
+      for (final section in list) {
+        if (section is! Map) continue;
+        final shelf = section['musicShelfRenderer'];
+        if (shelf is! Map) continue;
+        final items = shelf['contents'];
+        if (items is! List) continue;
+        for (final raw in items) {
+          if (raw is! Map) continue;
+          final renderer = raw['musicResponsiveListItemRenderer'];
+          if (renderer is Map) yield renderer;
+        }
+      }
+    }
+    // Continuation pages have no shelf wrapper: the rows sit directly under
+    // appendContinuationItemsAction.continuationItems. Without this the list
+    // stops at the end of the first page.
+    for (final action in _findAll(data, 'appendContinuationItemsAction')) {
+      final items = action['continuationItems'];
       if (items is! List) continue;
       for (final raw in items) {
         if (raw is! Map) continue;
@@ -382,16 +513,40 @@ class YouTubeMusicSearch {
 
     final runs = _runs(flex.length > 1 ? flex[1] : null);
     final artist = _artistFrom(runs);
+    final duration = _durationFrom(runs);
     return Song(
       id: videoId,
       title: title,
       artist: artist.isEmpty ? 'Unknown' : artist,
       thumbnailUrl:
           _thumb(item) ?? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
-      duration: _durationFrom(runs),
+      // Rows that carry the length in a separate column instead of the
+      // subtitle would otherwise show no length at all.
+      duration: duration > Duration.zero ? duration : _fixedLength(item),
       videoId: videoId,
       channel: artist,
     );
+  }
+
+  /// Length from the row's fixed column ("3:45"), used when the subtitle
+  /// runs carry none.
+  static Duration _fixedLength(Map item) {
+    final column = item['fixedColumn'];
+    if (column is! Map) return Duration.zero;
+    final inner = _map(column, 'musicFixedColumnsRenderer') ?? column;
+    final text = _map(_map(inner, 'fixedColumn') ?? inner, 'text');
+    if (text is! Map) return Duration.zero;
+    String? raw = text['simpleText'] as String?;
+    final runs = text['runs'];
+    if (raw == null && runs is List && runs.isNotEmpty) {
+      final first = runs.first;
+      if (first is Map) raw = first['text'] as String?;
+    }
+    if (raw == null) return Duration.zero;
+    final m = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(raw.trim());
+    if (m == null) return Duration.zero;
+    return Duration(
+        minutes: int.parse(m.group(1)!), seconds: int.parse(m.group(2)!));
   }
 
   /// Artist runs = subtitle runs up to the first "•" separator. Read during
@@ -486,6 +641,60 @@ class YouTubeMusicSearch {
       }
     }
     return found;
+  }
+
+  /// Artist(s) of a radio row: `longBylineText` then `shortBylineText`, up to
+  /// the first "•" (the remainder is album/views).
+  static String _byline(Map item) {
+    for (final key in const ['longBylineText', 'shortBylineText']) {
+      final b = StringBuffer();
+      for (final run in _textRuns(item[key])) {
+        final t = run['text'];
+        if (t is! String) continue;
+        if (t.trim() == '•') break;
+        b.write(t);
+      }
+      final out = b.toString().trim();
+      if (out.isNotEmpty) return out;
+    }
+    return '';
+  }
+
+  /// A clock value held as `simpleText` ("3:45") or runs.
+  static Duration _clock(dynamic node) {
+    if (node is! Map) return Duration.zero;
+    var raw = node['simpleText'];
+    if (raw is! String) {
+      final runs = _textRuns(node);
+      raw = runs.isEmpty ? null : runs.first['text'];
+    }
+    if (raw is! String) return Duration.zero;
+    final m =
+        RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(raw.trim());
+    if (m == null) return Duration.zero;
+    if (m.group(3) != null) {
+      return Duration(
+          hours: int.parse(m.group(1)!),
+          minutes: int.parse(m.group(2)!),
+          seconds: int.parse(m.group(3)!));
+    }
+    return Duration(
+        minutes: int.parse(m.group(1)!), seconds: int.parse(m.group(2)!));
+  }
+
+  /// Runs of a plain `{runs: [...]}` text node (not a flex column).
+  static List<Map> _textRuns(dynamic node) {
+    if (node is! Map) return const [];
+    final runs = node['runs'];
+    if (runs is! List) return const [];
+    return runs.whereType<Map>().toList();
+  }
+
+  static String? _plainThumb(dynamic node) {
+    if (node is! Map) return null;
+    final list = node['thumbnails'];
+    if (list is! List) return null;
+    return _largestImage(list);
   }
 
   static String? _thumb(Map item) {

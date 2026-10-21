@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/glass_settings.dart';
 import '../services/user_prefs.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
@@ -460,7 +461,8 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
 
   Widget _buildLanguageChips() {
     return Container(
-      decoration: liquidGlassDecoration(16),
+      decoration: liquidGlassDecoration(BorderRadius.circular(16),
+          level: glassLevel(context)),
       padding: const EdgeInsets.all(8),
       child: Wrap(
         spacing: 8,
@@ -499,7 +501,8 @@ Widget _buildMultiSelectChips(
     Function(List<String>) onChanged,
   ) {
     return Container(
-      decoration: liquidGlassDecoration(16),
+      decoration: liquidGlassDecoration(BorderRadius.circular(16),
+          level: glassLevel(context)),
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Wrap(

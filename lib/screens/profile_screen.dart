@@ -4,7 +4,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import '../services/storage_service.dart';
-import '../services/system_permissions.dart';
 import '../services/user_prefs.dart';
 import '../services/spotify_service.dart';
 import '../theme/app_theme.dart';
@@ -12,6 +11,7 @@ import '../widgets/app_transitions.dart';
 import '../widgets/identify_sheet.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/update_sheet.dart';
+import 'advanced_settings_screen.dart';
 import 'auto_finds_screen.dart';
 import 'liked_songs_screen.dart';
 
@@ -24,8 +24,7 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen>
-    with WidgetsBindingObserver {
+class _ProfileScreenState extends State<ProfileScreen> {
   final _prefs = UserPrefs();
   final _storage = StorageService();
   String _name = '';
@@ -33,34 +32,27 @@ class _ProfileScreenState extends State<ProfileScreen>
   int _liked = 0;
   int _playlists = 0;
   int _recent = 0;
-  bool _batteryExempt = false;
   bool _spotifyLinked = false;
   String? _spotifyId;
-  String _version = '';
   bool _fromFdroid = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _name = widget.userName;
     _storage.addListener(_onStorageChanged);
     _loadStats();
     _loadSpotify();
-    _loadBatteryStatus();
-    _loadVersion();
+    _loadInstallerStore();
   }
 
-  /// Reads the real installed version from the platform, so the About text
-  /// can never drift from `pubspec.yaml`.
-  Future<void> _loadVersion() async {
+  /// F-Droid re-signs the APK with its own key, so the GitHub-signed APK the
+  /// updater downloads could never install over it. Hide the self-updater
+  /// there; F-Droid handles updates instead.
+  Future<void> _loadInstallerStore() async {
     final info = await PackageInfo.fromPlatform();
     if (!mounted) return;
     setState(() {
-      _version = info.version;
-      // F-Droid re-signs the APK with its own key, so the GitHub-signed APK
-      // the updater downloads could never install over it. Hide the
-      // self-updater there; F-Droid handles updates instead.
       _fromFdroid = info.installerStore == 'org.fdroid.fdroid';
     });
   }
@@ -70,33 +62,10 @@ class _ProfileScreenState extends State<ProfileScreen>
     _loadStats();
   }
 
-  /// Battery-optimization status for the "Background playback" row. The
-  /// exemption is auto-requested once on the first run (native, in
-  /// MainActivity); this row shows the state and lets the user re-request
-  /// it at any time.
-  Future<void> _loadBatteryStatus() async {
-    final exempt =
-        await SystemPermissions.instance.isIgnoringBatteryOptimizations();
-    if (!mounted) return;
-    if (exempt != _batteryExempt) {
-      setState(() => _batteryExempt = exempt);
-    }
-  }
-
   @override
   void dispose() {
     _storage.removeListener(_onStorageChanged);
-    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Refresh the battery-exemption row after the user returns from the
-    // system "allow background" dialog.
-    if (state == AppLifecycleState.resumed) {
-      _loadBatteryStatus();
-    }
   }
 
   /// Same shared avatar as the home header: standalone read with its own
@@ -187,7 +156,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     final action = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Spotify keys'),
         content: SingleChildScrollView(
           child: Column(
@@ -271,7 +239,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     final v = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Change name'),
         content: TextField(
           controller: ctrl,
@@ -299,108 +266,6 @@ class _ProfileScreenState extends State<ProfileScreen>
       const SnackBar(
           content: Text('Name updated. Restart to see flight again.')),
     );
-  }
-
-  /// Plain-language explanation of how the app works under the hood — no
-  /// jargon, aimed at a normal listener who taps "About".
-  void _showAbout() {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
-        title: const Text('About Atlas Music'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'A free, open-source music player for Android. Your music, your '
-                'library, your rules — built with Flutter.',
-                style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
-              ),
-              const SizedBox(height: 16),
-              _aboutSection(
-                'Where the music comes from',
-                'Atlas does not store or host any songs. When you search or play, '
-                    'it looks tracks up on YouTube Music and YouTube, then streams '
-                    'the audio straight to your phone.',
-              ),
-              _aboutSection(
-                'Lyrics and translation',
-                'Synced lyrics come from LRCLIB, a free public lyrics database, '
-                    'and translation uses Google Translate. No sign-in needed.',
-              ),
-              _aboutSection(
-                'Playlist import',
-                'Importing a Spotify playlist uses your own free Spotify API '
-                    'keys. They are saved only on this device.',
-              ),
-              _aboutSection(
-                'Your data stays with you',
-                'There are no accounts and no cloud sync. Your playlists, likes, '
-                    'history and settings never leave your phone. Downloads are '
-                    'kept on-device, capped at 1 GB and cleared after 30 days.',
-              ),
-              Text(
-                'Version ${_version.isEmpty ? '…' : _version} · Developed by myLastNeuron · Apache 2.0 license',
-                style: const TextStyle(fontSize: 12, color: AppColors.inkSoft),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _aboutSection(String title, String body) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 3),
-          Text(body,
-              style:
-                  const TextStyle(fontSize: 12.5, color: AppColors.inkSoft)),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _reset() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.glass,
-        title: const Text('Reset name?'),
-        content: const Text('You will see the setup screen again.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Reset', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await _prefs.clearName();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Name cleared. Restart app.')),
-      );
-    }
   }
 
   @override
@@ -537,49 +402,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
-                      leading: Icon(
-                        _batteryExempt
-                            ? Icons.battery_full
-                            : Icons.battery_saver_outlined,
-                        size: 20,
-                        color: _batteryExempt ? AppColors.ink : AppColors.mute,
-                      ),
-                      title: const Text('Background playback',
-                          style: TextStyle(fontSize: 14)),
-                      subtitle: Text(
-                          _batteryExempt
-                              ? 'Optimized — battery unrestricted'
-                              : 'Tap to allow unrestricted background',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: Icon(
-                        _batteryExempt
-                            ? Icons.check_circle
-                            : Icons.chevron_right,
-                        size: 18,
-                        color: _batteryExempt ? AppColors.ink : AppColors.mute,
-                      ),
-                      onTap: () async {
-                        if (_batteryExempt) return;
-                        await SystemPermissions.instance
-                            .requestBatteryExemption();
-                        await _loadBatteryStatus();
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            GlassPanel(
-              radius: 20,
-              padding: EdgeInsets.zero,
-              opacity: 0.07,
-              child: Column(
-                children: [
-                  MotionPress(
-                    scale: 0.99,
-                    child: ListTile(
                       leading: const Icon(Icons.graphic_eq, size: 20),
                       title: const Text('Find song',
                           style: TextStyle(fontSize: 14)),
@@ -654,12 +476,16 @@ class _ProfileScreenState extends State<ProfileScreen>
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
-                      leading: const Icon(Icons.refresh, size: 20),
-                      title: const Text('Reset name',
+                      leading: const Icon(Icons.tune, size: 20),
+                      title: const Text('Advanced settings',
                           style: TextStyle(fontSize: 14)),
+                      subtitle: const Text('Transparency, blur and surfaces',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.inkSoft)),
                       trailing: const Icon(Icons.chevron_right,
                           color: AppColors.mute),
-                      onTap: _reset,
+                      onTap: () => pushAppPage(
+                          context, const AdvancedSettingsScreen()),
                     ),
                   ),
                   // Hidden when F-Droid installed the app: its build is signed
@@ -679,19 +505,6 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ),
                   ],
-                  const Divider(height: 1, color: AppColors.line),
-                  MotionPress(
-                    scale: 0.99,
-                    child: ListTile(
-                      leading: const Icon(Icons.info_outline, size: 20),
-                      title:
-                          const Text('About', style: TextStyle(fontSize: 14)),
-                      subtitle: Text(_version.isEmpty ? '' : 'v$_version',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.inkSoft)),
-                      onTap: _showAbout,
-                    ),
-                  ),
                 ],
               ),
             ),

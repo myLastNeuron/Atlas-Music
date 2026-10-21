@@ -6,6 +6,7 @@ import '../services/auto_listen.dart';
 import '../services/identify_flow.dart';
 import '../theme/app_theme.dart';
 import 'artwork.dart';
+import 'liquid_background.dart';
 import 'play_helper.dart';
 import 'song_actions.dart';
 
@@ -62,14 +63,12 @@ class _IdentifyMenuSheetState extends State<_IdentifyMenuSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassSurface(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      border: const Border(top: BorderSide(color: AppColors.line)),
+      shadow: false,
       padding: EdgeInsets.fromLTRB(
           16, 12, 16, 20 + MediaQuery.of(context).padding.bottom),
-      decoration: const BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -207,14 +206,12 @@ class _IdentifySheetState extends State<_IdentifySheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassSurface(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      border: const Border(top: BorderSide(color: AppColors.line)),
+      shadow: false,
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, 20 + MediaQuery.of(context).padding.bottom),
-      decoration: const BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

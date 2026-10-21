@@ -61,7 +61,9 @@ class _SearchScreenState extends State<SearchScreen> {
     await _loadHistory();
     if (!mounted || gen != _searchGen) return;
     try {
-      final r = await _yt.searchAll(q.trim(), limit: 25);
+      // 40 per source: one YouTube Music page holds only ~20-30 songs, so a
+      // smaller cap would stop at the first page again.
+      final r = await _yt.searchAll(q.trim(), limit: 40);
       if (!mounted || gen != _searchGen) return;
       setState(() {
         // Search: explicit request — keep every music upload (slowed/reverb,
@@ -82,9 +84,9 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _play(Song s) async {
-    // Search plays ONLY the tapped song, then seed-based radio keeps
-    // playing tracks similar to it (see _playSeedRadio). The result
-    // list is not a queue: finishing never walks down the list.
+    // Search plays ONLY the tapped song, then the autoplay continuation
+    // keeps playing tracks similar to it. The result list is not a queue:
+    // finishing never walks down the list.
     await playSongs(context,
         song: s,
         queue: [s],
@@ -282,12 +284,14 @@ class _SearchScreenState extends State<SearchScreen> {
                                       style: const TextStyle(
                                           color: AppColors.inkSoft,
                                           fontSize: 12)),
-                                  trailing: SongMenuButton(
-                                    song: s,
-                                    queue: [s],
-                                    index: 0,
-                                    queueOrigin: 'search',
-                                  ),
+                                  trailing: songTrailing(s, [
+                                    SongMenuButton(
+                                      song: s,
+                                      queue: [s],
+                                      index: 0,
+                                      queueOrigin: 'search',
+                                    ),
+                                  ]),
                                   onTap: () => _play(s),
                                 ),
                               );

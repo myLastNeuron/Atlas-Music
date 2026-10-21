@@ -44,9 +44,11 @@ Future<void> playSongs(
     // for itself.
     if (!ok &&
         context.mounted &&
-        audio.currentSong?.id == song.id &&
         !audio.isPlaying &&
-        !audio.isLoading) {
+        !audio.isLoading &&
+        // A first-load failure reverts currentSong to null, which used to
+        // hide the only explanation the user gets ("No song playing").
+        (audio.currentSong?.id == song.id || audio.currentSong == null)) {
       final reason = audio.lastFailure;
       messengerOf(context).showSnackBar(
         SnackBar(

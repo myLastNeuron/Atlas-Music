@@ -134,7 +134,18 @@ const double kMiniArtworkSize = 42;
 /// Logical size of the full player cover on this device. Shared by
 /// PlayerScreen and the hero flight landing on it so both decode one bitmap.
 double coverLogicalSize(BuildContext context) =>
-    (MediaQuery.sizeOf(context).width - 104).clamp(160.0, 320.0);
+    (MediaQuery.sizeOf(context).width - 48).clamp(160.0, 512.0);
+
+/// Hero rect tween for the full-player cover. Heroes are animated by the raw
+/// route animation, skipping the curve [buildPlayerTransition] applies, so
+/// the rect is curved here with the same constant. Without it the cover
+/// travels linearly while its page eases and visibly lags behind.
+class PlayerRectTween extends MaterialRectArcTween {
+  PlayerRectTween({super.begin, super.end});
+
+  @override
+  Rect lerp(double t) => super.lerp(AppMotion.emphasized.transform(t));
+}
 
 /// Full-bleed cover for a Hero flight between the mini player and the full
 /// player. It fills whatever rect the flight animates, so the thumb can morph
@@ -161,15 +172,15 @@ class CoverFlightShuttle extends StatelessWidget {
     this.filePath,
     required this.animation,
     this.beginRadius = 10,
-    this.endRadius = 20,
+    this.endRadius = 22,
   });
 
   /// The player's cover decode, transparent until it is ready so the thumb
   /// underneath keeps showing in the meantime.
   Widget? _cover(BuildContext context) {
-    final px = (coverLogicalSize(context) *
-            MediaQuery.devicePixelRatioOf(context))
-        .round();
+    final px =
+        (coverLogicalSize(context) * MediaQuery.devicePixelRatioOf(context))
+            .round();
     final local = filePath;
     if (local != null && local.isNotEmpty) {
       return Image.file(
@@ -200,8 +211,9 @@ class CoverFlightShuttle extends StatelessWidget {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, child) => ClipRRect(
-        borderRadius: BorderRadius.circular(
-            beginRadius + (endRadius - beginRadius) * animation.value),
+        borderRadius: BorderRadius.circular(beginRadius +
+            (endRadius - beginRadius) *
+                AppMotion.emphasized.transform(animation.value)),
         child: child,
       ),
       child: Stack(

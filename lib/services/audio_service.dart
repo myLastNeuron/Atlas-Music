@@ -39,6 +39,7 @@ class AudioPlayerService extends ChangeNotifier {
   final StorageService _storage = StorageService();
   final YouTubeProvider _youTube = YouTubeProvider();
   late final ResolverStrategy _strategy = ResolverStrategy([_youTube]);
+
   /// 0..1 progress of the explicit download in flight; null = unknown.
   final downloadProgress = ValueNotifier<double?>(null);
 
@@ -214,14 +215,18 @@ class AudioPlayerService extends ChangeNotifier {
   // Continuation-build cooldown: _prepareContinuation runs on position
   // ticks, so a failing/empty build must not rebuild on every tick.
   DateTime? _continuationNotBefore;
-  // Where the current queue came from. 'quickPicks'/'continuation' queues
-  // never stop at the end: they grow personalized continuations instead.
+  // Where the current queue came from ('quickPicks', 'playlist', 'search',
+  // 'artist', …). Only used for the shuffle exclusions and to restore a
+  // session; queue-end growth itself is origin-independent.
   String _queueOrigin = 'default';
   bool _preparingContinuation = false;
-  // Queue-end policy: search queues grow seed-based radio instead of
-  // stopping (see _playSeedRadio). Playlists/albums/popular keep generic
-  // autoplay. Set whenever a new queue is assigned.
+  // Queue-end policy: true grows a personalized continuation when the queue
+  // ends (see _playContinuation); false ends playback (explicit "stop after
+  // this" surfaces). Set whenever a new queue is assigned.
   bool _autoplayOnEnd = true;
+  // Reason strings for the picks currently waiting in the queue, keyed by
+  // song id. Bounded: the "What's Next" sheet shows them; nothing else does.
+  final Map<String, String> _pickReasons = <String, String>{};
   // Single-flight gate for queue advancement. Concurrent triggers
   // (duplicate completed events, stall recovery, queue-end chains) must
   // never advance twice â€” that double advance is the random track skip
@@ -232,9 +237,6 @@ class AudioPlayerService extends ChangeNotifier {
   // automatic advance collapse when it duplicates the same generation's
   // chain, while still letting a genuinely new generation proceed.
   int _advancingGen = -1;
-  // Seed-based search radio: the song the user tapped to start a search
-  // queue. Every queue end fetches tracks similar to this seed.
-  Song? _autoplaySeed;
   // Ids + videoIds of finished tracks, excluded from radio batches so the
   // chain never replays or duplicates. Capped to bound memory.
   Set<String> _playedIds = <String>{};
@@ -385,6 +387,27 @@ class AudioPlayerService extends ChangeNotifier {
   Duration get duration => _duration;
   Duration get position => _position;
   Song? get currentSong => _currentSong;
+
+  /// Tracks that will play after the current one, in queue order. A pending
+  /// "Play next" is first. With shuffle on, the order is only approximate.
+  List<Song> get upcoming {
+    final cur = _currentSong;
+    if (cur == null || _queue.isEmpty) return const [];
+    final override = _playNextOverride;
+    final out = <Song>[];
+    if (override != null && override.id != cur.id) out.add(override);
+    final at = _queue.indexWhere((s) => s.id == cur.id);
+    final base = at >= 0 ? at : _currentIndex;
+    for (var i = base + 1; i < _queue.length; i++) {
+      final song = _queue[i];
+      if (override != null && song.id == override.id) continue;
+      out.add(song);
+    }
+    return out;
+  }
+
+  /// Why [song] was picked, when it came from the recommender.
+  String? reasonFor(Song song) => _pickReasons[song.id];
 
   /// Local path to the resolved high-resolution cover for [song], or null
   /// while it is still downloading (or for non-YouTube sources). The
@@ -583,10 +606,9 @@ class AudioPlayerService extends ChangeNotifier {
         _lastRetrySongId = null;
         _markCompleted();
         if (isSingleItem) {
-          // Search radio owns the future: a broken seed still yields
-          // fresh similar tracks instead of a dead pause.
-          if ((_queueOrigin == 'search' || _queueOrigin == 'searchRadio') &&
-              _autoplayOnEnd) {
+          // Autoplay owns the future: a broken single-song queue still
+          // grows a fresh continuation instead of a dead pause.
+          if (_autoplayOnEnd) {
             unawaited(Future.microtask(() async {
               try {
                 await playNext();
@@ -808,13 +830,6 @@ class AudioPlayerService extends ChangeNotifier {
       // Reset global advance failures: user intent overrides automatic
       // recovery state.
       _globalAdvanceFailures = 0;
-      // (Re)seed search radio on every manual search play; any other
-      // fresh queue clears a stale search seed.
-      if (_queueOrigin == 'search') {
-        _autoplaySeed = song;
-      } else if (_queueOrigin != 'searchRadio') {
-        _autoplaySeed = null;
-      }
     }
     // A new load attempt supersedes any pending background heal.
     _cancelBackgroundRetry();
@@ -1040,7 +1055,6 @@ class AudioPlayerService extends ChangeNotifier {
         _scheduleBackgroundRetry();
         return false;
       }
-
 
       // 3. DOWNLOAD the resolved source, verify it, play the file.
       // The commit size check rejects truncated and preview-length files,
@@ -1391,10 +1405,7 @@ class AudioPlayerService extends ChangeNotifier {
   Song? _computeNextSong() {
     if (_playNextOverride != null) return _playNextOverride;
     if (_queue.isEmpty || _currentIndex < 0) return null;
-    if (_shuffle &&
-        _queue.length > 1 &&
-        _queueOrigin != 'search' &&
-        _queueOrigin != 'searchRadio') {
+    if (_shuffle && _queue.length > 1 && _queueOrigin != 'search') {
       int next;
       do {
         next = _random.nextInt(_queue.length);
@@ -1403,7 +1414,7 @@ class AudioPlayerService extends ChangeNotifier {
     }
     if (_currentIndex < _queue.length - 1) return _queue[_currentIndex + 1];
     if (_loopMode == LoopMode.all) return _queue.first;
-    // Queue end and no repeat: will call _autoPlay, can't predict.
+    // Queue end: autoplay will grow it, so the exact next track is unknown.
     return null;
   }
 
@@ -1532,17 +1543,14 @@ class AudioPlayerService extends ChangeNotifier {
     _cancelCompletionGuard();
   }
 
-  /// Grow a never-ending queue BEFORE the current song ends: build the
-  /// personalized continuation and append it, then preload the first new
-  /// file. Touches only [_queue] â€” the player and current song are left
+  /// Grow the queue BEFORE the current song ends: build the personalized
+  /// continuation and append it, then let the prefetcher warm the next three
+  /// files. Touches only [_queue] — the player and current song are left
   /// alone, so playback never stutters. Fire-and-forget.
   Future<void> _prepareContinuation() async {
     if (_preparingContinuation) return;
     if (_currentSong == null) return;
     if (!_autoplayOnEnd) return;
-    if (_queueOrigin != 'quickPicks' && _queueOrigin != 'continuation') {
-      return;
-    }
     // Failure cooldown: this runs on position ticks, so an empty/failed
     // build must not rebuild storage+network state on every ~190ms tick.
     final now = DateTime.now();
@@ -1554,13 +1562,11 @@ class AudioPlayerService extends ChangeNotifier {
     final anchor = _currentSong!;
     final contGen = _playGen;
     try {
-      final songs = await _buildContinuation(count: 10);
+      final picks = await _buildContinuation(count: 10);
       // Gen check on the async continuation: a newer load owns the queue
-      // now â€” never append to it.
-      if (contGen != _playGen) {
-        return;
-      }
-      if (songs.isEmpty) {
+      // now — never append to it.
+      if (contGen != _playGen) return;
+      if (picks.isEmpty) {
         _continuationNotBefore = now.add(const Duration(seconds: 30));
         return;
       }
@@ -1568,12 +1574,11 @@ class AudioPlayerService extends ChangeNotifier {
       if (_currentSong?.id != anchor.id) return;
       _resyncIndex();
       if (_currentIndex < _queue.length - 1) return;
-      _queue = [..._queue, ...songs];
+      _queue = [..._queue, ...picks.map((p) => p.song)];
       _queueOrigin = 'continuation';
       _continuationNotBefore = null;
       notifyListeners();
-      // Next song now known: resolve + cache its file immediately.
-      unawaited(_preloadNextSong(songs.first).catchError((Object e) {}));
+      _ensurePrefetch();
     } catch (_) {
       // Timed out or failed late: the preload is abandoned this pass.
       _continuationNotBefore = now.add(const Duration(seconds: 30));
@@ -1582,11 +1587,14 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  /// Ranked personalized continuation from on-device behavior signals:
-  /// session (strongest), meaningful listens/replays, likes, top
-  /// artists/genres, selected prefs, and recent searches. Excludes
-  /// everything already played in this queue. Never throws.
-  Future<List<Song>> _buildContinuation({int count = 10}) async {
+  /// Ranked continuation from what this device actually knows: YouTube
+  /// Music's radio for the current track (its own similarity ranking), the
+  /// last distinct session artist, then taste rails (seed/top/selected
+  /// artists, chosen genres, recent searches), ranked by
+  /// [QuickPicksEngine] from listening stats, likes, top artists and
+  /// dismissals. Excludes everything already played in this queue.
+  /// Never throws.
+  Future<List<QuickPick>> _buildContinuation({int count = 10}) async {
     try {
       final cur = _currentSong;
       if (cur == null) return const [];
@@ -1594,58 +1602,129 @@ class AudioPlayerService extends ChangeNotifier {
       final stats = await _storage.getListeningStats();
       final topArtists = await _storage.getTopArtists(limit: 10);
       final liked = await _storage.getLikedSongs();
+      final notInterested = await _storage.getNotInterested();
       final searches = await _storage.getSearchHistory();
       MusicLanguage lang = MusicLanguage.all;
       Set<String> selArtists = {};
+      Set<String> genres = {};
       try {
         final prefs = UserPrefs();
         lang = await prefs.getLanguage();
         selArtists = await prefs.getArtists();
+        genres = await prefs.getGenres();
       } catch (_) {
         // Non-fatal: the surrounding watchdog covers this path.
       }
-      // Candidate queries follow the session first, long-term taste next.
-      final queries = <String>[];
-      if (cur.artist.isNotEmpty) queries.add('${cur.artist} album tracks');
-      for (final s in recent.take(4)) {
-        if (queries.length >= 4) break;
-        if (s.artist.isNotEmpty &&
-            s.artist.toLowerCase() != cur.artist.toLowerCase()) {
-          queries.add('${s.artist} album tracks');
+
+      final contGen = _playGen;
+      final pool = <Song>[];
+      final sourceScores = <String, double>{};
+      final seen = <String>{};
+
+      /// Adds [songs] in their source order. [rankTop] turns that order into
+      /// a 0..1 similarity score (radio only): position one = 1.0.
+      void addAll(List<Song> songs, {double? rankTop}) {
+        final qualified = SongFilter.applyDiscovery(songs, language: lang);
+        final total = qualified.length;
+        for (var i = 0; i < total; i++) {
+          final s = qualified[i];
+          final vid = s.videoId ?? s.id;
+          if (!seen.add(vid)) continue;
+          pool.add(s);
+          if (rankTop != null) {
+            sourceScores[vid] = rankTop * (1 - i / total);
+          }
         }
       }
-      for (final a in topArtists) {
-        if (queries.length >= 5) break;
-        if (a.toLowerCase() == cur.artist.toLowerCase()) continue;
-        queries.add('$a album tracks');
-      }
-      for (final q in searches.take(2)) {
-        if (queries.length >= 6) break;
-        queries.add('$q official audio');
-      }
-      if (queries.isEmpty) queries.add('trending songs official audio');
-      final pool = <Song>[];
-      final seen = <String>{};
-      final contGen = _playGen;
-      await Future.wait(queries.take(6).map((q) async {
+
+      // 1. YouTube Music's own "Up next" for this track. Its ordering
+      // already encodes genre/co-listen similarity we cannot compute here.
+      final seedId = cur.videoId ?? cur.id;
+      if (seedId.isNotEmpty) {
         try {
-          final songs = await _youtubeService
-              .search(q, limit: 10)
-              .timeout(const Duration(seconds: 8));
-          if (contGen != _playGen) {
-            return;
-          }
-          for (final s in SongFilter.applyDiscovery(songs, language: lang)) {
-            if (seen.add(s.videoId ?? s.id)) pool.add(s);
-          }
+          final radio = await _youtubeService
+              .getRadioSongs(seedId, limit: 30)
+              .timeout(const Duration(seconds: 10));
+          if (contGen != _playGen) return const [];
+          addAll(
+            radio
+                .where((s) => s.id != cur.id && s.videoId != cur.videoId)
+                .toList(),
+            rankTop: 1.0,
+          );
         } catch (_) {
-          // Non-fatal: the surrounding watchdog covers this path.
+          // Radio is best-effort: search rails below still fill the queue.
+        }
+      }
+
+      // 2. Session radio: the last distinct track keeps the chain moving
+      // when the current seed's radio is thin.
+      if (pool.length < count + 4) {
+        Song? second;
+        for (final s in recent) {
+          if (s.id == cur.id) continue;
+          if (s.artist.toLowerCase() == cur.artist.toLowerCase()) continue;
+          second = s;
+          break;
+        }
+        final vid = second?.videoId ?? second?.id;
+        if (second != null && vid != null && vid.isNotEmpty) {
+          try {
+            final radio = await _youtubeService
+                .getRadioSongs(vid, limit: 20)
+                .timeout(const Duration(seconds: 8));
+            if (contGen != _playGen) return const [];
+            addAll(radio, rankTop: 0.8);
+          } catch (_) {
+            // Non-fatal: search rails below still fill the queue.
+          }
+        }
+      }
+
+      // 3. Taste rails, fixed order so the same state yields the same pool.
+      final queries = <String>[];
+      void addQuery(String q) {
+        final query = q.trim();
+        if (query.isEmpty) return;
+        final key = query.toLowerCase();
+        if (!queries.any((e) => e.toLowerCase() == key)) queries.add(query);
+      }
+
+      if (cur.artist.isNotEmpty && cur.artist.toLowerCase() != 'unknown') {
+        addQuery('${cur.artist} songs');
+      }
+      for (final artist in topArtists.take(3)) {
+        addQuery('$artist songs');
+      }
+      for (final artist in selArtists.take(2)) {
+        addQuery('$artist songs');
+      }
+      for (final genre in genres.take(2)) {
+        addQuery('$genre songs');
+      }
+      for (final query in searches.take(2)) {
+        addQuery(query);
+      }
+
+      final results = await Future.wait(queries.take(5).map((q) async {
+        try {
+          return await _youtubeService
+              .search(q, limit: 12)
+              .timeout(const Duration(seconds: 8));
+        } catch (_) {
+          return const <Song>[];
         }
       }));
+      if (contGen != _playGen) return const [];
+      for (final songs in results) {
+        addAll(songs);
+      }
+
       if (pool.isEmpty) return const [];
       final playedIds = <String>{
         ..._queue.map((s) => s.id),
         ..._queue.map((s) => s.videoId ?? s.id),
+        ..._playedIds,
       };
       final sessionRecent = [
         cur,
@@ -1655,6 +1734,8 @@ class AudioPlayerService extends ChangeNotifier {
         recent: sessionRecent,
         candidates: pool,
         stats: stats,
+        notInterested: notInterested,
+        sourceScores: sourceScores,
         topArtists: topArtists,
         likedIds: liked.map((s) => s.id).toSet(),
         queueIds: playedIds,
@@ -1662,22 +1743,33 @@ class AudioPlayerService extends ChangeNotifier {
         selectedArtists: selArtists.toList(),
         count: count,
       );
-      return picks.map((p) => p.song).toList();
-    } catch (e) {
+      _rememberPicks(picks);
+      return picks;
+    } catch (_) {
       return const [];
     }
   }
 
-  /// Queue-end for never-ending queues: play what the background prepare
-  /// already appended, else build the continuation now and play it.
-  /// Never stops, never pauses, never repeats the finished queue.
+  /// Keeps reason strings for picks waiting in the queue ("What's Next").
+  /// Bounded: stale strings are worthless once their song has played.
+  void _rememberPicks(List<QuickPick> picks) {
+    if (_pickReasons.length > 200) _pickReasons.clear();
+    for (final pick in picks) {
+      _pickReasons[pick.song.id] = pick.reason;
+    }
+  }
+
+  /// Queue-end growth: play what the background prepare already appended,
+  /// else build the continuation now and play it. Never stops, never pauses,
+  /// never repeats the finished queue.
   Future<bool> _playContinuation() async {
     _resyncIndex();
     if (_currentIndex < _queue.length - 1) {
       final target = _queue[_currentIndex + 1];
       if (await _playWithRetry(target, _currentIndex + 1)) return true;
     }
-    var songs = await _buildContinuation(count: 10);
+    final picks = await _buildContinuation(count: 10);
+    var songs = picks.map((p) => p.song).toList();
     // Never strand playback: if the ranked pool came back empty (all
     // candidates were long-form/music videos/unknown length), fall back to
     // the user's own library, which needs no network.
@@ -1698,9 +1790,9 @@ class AudioPlayerService extends ChangeNotifier {
       }
     }
     if (songs.isEmpty) {
-      _noteFailure('could not build continuation (radio end)');
+      _noteFailure('could not build continuation');
       // Nothing to play: in background schedule the healer instead of
-      // sitting paused â€” network may return before the user reopens.
+      // sitting paused — network may return before the user reopens.
       _scheduleBackgroundRetry();
       _retryQueueEnd();
       return false;
@@ -1716,6 +1808,56 @@ class AudioPlayerService extends ChangeNotifier {
     _scheduleBackgroundRetry();
     _retryQueueEnd();
     return false;
+  }
+
+  /// Rebuild what plays after the current song from scratch ("Rethink" in
+  /// the What's Next sheet). Keeps the already-played prefix, replaces every
+  /// upcoming track with a fresh ranked batch. Returns the new picks, or an
+  /// empty list when nothing could be built (offline / no playable match).
+  Future<List<QuickPick>> rethinkUpcoming({int count = 10}) async {
+    final cur = _currentSong;
+    if (cur == null) return const [];
+    final gen = _playGen;
+    final picks = await _buildContinuation(count: count);
+    if (gen != _playGen || _currentSong?.id != cur.id) return const [];
+    if (picks.isEmpty) return const [];
+    _resyncIndex();
+    final base = _currentIndex < 0 ? 0 : _currentIndex + 1;
+    _queue = [..._queue.take(base), ...picks.map((p) => p.song)];
+    _queueOrigin = 'continuation';
+    _playNextOverride = null;
+    _continuationNotBefore = null;
+    notifyListeners();
+    _ensurePrefetch();
+    return picks;
+  }
+
+  /// Play the queue entry at [index] (used by the What's Next sheet).
+  Future<bool> playQueued(int index) async {
+    if (index < 0 || index >= _queue.length) return false;
+    _playNextOverride = null;
+    _continuationNotBefore = null;
+    return _playWithRetry(_queue[index], index);
+  }
+
+  /// Removes every not-yet-played copy of [song] from the queue (and a
+  /// pending "Play next"). Storage already holds the dismissal; this only
+  /// keeps the current queue honest.
+  void dismissSong(Song song) {
+    _resyncIndex();
+    if (_playNextOverride?.id == song.id) _playNextOverride = null;
+    final keep = <Song>[];
+    for (var i = 0; i < _queue.length; i++) {
+      final s = _queue[i];
+      final same = s.id == song.id ||
+          (song.videoId != null && s.videoId == song.videoId);
+      if (i > _currentIndex && same) continue;
+      keep.add(s);
+    }
+    if (keep.length == _queue.length) return;
+    if (_currentIndex >= keep.length) _currentIndex = keep.length - 1;
+    _queue = keep;
+    notifyListeners();
   }
 
   /// Commit a load to the active source. Called only after setAudioSource
@@ -1753,6 +1895,15 @@ class AudioPlayerService extends ChangeNotifier {
     }
     _cancelOfflineResumeRetry('playing');
     unawaited(_saveSession());
+    // A queue that is already dry when the song starts (a lone search result,
+    // the last track of a playlist) has nothing to show as "up next" and
+    // nothing to play when this song ends. Build the continuation now instead
+    // of waiting for the 45s-before-the-end prefetch window, so the player
+    // fills itself while the song is still playing.
+    _resyncIndex();
+    if (_currentIndex >= _queue.length - 1) {
+      unawaited(_prepareContinuation());
+    }
   }
 
   /// Arms the load watchdog for [gen]. Safety net only: every await in the
@@ -2181,12 +2332,11 @@ class AudioPlayerService extends ChangeNotifier {
     return null;
   }
 
-
   /// Online gate. Fast path: connectivity_plus confirms network interface
   /// is up (no DNS needed). Slow path: DNS lookup when connectivity_plus
   /// reports none (known false-negative on VPNs/custom DNS setups).
-  static bool _anyNetwork(List<ConnectivityResult> results) => results.any(
-      (r) =>
+  static bool _anyNetwork(List<ConnectivityResult> results) =>
+      results.any((r) =>
           r == ConnectivityResult.wifi ||
           r == ConnectivityResult.mobile ||
           r == ConnectivityResult.ethernet ||
@@ -2794,10 +2944,7 @@ class AudioPlayerService extends ChangeNotifier {
         // Failed after retries: fall through to the normal advance.
       }
       int? nextIndex;
-      if (_shuffle &&
-          _queue.length > 1 &&
-          _queueOrigin != 'search' &&
-          _queueOrigin != 'searchRadio') {
+      if (_shuffle && _queue.length > 1 && _queueOrigin != 'search') {
         // Random track other than the current one.
         do {
           nextIndex = _random.nextInt(_queue.length);
@@ -2853,23 +3000,16 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  /// Queue-end policy: never-ending queues (Quick Picks + their
-  /// continuations) grow personalized continuations; search queues grow
-  /// seed-based radio; playlists/albums/popular fetch related autoplay
-  /// content.
+  /// Queue-end policy: with autoplay on, every origin grows the same
+  /// personalized continuation (radio-first, then taste rails). With it off,
+  /// playback simply ends.
   Future<bool> _playQueueEnd() async {
-    if (_queueOrigin == 'quickPicks' || _queueOrigin == 'continuation') {
-      return await _playContinuation();
-    }
-    if (_queueOrigin == 'search' || _queueOrigin == 'searchRadio') {
-      return await _playSeedRadio();
-    }
     if (!_autoplayOnEnd) {
       _isLoading = false;
       notifyListeners();
       return false;
     }
-    return await _autoPlay();
+    return await _playContinuation();
   }
 
   /// Foreground-safe retry for a failed/empty queue-end build. Re-invokes
@@ -3017,202 +3157,6 @@ class AudioPlayerService extends ChangeNotifier {
     _completionGuard?.cancel();
     _completionGuard = null;
     _completionGuardCount = 0;
-  }
-
-  /// Seed-based radio for search queues: when a search queue ends, keep
-  /// music going with tracks similar to the initially-tapped song. The
-  /// batch is language/duration filtered, de-duplicated, and excludes
-  /// queued, finished, and seed tracks. Origin becomes 'searchRadio' so
-  /// the chain continues automatically after every completed track.
-  /// Never throws; best-effort like all autoplay.
-  Future<bool> _playSeedRadio() async {
-    _resyncIndex();
-    if (_currentIndex < _queue.length - 1) {
-      final target = _queue[_currentIndex + 1];
-      if (await _playWithRetry(target, _currentIndex + 1)) return true;
-    }
-    final seed = _autoplaySeed ?? _currentSong;
-    if (seed == null) {
-      _scheduleBackgroundRetry();
-      _retryQueueEnd();
-      return false;
-    }
-    List<Song> pool = const [];
-    MusicLanguage lang = MusicLanguage.all;
-    try {
-      lang = await UserPrefs().getLanguage();
-    } catch (_) {
-      // Non-fatal: the surrounding watchdog covers this path.
-    }
-    // Filter each source with the strict DISCOVERY gate and keep trying
-    // until one yields a usable pool. The emptiness check runs AFTER
-    // filtering: a batch that filters out entirely (all music videos /
-    // unknown lengths) must fall through to the next source instead of
-    // reporting "no similar tracks".
-    Future<List<Song>> fromSource(
-        Future<List<Song>> Function() fetch, String label) async {
-      try {
-        final raw = await fetch().timeout(const Duration(seconds: 12));
-        final qualified = SongFilter.applyDiscovery(raw, language: lang);
-        return qualified;
-      } catch (e) {
-        return const [];
-      }
-    }
-
-    final vid = seed.videoId ?? seed.id;
-    if (vid.isNotEmpty) {
-      pool = await fromSource(
-          () => _youtubeService.getRelatedVideos(vid, limit: 20), 'related');
-    }
-    if (pool.isEmpty && seed.artist.isNotEmpty) {
-      pool = await fromSource(
-          () => _youtubeService.search('${seed.artist} songs', limit: 15),
-          'artist');
-    }
-    if (pool.isEmpty && seed.title.isNotEmpty) {
-      pool = await fromSource(
-          () => _youtubeService.search(seed.title, limit: 15), 'title');
-    }
-    // Never leave the user stuck on a paused player: last resort is their
-    // own library (liked + recent), which needs no network and is already
-    // known to play.
-    if (pool.isEmpty) {
-      try {
-        final liked = await _storage.getLikedSongs();
-        final recent = await _storage.getRecentlyPlayed();
-        pool = SongFilter.apply([...liked, ...recent], language: lang);
-      } catch (_) {
-        // Non-fatal: the surrounding watchdog covers this path.
-      }
-    }
-    final doneId = _currentSong?.id;
-    final doneVid = _currentSong?.videoId ?? doneId;
-    final seedId = seed.id;
-    final seedVid = seed.videoId ?? seedId;
-    final seen = <String>{};
-    final batch = <Song>[];
-    for (final s in pool) {
-      final v = s.videoId;
-      if (v == null || v.isEmpty) continue; // unplayable without a video
-      if (s.title.trim().isEmpty) continue; // junk result
-      if (!seen.add(v)) continue; // duplicate within this batch
-      if (v == doneVid || s.id == doneId) continue; // just finished
-      if (v == seedVid || s.id == seedId) continue; // the seed itself
-      if (_playedIds.contains(s.id) || _playedIds.contains(v)) continue;
-      if (_queue.any((q) => q.id == s.id || (q.videoId ?? q.id) == v)) {
-        continue; // already queued
-      }
-      batch.add(s);
-      if (batch.length >= 10) break;
-    }
-    if (batch.isEmpty) {
-      _noteFailure('no similar tracks to continue radio');
-      // Nothing suitable: heal in background instead of sitting paused.
-      _scheduleBackgroundRetry();
-      _retryQueueEnd();
-      return false;
-    }
-    _resyncIndex();
-    final base = _currentIndex + 1;
-    _queue = [..._queue, ...batch];
-    _queueOrigin = 'searchRadio';
-    notifyListeners();
-    final target = batch.first;
-    if (await _playWithRetry(target, base)) return true;
-    // Load failed after retries: heal in background, never sit paused.
-    _scheduleBackgroundRetry();
-    _retryQueueEnd();
-    return false;
-  }
-
-  /// Keeps music going after the queue ends: related videos first,
-  /// then songs by the same artist, then a title search. A failed
-  /// autoplay restores the finished track's ended state instead of
-  /// stranding playback paused on an unrelated song.
-  Future<bool> _autoPlay() async {
-    if (_currentSong == null) return false;
-    final prevSong = _currentSong!;
-    final prevQueue = List<Song>.from(_queue);
-    final prevIndex = _currentIndex;
-    final prevDur = _duration;
-    try {
-      final cur = _currentSong!;
-      final id = cur.videoId ?? cur.id;
-      // Exclude the just-finished track by BOTH id and video: a
-      // related/search hit carrying the same video under a different id
-      // string would otherwise replay it from 00:00 right after it ended.
-      final doneId = cur.id;
-      final doneVid = cur.videoId ?? doneId;
-      // GLOBAL rules cover autoplay/related content too. Autoplay is not
-      // language-restricted, but it must not queue long-form/music-video
-      // uploads or entries with no verifiable length. Filter each source
-      // and fall through to the next when a source is fully filtered out.
-      Future<List<Song>> qualified(Future<List<Song>> Function() fetch) async {
-        try {
-          final raw = await fetch().timeout(const Duration(seconds: 12));
-          final cleaned = raw
-              .where((s) =>
-                  s.id != doneId && s.id != doneVid && s.videoId != doneVid)
-              .toList();
-          return SongFilter.applyDiscovery(cleaned,
-              language: MusicLanguage.all);
-        } catch (e) {
-          return const [];
-        }
-      }
-
-      List<Song> next = const [];
-      if (id.isNotEmpty) {
-        next = await qualified(
-            () => _youtubeService.getRelatedVideos(id, limit: 12));
-      }
-      if (next.isEmpty && cur.artist.isNotEmpty) {
-        next = await qualified(
-            () => _youtubeService.search('${cur.artist} songs', limit: 12));
-      }
-      if (next.isEmpty && cur.title.isNotEmpty) {
-        next =
-            await qualified(() => _youtubeService.search(cur.title, limit: 12));
-      }
-      // Never strand playback: fall back to the user's own library, which
-      // needs no network and is already known to play.
-      if (next.isEmpty) {
-        try {
-          final liked = await _storage.getLikedSongs();
-          final recent = await _storage.getRecentlyPlayed();
-          next = SongFilter.apply([...liked, ...recent])
-              .where((s) =>
-                  s.id != doneId && s.id != doneVid && s.videoId != doneVid)
-              .toList();
-        } catch (_) {
-          // Non-fatal: the surrounding watchdog covers this path.
-        }
-      }
-      if (next.isNotEmpty) {
-        _queue = next;
-        _currentIndex = 0;
-        if (await _playWithRetry(next.first, 0)) return true;
-        _noteFailure('autoplay could not load next track');
-        // Autoplay load failed: restore the finished track so playback
-        // ends normally instead of sitting paused on an unrelated song.
-        _queue = prevQueue;
-        _currentIndex =
-            prevQueue.isEmpty ? -1 : prevIndex.clamp(0, prevQueue.length - 1);
-        _currentSong = prevSong;
-        _duration = prevDur;
-        _position = prevDur;
-        _isPlaying = false;
-        _isLoading = false;
-        notifyListeners();
-        _retryQueueEnd();
-      }
-      _retryQueueEnd();
-      return false;
-    } catch (e) {
-      // Autoplay is best-effort, never crash playback state.
-      return false;
-    }
   }
 
   Future<bool> playPrevious() async {
@@ -3468,9 +3412,6 @@ class AudioPlayerService extends ChangeNotifier {
       _currentIndex = index;
       _queueOrigin = (saved['origin'] as String?) ?? 'default';
       _autoplayOnEnd = (saved['autoplayOnEnd'] as bool?) ?? true;
-      final seed = saved['seed'];
-      _autoplaySeed =
-          seed is Map ? Song.fromJson(Map<String, dynamic>.from(seed)) : null;
       _commitSong(song, gen);
       _position = pos;
       _lastNotifiedSecond = pos.inSeconds;
@@ -3505,7 +3446,6 @@ class AudioPlayerService extends ChangeNotifier {
         'index': index - start,
         'origin': _queueOrigin,
         'autoplayOnEnd': _autoplayOnEnd,
-        'seed': _autoplaySeed?.toJson(),
         'positionMs': _player.position.inMilliseconds,
       });
     } catch (_) {

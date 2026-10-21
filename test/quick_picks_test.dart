@@ -76,6 +76,73 @@ void main() {
     });
   });
 
+  group('predictable scoring', () {
+    test('identical state yields identical order regardless of pool order', () {
+      final a = QuickPicksEngine.rank(recent: [seed], candidates: candidates());
+      final b = QuickPicksEngine.rank(
+          recent: [seed], candidates: candidates().reversed.toList());
+      expect(a.map((p) => p.song.id), b.map((p) => p.song.id));
+    });
+
+    test('repeated skips push a track below a clean one', () {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final picks = QuickPicksEngine.rank(
+        recent: [seed],
+        candidates: [
+          _s('Skipped Song', 'The Weeknd', 200, id: 'skip'),
+          _s('Clean Song', 'The Weeknd', 200, id: 'clean'),
+        ],
+        stats: {
+          'skip': {
+            'playCount': 4,
+            'skipCount': 4,
+            'totalMs': 4000,
+            'lastPlayed': 0,
+            'skipTimes': [
+              now - 86400000,
+              now - 2 * 86400000,
+              now - 3 * 86400000,
+              now - 4 * 86400000,
+            ],
+          },
+        },
+      );
+      expect(picks.map((p) => p.song.id), ['clean', 'skip']);
+    });
+
+    test('not interested excludes the song and down-weights its artist', () {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final picks = QuickPicksEngine.rank(
+        recent: [seed],
+        candidates: [
+          _s('A Song', 'Disliked Artist', 200, id: 'dismissed'),
+          _s('B Song', 'Disliked Artist', 200, id: 'same-artist'),
+          _s('C Song', 'Other Artist', 200, id: 'other'),
+        ],
+        notInterested: {
+          'dismissed': {'at': now, 'artist': 'Disliked Artist'},
+        },
+      );
+      final ids = picks.map((p) => p.song.id).toList();
+      expect(ids.contains('dismissed'), isFalse);
+      expect(ids.last, 'same-artist',
+          reason: 'the dismissed artist scores below an unrelated one');
+    });
+
+    test('radio order boosts a candidate over an unranked peer', () {
+      final picks = QuickPicksEngine.rank(
+        recent: [seed],
+        candidates: [
+          _s('Radio Pick', 'Other Artist', 200, id: 'radio'),
+          _s('Unranked Pick', 'Other Artist 2', 200, id: 'plain'),
+        ],
+        sourceScores: const {'radio': 1.0},
+      );
+      expect(picks.first.song.id, 'radio');
+      expect(picks.first.reason, 'YouTube Music radio');
+    });
+  });
+
   group('exclusions', () {
     test('recent, queue, recent-60min and duplicates excluded', () {
       final dup = _s('After Hours', 'The Weeknd', 200, id: 'dup-id');
@@ -127,8 +194,8 @@ void main() {
       ];
       final strict = QuickPicksEngine.rank(recent: recent, candidates: pool);
       expect(strict.length, 2);
-      final relaxed = QuickPicksEngine.rank(recent: recent,
-          candidates: pool, maxPerArtist: 4);
+      final relaxed = QuickPicksEngine.rank(
+          recent: recent, candidates: pool, maxPerArtist: 4);
       expect(relaxed.length, 4);
     });
   });

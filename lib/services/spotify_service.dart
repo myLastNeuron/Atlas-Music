@@ -346,9 +346,6 @@ class SpotifyService {
     return out;
   }
 
-  /// First playlist image URL, or null. Static for unit tests.
-  static String? coverOf(Map<String, dynamic> meta) => _coverOf(meta);
-
   static String? _coverOf(Map<String, dynamic> meta) {
     final images = meta['images'];
     if (images is List && images.isNotEmpty) {

@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import 'screens/auto_finds_screen.dart';
 import 'screens/welcome_flow.dart';
 import 'services/auto_listen.dart';
 import 'services/identify_bridge.dart';
+import 'services/terms.dart';
+import 'services/user_prefs.dart';
 import 'widgets/app_transitions.dart';
 import 'widgets/identify_sheet.dart';
 
@@ -34,6 +37,46 @@ class _AtlasMusicAppState extends State<AtlasMusicApp> {
       AutoListenController.instance.start();
     });
     bridge.start();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowTerms());
+  }
+
+  /// First launch: the terms gate. Nothing is stored until Accept, so a
+  /// Decline (which closes the app) asks again on the next launch.
+  Future<void> _maybeShowTerms() async {
+    if (await UserPrefs().hasAcceptedTerms()) return;
+    if (!mounted) return;
+    final ctx = _navigatorKey.currentContext;
+    if (ctx == null || !ctx.mounted) return;
+    await showDialog<void>(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (dialogCtx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Text(kTermsTitle),
+          content: const SingleChildScrollView(
+            child: Text(kTermsBody,
+                style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogCtx);
+                SystemNavigator.pop();
+              },
+              child: const Text('Decline'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                await UserPrefs().acceptTerms();
+                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+              },
+              child: const Text('Accept'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -83,6 +126,10 @@ class _AtlasMusicAppState extends State<AtlasMusicApp> {
 
   @override
   Widget build(BuildContext context) {
+    // The theme is built once. The frost level lives in [GlassSettings] and
+    // is read by the glass surfaces themselves, so changing the setting
+    // rebuilds those surfaces and nothing else — no app-wide restyle, no
+    // theme animation, no lag.
     return MaterialApp(
       title: 'Atlas Music',
       debugShowCheckedModeBanner: false,

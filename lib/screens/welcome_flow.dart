@@ -66,7 +66,6 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     final choosePhoto = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.glass,
         title: const Text('Add a profile photo'),
         content: const Text(
           'Choose a photo from your device, or skip and use your initials.',

@@ -17,6 +17,7 @@ class StorageService extends ChangeNotifier {
   static const String _listeningStatsKey = 'listening_stats';
   static const String _topArtistsKey = 'top_artists';
   static const String _searchHistoryKey = 'search_history';
+  static const String _notInterestedKey = 'not_interested';
   static const String _downloadedSongsKey = 'downloaded_songs';
   static const String _playbackSessionKey = 'playback_session';
   static const String downloadedPlaylistId = 'downloaded_music';
@@ -241,6 +242,13 @@ class StorageService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final jsonList = likedSongs.map((s) => s.toJson()).toList();
       await prefs.setString(_likedSongsKey, json.encode(jsonList));
+      // Liking a dismissed song clears the dismissal: explicit taste wins.
+      if (index < 0) {
+        final marks = await getNotInterested();
+        if (marks.remove(song.id) != null) {
+          await prefs.setString(_notInterestedKey, json.encode(marks));
+        }
+      }
       // Realtime: library liked rail + profile counts listen to storage.
       notifyListeners();
     });
@@ -466,6 +474,43 @@ class StorageService extends ChangeNotifier {
     return totalMs >= 5000;
   }
 
+  // ── Not interested (explicit negative feedback) ──
+
+  /// Song id → {at, artist}. The ranker excludes these songs and softly
+  /// down-weights their artist. Bounded so the blob cannot grow forever.
+  Future<Map<String, Map<String, dynamic>>> getNotInterested() async {
+    final prefs = await SharedPreferences.getInstance();
+    final decoded =
+        _safeDecode<Map<String, dynamic>>(prefs.getString(_notInterestedKey));
+    if (decoded == null) return {};
+    final out = <String, Map<String, dynamic>>{};
+    decoded.forEach((key, value) {
+      if (value is Map) out[key] = Map<String, dynamic>.from(value);
+    });
+    return out;
+  }
+
+  Future<void> addNotInterested(Song song) {
+    return _serialized(() async {
+      final marks = await getNotInterested();
+      marks[song.id] = {
+        'at': DateTime.now().millisecondsSinceEpoch,
+        'artist': song.artist,
+      };
+      if (marks.length > 400) {
+        final oldest = marks.entries.toList()
+          ..sort((a, b) => ((a.value['at'] as int?) ?? 0)
+              .compareTo((b.value['at'] as int?) ?? 0));
+        for (final entry in oldest.take(marks.length - 400)) {
+          marks.remove(entry.key);
+        }
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_notInterestedKey, json.encode(marks));
+      notifyListeners();
+    });
+  }
+
   Future<List<String>> getSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_searchHistoryKey);
@@ -528,9 +573,8 @@ class StorageService extends ChangeNotifier {
     final jsonString = prefs.getString(_downloadedSongsKey);
     final decoded = _safeDecode<List<dynamic>>(jsonString);
     if (decoded != null) {
-      final List<Song> list = decoded
-          .map((j) => Song.fromJson(j as Map<String, dynamic>))
-          .toList();
+      final List<Song> list =
+          decoded.map((j) => Song.fromJson(j as Map<String, dynamic>)).toList();
       list.removeWhere((s) => s.id == songId);
       await prefs.setString(_downloadedSongsKey,
           json.encode(list.map((s) => s.toJson()).toList()));
@@ -545,9 +589,8 @@ class StorageService extends ChangeNotifier {
       final isSystem = p.id == downloadedPlaylistId;
       if (!p.downloadedSongIds.contains(songId) && !isSystem) continue;
       final nextIds = Set<String>.from(p.downloadedSongIds)..remove(songId);
-      final nextSongs = isSystem
-          ? p.songs.where((s) => s.id != songId).toList()
-          : p.songs;
+      final nextSongs =
+          isSystem ? p.songs.where((s) => s.id != songId).toList() : p.songs;
       final isDl = nextIds.isNotEmpty && nextIds.length == nextSongs.length;
       if (isSystem) {
         playlists[i] = p.copyWith(
@@ -680,6 +723,4 @@ class StorageService extends ChangeNotifier {
       notifyListeners();
     });
   }
-
 }
-

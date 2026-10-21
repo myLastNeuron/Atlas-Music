@@ -5,6 +5,7 @@ import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../services/lyrics_service.dart';
 import 'app_transitions.dart';
+import 'liquid_background.dart';
 
 /// Bottom-sheet synced lyrics. Listens to ExoPlayer positionStream
 /// directly (smooth tick), highlights current line, auto-scrolls
@@ -93,14 +94,13 @@ class _LyricsSheetState extends State<LyricsSheet> {
   @override
   Widget build(BuildContext context) {
     final song = widget.song;
-    return Container(
+    return SizedBox(
       height: MediaQuery.of(context).size.height * 0.72,
-      decoration: const BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: AppColors.line)),
-      ),
-      child: Column(
+      child: GlassSurface(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: const Border(top: BorderSide(color: AppColors.line)),
+        shadow: false,
+        child: Column(
         children: [
           const SizedBox(height: 10),
           Container(
@@ -303,8 +303,9 @@ class _LyricsSheetState extends State<LyricsSheet> {
               },
             ),
           ),
-        ],
-      ),
+          ],
+          ),
+        ),
     );
   }
 
