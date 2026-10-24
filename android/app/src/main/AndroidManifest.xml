@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <!-- "Identify a song": records ambient audio to fingerprint the track. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- "Import Atlas Music Playlist": scans a playlist QR code from a shared
+         screenshot or another device's screen. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
     <!-- In-app updater: lets a downloaded release APK be handed to the system
          package installer. The user still grants "install unknown apps". -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>

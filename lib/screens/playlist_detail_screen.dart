@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
+import '../services/playlist_qr.dart';
 import '../services/storage_service.dart';
 import '../services/youtube_service.dart';
 import '../theme/app_theme.dart';
@@ -16,6 +17,7 @@ import '../widgets/play_helper.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/artwork.dart';
 import '../widgets/song_actions.dart';
+import 'playlist_qr_screen.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
   final Playlist playlist;
@@ -100,12 +102,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   static Widget _fallbackBackground() => Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [AppColors.charcoal, AppColors.inkSoft],
+            colors: [AppColors.mist, AppColors.card],
           ),
         ),
-        child: const Icon(Icons.queue_music, size: 80, color: Colors.white),
+        child: Icon(Icons.queue_music, size: 80, color: AppColors.mute),
       );
 
   Future<void> _downloadPlaylist() async {
@@ -116,7 +118,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final overall = ValueNotifier<double?>(0);
     var finished = _songs.where((s) => downloadedIds.contains(s.id)).length;
     void tick() => overall.value =
-        (finished + (audioService.downloadProgress.value ?? 0)) / _songs.length;
+        ((finished + (audioService.downloadProgress.value ?? 0)) /
+                _songs.length)
+            .clamp(0.0, 1.0);
     audioService.downloadProgress.addListener(tick);
     final close = showBlockingProgress(context, 'Downloading playlist...',
         progress: overall);
@@ -131,6 +135,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             addToDownloadedPlaylist: false);
         if (ok) downloadedIds.add(song.id);
         finished++;
+        // The in-flight fraction is added to the completed count, so clamp:
+        // an unclamped value goes past 1.0 and trips the progress assertion.
+        audioService.downloadProgress.value = null;
         tick();
       }
     } finally {
@@ -208,7 +215,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                       child: Center(
                           child: CircularProgressIndicator(strokeWidth: 2))),
                 if (!loading && searched && results.isEmpty)
-                  const Expanded(
+                  Expanded(
                     child: Center(
                       child: Text('No results',
                           style: TextStyle(color: AppColors.inkSoft)),
@@ -234,12 +241,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             subtitle: Text(s.artist,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                     fontSize: 11, color: AppColors.inkSoft)),
                             trailing: songTrailing(s, [
                               if (already)
-                                const Icon(Icons.check,
-                                    color: Colors.white, size: 20),
+                                Icon(Icons.check,
+                                    color: AppColors.ink, size: 20),
                             ]),
                             onTap: already ? null : () => Navigator.pop(ctx, s),
                           ),
@@ -501,6 +508,11 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               value: 'shuffle',
                               child: Text('Shuffle'),
                             ),
+                            if (songs.isNotEmpty)
+                              const PopupMenuItem(
+                                value: 'share_qr',
+                                child: Text('Share Playlist'),
+                              ),
                             const PopupMenuItem(
                               value: 'download',
                               child: Text('Download playlist'),
@@ -538,7 +550,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 index: 0,
                                 queueOrigin: 'playlist',
                               );
-                            } else if (value == 'shuffle' && songs.isNotEmpty) {
+                            } else if (value == 'share_qr') {
+                              await pushAppPage(
+                                context,
+                                PlaylistQrScreen(playlist: playlist),
+                              );
+                            } else if (value == 'shuffle' &&
+                                songs.isNotEmpty) {
                               final shuffled = List<Song>.from(songs)
                                 ..shuffle();
                               playSongs(
@@ -595,10 +613,23 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 ),
                               );
                               if (confirm == true) {
-                                await _storage.deletePlaylist(playlist.id);
-                                if (context.mounted) {
-                                  Navigator.pop(context);
+                                final deleted =
+                                    await _storage.deletePlaylist(playlist.id);
+                                if (!context.mounted) return;
+                                if (!deleted) {
+                                  // Storage refuses to drop a playlist that still
+                                  // holds offline tracks: say so instead of
+                                  // closing the page as if it were gone.
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'Remove this playlist\'s downloads '
+                                          'first, then delete it.'),
+                                    ),
+                                  );
+                                  return;
                                 }
+                                Navigator.pop(context);
                               }
                             }
                           },
@@ -616,12 +647,12 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                               Text(
                                 playlist.description!,
                                 style:
-                                    const TextStyle(color: AppColors.inkSoft),
+                                    TextStyle(color: AppColors.inkSoft),
                               ),
                             const SizedBox(height: 8),
                             Text(
                               '${songs.length} songs',
-                              style: const TextStyle(color: AppColors.inkSoft),
+                              style: TextStyle(color: AppColors.inkSoft),
                             ),
                             if (playlist.source != null) ...[
                               const SizedBox(height: 4),
@@ -630,14 +661,20 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   Icon(
                                     playlist.source == 'youtube'
                                         ? Icons.youtube_searched_for
-                                        : Icons.music_note,
+                                        : playlist.source ==
+                                                PlaylistQrCodec.sourceTag
+                                            ? Icons.qr_code_2
+                                            : Icons.music_note,
                                     size: 14,
                                     color: AppColors.mute,
                                   ),
                                   const SizedBox(width: 4),
                                   Text(
-                                    'Imported from ${playlist.source}',
-                                    style: const TextStyle(
+                                    playlist.source ==
+                                            PlaylistQrCodec.sourceTag
+                                        ? 'Cloned from an Atlas Music QR code'
+                                        : 'Imported from ${playlist.source}',
+                                    style: TextStyle(
                                       color: AppColors.mute,
                                       fontSize: 12,
                                     ),
@@ -650,7 +687,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                       ),
                     ),
                     if (songs.isEmpty)
-                      const SliverFillRemaining(
+                      SliverFillRemaining(
                         child: Center(
                           child: Text(
                             'No songs yet — tap + to add',
@@ -727,7 +764,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 subtitle: Text(s.artist,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         color: AppColors.inkSoft,
                                         fontSize: 13)),
                                 trailing: _selecting
@@ -838,6 +875,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final dir = await getApplicationDocumentsDirectory();
     final dest = File('${dir.path}/playlist_cover_${widget.playlist.id}.jpg');
     await File(picked.path).copy(dest.path);
+    // Same path, new bytes: the decoded image cache keys by path (+ size when
+    // resized), so the previous cover would keep rendering. Drop it.
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
     await _storage.updateCover(widget.playlist.id, dest.path);
     if (mounted) {
       setState(() {

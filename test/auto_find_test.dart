@@ -35,8 +35,15 @@ void main() {
       isTrue,
     );
 
-    await storage.removeAutoFind(0);
+    await storage.removeAutoFind(finds.first);
     expect((await storage.getAutoFinds()).map((f) => f.song.id).toList(), ['a']);
+
+    // Removal targets the entry itself, not a list position: a stale target
+    // must not delete whatever happens to sit at that index now.
+    await storage.addAutoFind(_song('c', 'C'));
+    await storage.removeAutoFind(finds.first); // 'b', already gone
+    expect((await storage.getAutoFinds()).map((f) => f.song.id).toList(),
+        ['c', 'a']);
 
     await storage.clearAutoFinds();
     expect(await storage.getAutoFinds(), isEmpty);

@@ -65,7 +65,7 @@ class _IdentifyMenuSheetState extends State<_IdentifyMenuSheet> {
   Widget build(BuildContext context) {
     return GlassSurface(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      border: const Border(top: BorderSide(color: AppColors.line)),
+      border: Border(top: BorderSide(color: AppColors.line)),
       shadow: false,
       padding: EdgeInsets.fromLTRB(
           16, 12, 16, 20 + MediaQuery.of(context).padding.bottom),
@@ -82,9 +82,9 @@ class _IdentifyMenuSheetState extends State<_IdentifyMenuSheet> {
           ),
           const SizedBox(height: 10),
           ListTile(
-            leading: const Icon(Icons.graphic_eq, color: AppColors.ink),
+            leading: Icon(Icons.graphic_eq, color: AppColors.ink),
             title: const Text('Find song', style: TextStyle(fontSize: 15)),
-            subtitle: const Text('Listen and name it now',
+            subtitle: Text('Listen and name it now',
                 style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
             onTap: () {
               Navigator.of(context).pop();
@@ -92,9 +92,9 @@ class _IdentifyMenuSheetState extends State<_IdentifyMenuSheet> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.headphones, color: AppColors.ink),
+            leading: Icon(Icons.headphones, color: AppColors.ink),
             title: const Text('Auto listen', style: TextStyle(fontSize: 15)),
-            subtitle: const Text('Name songs around you in the background',
+            subtitle: Text('Name songs around you in the background',
                 style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
             trailing: Switch(value: _auto, onChanged: _toggleAuto),
             onTap: () => _toggleAuto(!_auto),
@@ -149,6 +149,9 @@ class _IdentifySheetState extends State<_IdentifySheet> {
   @override
   void dispose() {
     _gen++; // invalidate any in-flight attempt
+    // End the capture now: it would otherwise hold the shared listen queue for
+    // its full six seconds and stall the next Find-song attempt.
+    cancelIdentify();
     super.dispose();
   }
 
@@ -208,7 +211,7 @@ class _IdentifySheetState extends State<_IdentifySheet> {
   Widget build(BuildContext context) {
     return GlassSurface(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      border: const Border(top: BorderSide(color: AppColors.line)),
+      border: Border(top: BorderSide(color: AppColors.line)),
       shadow: false,
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, 20 + MediaQuery.of(context).padding.bottom),
@@ -284,11 +287,11 @@ class _IdentifySheetState extends State<_IdentifySheet> {
               Container(
                 width: 74,
                 height: 74,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: AppColors.mist,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.mic, size: 34, color: AppColors.ink),
+                child: Icon(Icons.mic, size: 34, color: AppColors.ink),
               ),
             ],
           ),
@@ -297,7 +300,7 @@ class _IdentifySheetState extends State<_IdentifySheet> {
         const Text('Listening…',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-        const Text('Hold your phone near the music',
+        Text('Hold your phone near the music',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
         const SizedBox(height: 14),
@@ -318,7 +321,7 @@ class _IdentifySheetState extends State<_IdentifySheet> {
           child: CircularProgressIndicator(strokeWidth: 3),
         ),
         const SizedBox(height: 16),
-        Text(label, style: const TextStyle(color: AppColors.inkSoft)),
+        Text(label, style: TextStyle(color: AppColors.inkSoft)),
         const SizedBox(height: 16),
       ],
     );
@@ -341,14 +344,14 @@ class _IdentifySheetState extends State<_IdentifySheet> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 13, color: AppColors.inkSoft)),
+            style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
         if (result != null) ...[
           const SizedBox(height: 6),
           Text('Heard: ${result.title} — ${result.artist}',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: AppColors.mute)),
+              style: TextStyle(fontSize: 11, color: AppColors.mute)),
         ],
         const SizedBox(height: 20),
         Row(
@@ -395,13 +398,13 @@ class _IdentifySheetState extends State<_IdentifySheet> {
           const SizedBox(height: 4),
           Text(subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: AppColors.inkSoft)),
+              style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
         ],
         if (detail.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(detail,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11, color: AppColors.mute)),
+              style: TextStyle(fontSize: 11, color: AppColors.mute)),
         ],
         const SizedBox(height: 18),
         FilledButton.icon(

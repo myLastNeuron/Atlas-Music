@@ -76,15 +76,20 @@ class Playlist {
     );
   }
 
+  /// Sentinel for "argument not passed": the nullable fields below can be set
+  /// back to null with an explicit null, which `param ?? this.param` could not
+  /// distinguish from "keep" (that made "Remove cover" a silent no-op).
+  static const Object _unset = Object();
+
   Playlist copyWith({
     String? id,
     String? name,
-    String? description,
-    String? thumbnailUrl,
-    String? coverPath,
+    Object? description = _unset,
+    Object? thumbnailUrl = _unset,
+    Object? coverPath = _unset,
     List<Song>? songs,
     DateTime? createdAt,
-    String? source,
+    Object? source = _unset,
     bool? isDownloaded,
     Set<String>? downloadedSongIds,
     bool? isSystemManaged,
@@ -92,12 +97,14 @@ class Playlist {
     return Playlist(
       id: id ?? this.id,
       name: name ?? this.name,
-      description: description ?? this.description,
-      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
-      coverPath: coverPath ?? this.coverPath,
+      description:
+          identical(description, _unset) ? this.description : description as String?,
+      thumbnailUrl:
+          identical(thumbnailUrl, _unset) ? this.thumbnailUrl : thumbnailUrl as String?,
+      coverPath: identical(coverPath, _unset) ? this.coverPath : coverPath as String?,
       songs: songs ?? this.songs,
       createdAt: createdAt ?? this.createdAt,
-      source: source ?? this.source,
+      source: identical(source, _unset) ? this.source : source as String?,
       isDownloaded: isDownloaded ?? this.isDownloaded,
       downloadedSongIds: downloadedSongIds ?? this.downloadedSongIds,
       isSystemManaged: isSystemManaged ?? this.isSystemManaged,

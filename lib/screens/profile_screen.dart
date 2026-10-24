@@ -162,7 +162,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Free app at developer.spotify.com/dashboard → Create app. No premium needed. Keys never leave this device.',
                 style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
               ),
@@ -289,7 +289,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             GlassPanel(
               radius: 24,
               padding: const EdgeInsets.all(18),
-              opacity: 0.09,
               child: Row(
                 children: [
                   MotionPress(
@@ -321,10 +320,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 },
                                 child: (_avatarUrl == null || _avatarError)
                                     ? Text(initial,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                             fontSize: 26,
                                             fontWeight: FontWeight.w700,
-                                            color: Colors.white))
+                                            color: AppColors.ink))
                                     : null,
                               ),
                               Positioned(
@@ -339,7 +338,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     border: Border.all(
                                         color: AppColors.glassBorder),
                                   ),
-                                  child: const Icon(Icons.photo_camera,
+                                  child: Icon(Icons.photo_camera,
                                       size: 12, color: AppColors.ink),
                                 ),
                               ),
@@ -360,7 +359,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             style: const TextStyle(
                                 fontSize: 18, fontWeight: FontWeight.w700)),
                         Text('$_playlists playlists · $_liked liked',
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 12, color: AppColors.inkSoft)),
                         TextButton.icon(
                           onPressed: _changeAvatar,
@@ -396,7 +395,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
-              opacity: 0.07,
               child: Column(
                 children: [
                   MotionPress(
@@ -405,10 +403,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       leading: const Icon(Icons.graphic_eq, size: 20),
                       title: const Text('Find song',
                           style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('Find song or Auto listen',
+                      subtitle: Text('Find song or Auto listen',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: const Icon(Icons.chevron_right,
+                      trailing: Icon(Icons.chevron_right,
                           color: AppColors.mute),
                       onTap: () => showIdentifyMenu(context),
                     ),
@@ -420,16 +418,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
-              opacity: 0.07,
               child: MotionPress(
                 scale: 0.99,
                 child: ListTile(
                   leading: const Icon(Icons.history, size: 20),
                   title: const Text('Auto song fetch history',
                       style: TextStyle(fontSize: 14)),
-                  subtitle: const Text('Songs Auto listen named, with times',
+                  subtitle: Text('Songs Auto listen named, with times',
                       style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
-                  trailing: const Icon(Icons.chevron_right,
+                  trailing: Icon(Icons.chevron_right,
                       color: AppColors.mute),
                   onTap: () => pushAppPage(context, const AutoFindsScreen()),
                 ),
@@ -439,7 +436,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
-              opacity: 0.07,
               child: Column(
                 children: [
                   MotionPress(
@@ -452,14 +448,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           _spotifyLinked
                               ? 'Keys saved${_spotifyId != null ? ' · ${_spotifyId!.length > 6 ? '${_spotifyId!.substring(0, 6)}…' : _spotifyId}' : ''} — tap to update'
                               : 'Add keys to enable playlist clone',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
                       trailing: Icon(
                           _spotifyLinked
                               ? Icons.check_circle
                               : Icons.chevron_right,
                           color:
-                              _spotifyLinked ? Colors.white : AppColors.mute),
+                              _spotifyLinked ? AppColors.ink : AppColors.mute),
                       onTap: _spotifyKeys,
                     ),
                   ),
@@ -470,7 +466,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
-              opacity: 0.07,
               child: Column(
                 children: [
                   MotionPress(
@@ -479,10 +474,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       leading: const Icon(Icons.tune, size: 20),
                       title: const Text('Advanced settings',
                           style: TextStyle(fontSize: 14)),
-                      subtitle: const Text('Transparency, blur and surfaces',
+                      subtitle: Text('Transparency, blur and surfaces',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: const Icon(Icons.chevron_right,
+                      trailing: Icon(Icons.chevron_right,
                           color: AppColors.mute),
                       onTap: () => pushAppPage(
                           context, const AdvancedSettingsScreen()),
@@ -492,14 +487,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // with F-Droid's key, so the GitHub-signed download the
                   // updater fetches could never install over it.
                   if (!_fromFdroid) ...[
-                    const Divider(height: 1, color: AppColors.line),
+                    Divider(height: 1, color: AppColors.line),
                     MotionPress(
                       scale: 0.99,
                       child: ListTile(
                         leading: const Icon(Icons.system_update_alt, size: 20),
                         title: const Text('Check for updates',
                             style: TextStyle(fontSize: 14)),
-                        trailing: const Icon(Icons.chevron_right,
+                        trailing: Icon(Icons.chevron_right,
                             color: AppColors.mute),
                         onTap: () => showUpdateSheet(context),
                       ),
@@ -523,7 +518,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final panel = GlassPanel(
       radius: 18,
       padding: const EdgeInsets.symmetric(vertical: 14),
-      opacity: 0.07,
       child: Column(
         children: [
           Text(v,
@@ -531,7 +525,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
           Text(label,
-              style: const TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+              style: TextStyle(fontSize: 11, color: AppColors.inkSoft)),
         ],
       ),
     );

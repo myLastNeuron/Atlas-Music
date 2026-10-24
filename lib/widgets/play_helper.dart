@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../screens/player_screen.dart';
 import '../services/audio_service.dart';
+import '../theme/app_theme.dart';
 import 'app_transitions.dart';
 import 'friendly_error.dart';
 
@@ -77,6 +78,9 @@ Future<void> openSongPaused(BuildContext context, Song song) async {
   if (!context.mounted || audio.currentSong?.id != song.id) return;
   await audio.pause();
   if (!context.mounted) return;
+  // Not opened from a mini bar: use a tag no bar shares, so the cover has no
+  // flight source and the player simply fades in.
+  playerHeroTag = 'player_cover';
   pushAppPage(context, const PlayerScreen(),
       routeName: PlayerScreen.routeName, slideUp: true);
 }

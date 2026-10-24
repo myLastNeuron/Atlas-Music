@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../theme/app_theme.dart';
+import 'play_next_badge.dart';
 import 'artwork.dart';
 import 'liquid_background.dart';
+import 'skeleton_card.dart';
 
 /// Bottom sheet behind the player's "What's Next?" button: the tracks that
 /// will actually play after the current one, why each was picked, and a
@@ -31,6 +33,7 @@ class WhatsNextSheet extends StatefulWidget {
 
 class _WhatsNextSheetState extends State<WhatsNextSheet> {
   late List<Song> _songs = widget.audio.upcoming;
+  late bool _loading = widget.audio.upNextLoading;
   bool _busy = false;
   bool _failed = false;
 
@@ -52,11 +55,16 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
   void _onQueueChanged() {
     if (!mounted) return;
     final next = widget.audio.upcoming;
-    final same = next.length == _songs.length &&
+    final loading = widget.audio.upNextLoading;
+    final same = loading == _loading &&
+        next.length == _songs.length &&
         List.generate(next.length, (i) => next[i].id == _songs[i].id)
             .every((matches) => matches);
     if (same) return;
-    setState(() => _songs = next);
+    setState(() {
+      _songs = next;
+      _loading = loading;
+    });
   }
 
   Future<void> _rethink() async {
@@ -91,7 +99,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
       height: height,
       child: GlassSurface(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: const Border(top: BorderSide(color: AppColors.line)),
+        border: Border(top: BorderSide(color: AppColors.line)),
         shadow: false,
         child: Column(
           children: [
@@ -112,7 +120,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("What's Next?",
+                        Text("What's Next?",
                             style: TextStyle(
                                 color: AppColors.ink,
                                 fontSize: 18,
@@ -126,7 +134,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
                                   : 'After ${current.title}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: AppColors.mute, fontSize: 12),
                         ),
                       ],
@@ -134,7 +142,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
                   ),
                   IconButton(
                     tooltip: 'Close',
-                    icon: const Icon(Icons.close, color: AppColors.mute),
+                    icon: Icon(Icons.close, color: AppColors.mute),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -156,7 +164,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
                   label: Text(_busy ? 'Rethinking…' : 'Rethink'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.ink,
-                    side: const BorderSide(color: AppColors.line),
+                    side: BorderSide(color: AppColors.line),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
                     ),
@@ -167,17 +175,17 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
               ),
             ),
             if (_failed)
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
                 child: Text(
                   'Could not build a new queue. Check your connection and try again.',
                   style: TextStyle(color: AppColors.mute, fontSize: 12),
                 ),
               ),
-            const Divider(color: AppColors.line, height: 1),
+            Divider(color: AppColors.line, height: 1),
             Expanded(
               child: _songs.isEmpty
-                  ? const _EmptyState()
+                  ? (_loading ? const _FillingState() : const _EmptyState())
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       itemCount: _songs.length,
@@ -186,6 +194,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
                         return _UpcomingRow(
                           song: song,
                           reason: widget.audio.reasonFor(song),
+                          pinned: widget.audio.pinnedNext?.id == song.id,
                           onTap: () => _play(song),
                         );
                       },
@@ -201,12 +210,17 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
 class _UpcomingRow extends StatelessWidget {
   final Song song;
   final String? reason;
+
+  /// True for the row the user pinned with "Play next": it plays next and the
+  /// rest of the list keeps its order behind it.
+  final bool pinned;
   final VoidCallback onTap;
 
   const _UpcomingRow({
     required this.song,
     required this.reason,
     required this.onTap,
+    this.pinned = false,
   });
 
   @override
@@ -226,7 +240,7 @@ class _UpcomingRow extends StatelessWidget {
                   Text(song.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: AppColors.ink,
                           fontSize: 14,
                           fontWeight: FontWeight.w600)),
@@ -235,17 +249,37 @@ class _UpcomingRow extends StatelessWidget {
                     reason == null ? song.artist : '${song.artist} · $reason',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppColors.mute, fontSize: 12),
+                    style: TextStyle(color: AppColors.mute, fontSize: 12),
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.play_arrow_rounded,
+            if (pinned)
+              const Padding(
+                padding: EdgeInsets.only(right: 6),
+                child: PlayNextBadge(),
+              ),
+            Icon(Icons.play_arrow_rounded,
                 size: 22, color: AppColors.inkSoft),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Placeholder rows while the queue is still being built, so opening the
+/// sheet right after a song starts shows progress instead of "nothing queued".
+class _FillingState extends StatelessWidget {
+  const _FillingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+      physics: const NeverScrollableScrollPhysics(),
+      children: List.generate(5, (_) => const SkeletonListItem()),
     );
   }
 }
@@ -255,20 +289,20 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 32),
+        padding: const EdgeInsets.symmetric(horizontal: 32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.queue_music, size: 44, color: AppColors.mute),
-            SizedBox(height: 12),
+            const SizedBox(height: 12),
             Text('Nothing queued yet',
                 style: TextStyle(
                     color: AppColors.ink,
                     fontSize: 15,
                     fontWeight: FontWeight.w600)),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             Text(
               'Rethink builds a radio from the song that is playing.',
               textAlign: TextAlign.center,

@@ -130,7 +130,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
   Widget build(BuildContext context) {
     return GlassSurface(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      border: const Border(top: BorderSide(color: AppColors.line)),
+      border: Border(top: BorderSide(color: AppColors.line)),
       shadow: false,
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, 24 + MediaQuery.of(context).padding.bottom),
@@ -187,7 +187,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _StatusRow(
-            leading: const Icon(Icons.check_circle,
+            leading: Icon(Icons.check_circle,
                 color: AppColors.ink, size: 20),
             text: "You're on the latest version (${result.installedVersion}).",
           ),
@@ -212,7 +212,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
         const SizedBox(height: 4),
         Text(
           'You have ${result.installedVersion}.',
-          style: const TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
+          style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
         ),
         if (latest.notes.isNotEmpty) ...[
           const SizedBox(height: 12),
@@ -224,14 +224,14 @@ class _UpdateSheetState extends State<_UpdateSheet> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.04),
+                color: AppColors.ink.withValues(alpha: 0.04),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: AppColors.line),
               ),
               child: SingleChildScrollView(
                 child: Text(
                   latest.notes,
-                  style: const TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
+                  style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
                 ),
               ),
             ),
@@ -248,14 +248,14 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                 ? 'Preparing…'
                 : 'Downloading update… ${(_progress! * 100).toStringAsFixed(0)}%',
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
+            style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
           ),
         ],
         if (_error != null) ...[
           const SizedBox(height: 12),
           Text(
             _error!,
-            style: const TextStyle(fontSize: 12.5, color: Color(0xFFFF8A80)),
+            style: TextStyle(fontSize: 12.5, color: AppColors.danger),
           ),
         ],
         const SizedBox(height: 16),

@@ -15,9 +15,12 @@ import 'song_actions.dart';
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
-  void _openPlayer(BuildContext context) {
+  void _openPlayer(BuildContext context, String heroTag) {
     final cur = ModalRoute.of(context)?.settings.name;
     if (cur == PlayerScreen.routeName) return;
+    // The player's cover shares this bar's per-route Hero tag, so only the bar
+    // that was tapped flies it.
+    playerHeroTag = heroTag;
     pushAppPage(
       context,
       const PlayerScreen(),
@@ -49,7 +52,6 @@ class MiniPlayer extends StatelessWidget {
       child: GlassSurface(
         borderRadius: BorderRadius.circular(22),
         padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-        strength: 0.05,
         shadow: false,
         child: child,
       ),
@@ -85,29 +87,35 @@ class MiniPlayer extends StatelessWidget {
     if (song == null) {
       if (!isLoading) {
         if (!pausedOffline) return const SizedBox.shrink();
-        return _glassBar(const Center(
+        return _glassBar(Center(
           child: Text('Track unavailable — no internet and not downloaded',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
         ));
       }
-      return _glassBar(const Center(
+      return _glassBar(Center(
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          child: CircularProgressIndicator(
+              strokeWidth: 2, color: AppColors.ink),
         ),
       ));
     }
 
     final loading = isLoading && !playing;
+    // Route-scoped Hero tag: only a bar on the route this player is pushed from
+    // can be the flight source. One global tag let any other MiniPlayer in the
+    // stack (an artist page) grab the full-size cover.
+    final heroTag =
+        'player_cover_${identityHashCode(ModalRoute.of(context))}';
 
     if (pausedOffline) {
       // Queue paused for offline: swap the transport row for the reason.
-      return _glassBar(const Row(
+      return _glassBar(Row(
         children: [
           Icon(Icons.wifi_off, size: 22, color: AppColors.inkSoft),
-          SizedBox(width: 10),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
                 'Track unavailable — no internet and not '
@@ -131,22 +139,18 @@ class MiniPlayer extends StatelessWidget {
                   child: InkWell(
                     key: const ValueKey('mini_nav_area'),
                     borderRadius: BorderRadius.circular(14),
-                    onTap: () => _openPlayer(context),
+                    onTap: () => _openPlayer(context, heroTag),
                     child: Row(
                       children: [
                         Hero(
-                          tag: 'player_cover',
+                          tag: heroTag,
                           createRectTween: (begin, end) =>
                               PlayerRectTween(begin: begin, end: end),
-                          // The player closing is a sheet slide: both ends keep
-                          // their artwork (placeholders) and no shuttle flies,
-                          // so nothing floats over the queue. Opening still
-                          // morphs the thumb into the big cover.
+                          // The cover morphs thumb -> big cover on open and
+                          // back onto the thumb on close; nothing else moves.
                           flightShuttleBuilder: (ctx, anim, dir, from, to) =>
-                              dir == HeroFlightDirection.pop
-                                  ? const SizedBox.shrink()
-                                  : CoverFlightShuttle(song.thumbnailUrl,
-                                      filePath: artPath, animation: anim),
+                              CoverFlightShuttle(song.thumbnailUrl,
+                                  filePath: artPath, animation: anim),
                           placeholderBuilder: (context, size, child) => child,
                           child: AnimatedSwitcher(
                             duration: AppMotion.dur(context, AppMotion.micro),
@@ -175,7 +179,7 @@ class MiniPlayer extends StatelessWidget {
                               Text(song.title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontWeight: FontWeight.w600,
                                       fontSize: 13,
                                       color: AppColors.ink)),
@@ -189,22 +193,22 @@ class MiniPlayer extends StatelessWidget {
                 ),
               ),
               if (loading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: SizedBox(
                     width: 22,
                     height: 22,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
+                        strokeWidth: 2, color: AppColors.ink),
                   ),
                 )
               else ...[
                 if (degraded)
-                  const Tooltip(
+                  Tooltip(
                     message: 'Offline mode: some queued tracks need '
                         'internet and will be skipped',
                     child: Padding(
-                      padding: EdgeInsets.only(right: 2),
+                      padding: const EdgeInsets.only(right: 2),
                       child: Icon(Icons.wifi_off,
                           size: 18, color: AppColors.inkSoft),
                     ),
@@ -214,15 +218,15 @@ class MiniPlayer extends StatelessWidget {
                   child: IconButton(
                     key: const ValueKey('mini_prev'),
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.skip_previous,
+                    icon: Icon(Icons.skip_previous,
                         size: 24, color: AppColors.inkSoft),
                     onPressed: () => _skip(context, audio, audio.playPrevious),
                   ),
                 ),
                 Container(
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white,
+                    color: AppColors.action,
                   ),
                   child: MotionPress(
                     scale: 0.9,
@@ -249,7 +253,7 @@ class MiniPlayer extends StatelessWidget {
                   child: IconButton(
                     key: const ValueKey('mini_skip_next'),
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.skip_next,
+                    icon: Icon(Icons.skip_next,
                         size: 24, color: AppColors.inkSoft),
                     onPressed: () =>
                         _skip(context, audio, () => audio.playNext(0, true)),
@@ -270,7 +274,8 @@ class MiniPlayer extends StatelessWidget {
 class _MiniProgress extends StatelessWidget {
   const _MiniProgress();
 
-  static const _fill = AlwaysStoppedAnimation<Color>(Colors.white);
+  static AlwaysStoppedAnimation<Color> get _fill =>
+      AlwaysStoppedAnimation<Color>(AppColors.ink);
 
   @override
   Widget build(BuildContext context) {
@@ -284,7 +289,7 @@ class _MiniProgress extends StatelessWidget {
       child: LinearProgressIndicator(
         value: (posSec.toDouble() / max).clamp(0.0, 1.0),
         minHeight: 2,
-        backgroundColor: Colors.white.withValues(alpha: 0.14),
+        backgroundColor: AppColors.ink.withValues(alpha: 0.14),
         valueColor: _fill,
       ),
     );

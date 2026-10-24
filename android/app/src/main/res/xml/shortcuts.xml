@@ -4,7 +4,7 @@
     <shortcut
         android:shortcutId="auto_listen"
         android:enabled="true"
-        android:icon="@drawable/ic_identify"
+        android:icon="@mipmap/ic_launcher"
         android:shortcutShortLabel="@string/auto_listen_tile_label"
         android:shortcutLongLabel="@string/auto_listen_tile_label">
         <intent

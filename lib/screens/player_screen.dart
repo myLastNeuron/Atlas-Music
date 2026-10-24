@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
+import '../services/artwork_color.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
+import '../services/theme_settings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/lyrics_sheet.dart';
+import '../widgets/play_next_badge.dart';
 import '../widgets/song_actions.dart';
 import '../widgets/video_stats_bar.dart';
 import '../widgets/whats_next_sheet.dart';
@@ -38,6 +41,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   /// dry), so the peek has to notice that on its own — none of the selective
   /// subscriptions in [build] change when songs are appended.
   String _upcomingKey = '';
+
+  /// Dominant colour of the current artwork, and the song it was read from.
+  /// Null means the player keeps the app palette (option off, or not loaded).
+  Color? _accent;
+  String? _accentFor;
 
   // Slow "breathing" scale on the cover while a track is playing. Driven by
   // one controller, applied with Transform only (no layout, no repaint).
@@ -185,6 +193,10 @@ class _PlayerScreenState extends State<PlayerScreen>
         artistName.isNotEmpty && artistName.toLowerCase() != 'unknown';
     final isLoading =
         context.select<AudioPlayerService, bool>((s) => s.isLoading);
+    // The queue fills in the background after the audio load ends, so the
+    // placeholder follows the refill, not the load.
+    final upNextLoading =
+        context.select<AudioPlayerService, bool>((s) => s.upNextLoading);
     final isPlaying =
         context.select<AudioPlayerService, bool>((s) => s.isPlaying);
     final lastFailure =
@@ -198,21 +210,44 @@ class _PlayerScreenState extends State<PlayerScreen>
     final loop =
         context.select<AudioPlayerService, LoopMode>((s) => s.loopMode);
     final upcoming = audioService.upcoming;
-    final artSize = coverLogicalSize(context);
+
+    // Artwork colour is opt-in and player-only: everything else stays on the
+    // app palette.
+    final artworkColor =
+        context.select<ThemeSettings, bool>((s) => s.artworkColor);
+    if (artworkColor && song != null) {
+      if (song.id != _accentFor) _loadAccent(song, artPath);
+    } else if (_accent != null) {
+      _accent = null;
+      _accentFor = null;
+    }
+    final accent = artworkColor ? _accent : null;
 
     return LiquidBackground(
+      gradient: accent == null
+          ? null
+          : LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.alphaBlend(
+                    accent.withValues(alpha: 0.38), AppColors.paper),
+                Color.alphaBlend(
+                    accent.withValues(alpha: 0.12), AppColors.paper),
+              ],
+            ),
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.keyboard_arrow_down,
+            icon: Icon(Icons.keyboard_arrow_down,
                 size: 30, color: AppColors.ink),
             onPressed: () => Navigator.pop(context),
           ),
           // An eyebrow, not a title: the song owns the typographic weight.
-          title: const Text(
+          title: Text(
             'NOW PLAYING',
             style: TextStyle(
               fontSize: 11,
@@ -227,137 +262,149 @@ class _PlayerScreenState extends State<PlayerScreen>
               IconButton(
                 key: _moreKey,
                 tooltip: 'Song actions',
-                icon: const Icon(Icons.more_vert, color: AppColors.inkSoft),
+                icon: Icon(Icons.more_vert, color: AppColors.inkSoft),
                 onPressed: _openSongActions,
               ),
             const SizedBox(width: 4),
           ],
         ),
         body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  // IntrinsicHeight + Spacer: on a short column the transport
-                  // settles near the bottom of the viewport instead of leaving
-                  // dead space, while a tall column still scrolls rather than
-                  // overflowing. One intrinsic pass per layout, not per frame.
-                  child: IntrinsicHeight(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (!isLoading &&
-                              !isPlaying &&
-                              (lastFailure != null ||
-                                  (hasSong &&
-                                      (pausedForOffline || degraded)))) ...[
-                            Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: AppColors.ink.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                hasSong && pausedForOffline
-                                    ? 'Paused: offline and not downloaded'
-                                    : hasSong && degraded
-                                        ? 'Stopped: some tracks need internet'
-                                        : 'Stopped: $lastFailure',
-                                style: const TextStyle(
-                                    color: AppColors.mute, fontSize: 12),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                          ],
-                          if (song != null) ...[
-                            _cover(song, artPath, artSize),
-                            const SizedBox(height: 18),
-                            _titleBlock(song, canOpenArtist),
-                            const SizedBox(height: 10),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: VideoStatsBar(
-                                  videoId: song.videoId ?? song.id),
-                            ),
-                            if (upcoming.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              _upNextBlock(upcoming),
-                            ],
-                            const Spacer(),
-                            const _PlayerSlider(),
-                            const SizedBox(height: 4),
-                            _transport(audioService, isPlaying, shuffle, loop),
-                            const SizedBox(height: 16),
-                            _actionRow(song, audioService),
-                          ] else ...[
-                            const Spacer(),
-                            const Icon(Icons.music_note,
-                                size: 88, color: AppColors.mute),
-                            const SizedBox(height: 12),
-                            const Text('No song playing',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: AppColors.inkSoft)),
-                            const Spacer(),
-                          ],
-                        ],
-                      ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!isLoading &&
+                    !isPlaying &&
+                    (lastFailure != null ||
+                        (hasSong && (pausedForOffline || degraded)))) ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.ink.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      hasSong && pausedForOffline
+                          ? 'Paused: offline and not downloaded'
+                          : hasSong && degraded
+                              ? 'Stopped: some tracks need internet'
+                              : 'Stopped: $lastFailure',
+                      style:
+                          TextStyle(color: AppColors.mute, fontSize: 12),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                ),
-              );
-            },
+                  const SizedBox(height: 12),
+                ],
+                if (song != null) ...[
+                  // The cover takes whatever height the fixed rows leave, so
+                  // the player always fits its screen. Nothing scrolls, which
+                  // is what let the whole page be dragged up and down.
+                  // shortcut: an extremely short viewport (landscape) can
+                  // still clip the bottom row; add a scroll fallback if the
+                  // player has to work in landscape.
+                  Flexible(
+                    child: LayoutBuilder(
+                      builder: (context, box) {
+                        final side = box.maxWidth < box.maxHeight
+                            ? box.maxWidth
+                            : box.maxHeight;
+                        return Center(child: _cover(song, artPath, side));
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _titleBlock(song, canOpenArtist),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: VideoStatsBar(videoId: song.videoId ?? song.id),
+                  ),
+                  if (upcoming.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _upNextBlock(upcoming),
+                    const SizedBox(height: 12),
+                  ] else if (isLoading || upNextLoading) ...[
+                    // The queue grows asynchronously, so "nothing next" while a
+                    // load or a refill is running means "not known yet", not
+                    // "the queue ended".
+                    const SizedBox(height: 12),
+                    const _UpNextSkeleton(),
+                    const SizedBox(height: 12),
+                  ],
+                  _PlayerSlider(accent: accent),
+                  const SizedBox(height: 4),
+                  _transport(
+                      audioService, isPlaying, shuffle, loop, accent, isLoading),
+                  const SizedBox(height: 16),
+                  _actionRow(song, audioService),
+                ] else ...[
+                  const Spacer(),
+                  Icon(Icons.music_note, size: 88, color: AppColors.mute),
+                  const SizedBox(height: 12),
+                  Text('No song playing',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.inkSoft)),
+                  const Spacer(),
+                ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  /// Reads the artwork's dominant colour for the tint. Called from [build]
+  /// when the song changes; the result only repaints the player.
+  void _loadAccent(Song song, String? artPath) {
+    _accentFor = song.id;
+    _accent = null;
+    dominantArtworkColor(song.thumbnailUrl, filePath: artPath).then((color) {
+      if (!mounted || _accentFor != song.id) return;
+      setState(() => _accent = color);
+    });
+  }
+
+  /// Ink that stays readable on a filled [color].
+  static Color _onColor(Color color) => color.computeLuminance() > 0.55
+      ? const Color(0xFF13131A)
+      : Colors.white;
+
   /// Artwork alone, no frame: a soft drop shadow and a glass rim. A panel
   /// around the cover read as a card inside a card, and made the breathing
   /// animation wobble a border instead of the art.
-  Widget _cover(Song song, String? artPath, double artSize) {
+  Widget _cover(Song song, String? artPath, double size) {
     final radius = BorderRadius.circular(22);
     return ScaleTransition(
       scale: _breathScale,
       child: RepaintBoundary(
-        child: AspectRatio(
-          aspectRatio: 1,
+        // Sized by the layout, not by AspectRatio: the cover shrinks to fit the
+        // screen instead of pushing the column into a scroll view.
+        child: SizedBox(
+          width: size,
+          height: size,
           child: Hero(
-            tag: 'player_cover',
+            // Same per-route tag the tapping mini bar stored: the cover only
+            // flies when that exact bar is the source.
+            tag: playerHeroTag,
             createRectTween: (begin, end) =>
                 PlayerRectTween(begin: begin, end: end),
-            // On close the page slides away as one sheet. Flying the cover
-            // separately left its slot empty (a black hole) and dragged a
-            // thumb-sized copy across the queue rows, which read as ghosting.
-            // Keeping the placeholder but skipping the pop flight gives a
-            // clean slide; the shared-element morph stays on open.
+            // The cover morphs into the big cover on open and back onto the
+            // thumb on close.
             flightShuttleBuilder: (ctx, anim, dir, from, to) =>
-                dir == HeroFlightDirection.pop
-                    ? const SizedBox.shrink()
-                    : CoverFlightShuttle(song.thumbnailUrl,
-                        filePath: artPath, animation: anim),
-            // While the cover is flying in, leave the landing spot empty.
-            // Painting the finished cover there under the fading page made
-            // the artwork appear to pop into place before the morph had
-            // travelled. It stays mounted (Offstage) so it is already
-            // decoded when the shuttle lands instead of blinking in.
-            // On close the cover must stay put: the page slides away as one
-            // sheet, so the placeholder only hides it on open.
-            placeholderBuilder: (context, size, child) {
-              final closing = ModalRoute.of(context)?.animation?.status ==
-                  AnimationStatus.reverse;
-              if (closing) return child;
-              return SizedBox(
-                width: size.width,
-                height: size.height,
-                child: Offstage(child: child),
-              );
-            },
+                CoverFlightShuttle(song.thumbnailUrl,
+                    filePath: artPath, animation: anim),
+            // The landing spot stays empty while the shuttle flies. It is
+            // still mounted (Offstage) so it is already decoded when the
+            // shuttle lands instead of blinking in. Hiding it on close too
+            // keeps a second copy from sitting under the shrinking page.
+            placeholderBuilder: (context, size, child) => SizedBox(
+              width: size.width,
+              height: size.height,
+              child: Offstage(child: child),
+            ),
             // Shadow and rim live inside the Hero, so nothing of the cover is
             // left behind at the landing spot during the flight.
             child: Container(
@@ -386,7 +433,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                   song.thumbnailUrl,
                   key: ValueKey(song.id),
                   filePath: artPath,
-                  size: artSize,
+                  size: size,
                   radius: 22,
                   fit: BoxFit.cover,
                 ),
@@ -408,7 +455,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           song.title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 25,
             height: 1.15,
             fontWeight: FontWeight.w700,
@@ -428,7 +475,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                         children: [
                           for (var i = 0; i < song.artistNames.length; i++) ...[
                             if (i > 0)
-                              const Text(' · ',
+                              Text(' · ',
                                   style: TextStyle(
                                       fontSize: 14, color: AppColors.mute)),
                             InkWell(
@@ -444,7 +491,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 3),
                                 child: Text(song.artistNames[i],
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         fontSize: 14,
                                         color: AppColors.inkSoft)),
                               ),
@@ -455,7 +502,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                     )
                   : Text(
                       song.artist,
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 14, color: AppColors.inkSoft),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -476,7 +523,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                 child: Icon(
                   _isLiked ? Icons.favorite : Icons.favorite_border,
                   key: ValueKey(_isLiked),
-                  color: _isLiked ? Colors.white : AppColors.mute,
+                  color: _isLiked ? AppColors.ink : AppColors.mute,
                 ),
               ),
             ),
@@ -488,13 +535,14 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   /// Two-track "up next" peek. A full-width square cover plus a couple of
   /// controls never fills a tall phone, so the middle of the screen shows the
-  /// tracks that actually follow. Tapping a row plays it; the full list with
-  /// reasons and Rethink is behind the "Next up" button.
+  /// tracks that actually follow, in queue order. Tapping a row plays it; the
+  /// full list with reasons and Rethink is behind the "Next up" button.
   Widget _upNextBlock(List<Song> songs) {
+    final pinned = context.read<AudioPlayerService>().pinnedNext?.id;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'UP NEXT',
           style: TextStyle(
             fontSize: 10,
@@ -510,7 +558,10 @@ class _PlayerScreenState extends State<PlayerScreen>
             onTap: () => _skip(() {
               final audio = context.read<AudioPlayerService>();
               final at = audio.queue.indexWhere((s) => s.id == next.id);
-              return at < 0 ? Future.value(false) : audio.playQueued(at);
+              // The first peek row can be the pending "Play next" override,
+              // which is not in the queue yet — play it directly.
+              if (at < 0) return audio.playSong(next);
+              return audio.playQueued(at);
             }),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -525,7 +576,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                         Text(next.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
                                 color: AppColors.ink)),
@@ -533,11 +584,15 @@ class _PlayerScreenState extends State<PlayerScreen>
                         Text(next.artist,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 11, color: AppColors.mute)),
                       ],
                     ),
                   ),
+                  if (pinned != null && pinned == next.id) ...[
+                    const SizedBox(width: 8),
+                    const PlayNextBadge(),
+                  ],
                 ],
               ),
             ),
@@ -546,10 +601,12 @@ class _PlayerScreenState extends State<PlayerScreen>
     );
   }
 
+
   /// One row, no pill: play is the only heavy element, shuffle and repeat
   /// are demoted to quiet glyphs at the edges.
   Widget _transport(AudioPlayerService audioService, bool isPlaying,
-      bool shuffle, LoopMode loop) {
+      bool shuffle, LoopMode loop, Color? accent, bool loading) {
+    final iconColor = accent == null ? AppColors.charcoal : _onColor(accent);
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -560,7 +617,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               duration: AppMotion.dur(context, AppMotion.micro),
               child: Icon(Icons.shuffle,
                   key: ValueKey(shuffle),
-                  color: shuffle ? Colors.white : AppColors.mute,
+                  color: shuffle ? AppColors.ink : AppColors.mute,
                   size: 21),
             ),
             onPressed: audioService.toggleShuffle,
@@ -571,14 +628,14 @@ class _PlayerScreenState extends State<PlayerScreen>
           child: IconButton(
             key: const ValueKey('player_prev'),
             icon:
-                const Icon(Icons.skip_previous, size: 34, color: AppColors.ink),
+                Icon(Icons.skip_previous, size: 34, color: AppColors.ink),
             onPressed: () => _skip(audioService.playPrevious),
           ),
         ),
         Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.white,
+            color: accent ?? AppColors.action,
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.4),
@@ -593,18 +650,36 @@ class _PlayerScreenState extends State<PlayerScreen>
               width: 60,
               height: 60,
               child: IconButton(
-                icon: PlayPauseIcon(
-                  playing: isPlaying,
-                  size: 30,
-                  color: AppColors.charcoal,
+                icon: AnimatedSwitcher(
+                  duration: AppMotion.dur(context, AppMotion.micro),
+                  switchInCurve: AppMotion.curve,
+                  child: loading
+                      // Resume/pause is answered by a load, not instantly:
+                      // a spinner is the honest state, and the service would
+                      // ignore a second press anyway.
+                      ? SizedBox(
+                          key: const ValueKey('player_loading'),
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.4, color: iconColor),
+                        )
+                      : PlayPauseIcon(
+                          key: const ValueKey('player_play_pause'),
+                          playing: isPlaying,
+                          size: 30,
+                          color: iconColor,
+                        ),
                 ),
-                onPressed: () {
-                  if (isPlaying) {
-                    audioService.pause();
-                  } else {
-                    audioService.resume();
-                  }
-                },
+                onPressed: loading
+                    ? null
+                    : () {
+                        if (isPlaying) {
+                          audioService.pause();
+                        } else {
+                          audioService.resume();
+                        }
+                      },
               ),
             ),
           ),
@@ -613,7 +688,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           scale: 0.9,
           child: IconButton(
             key: const ValueKey('player_next'),
-            icon: const Icon(Icons.skip_next, size: 34, color: AppColors.ink),
+            icon: Icon(Icons.skip_next, size: 34, color: AppColors.ink),
             onPressed: () => _skip(() => audioService.playNext(0, true)),
           ),
         ),
@@ -625,7 +700,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               child: Icon(
                 loop == LoopMode.one ? Icons.repeat_one : Icons.repeat,
                 key: ValueKey(loop == LoopMode.one),
-                color: loop == LoopMode.one ? Colors.white : AppColors.mute,
+                color: loop == LoopMode.one ? AppColors.ink : AppColors.mute,
                 size: 21,
               ),
             ),
@@ -683,7 +758,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             Icon(icon, size: 22, color: AppColors.inkSoft),
             const SizedBox(height: 4),
             Text(label,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 10, letterSpacing: 0.3, color: AppColors.mute)),
           ],
         ),
@@ -692,9 +767,104 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 }
 
+/// Placeholder for the up-next peek while the next tracks are being resolved.
+/// Same geometry as a real row, so nothing jumps when the songs land.
+class _UpNextSkeleton extends StatefulWidget {
+  const _UpNextSkeleton();
+
+  @override
+  State<_UpNextSkeleton> createState() => _UpNextSkeletonState();
+}
+
+class _UpNextSkeletonState extends State<_UpNextSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 850),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // A pulsing placeholder is motion too: hold it still under reduce motion.
+    if (AppMotion.reduced(context)) {
+      if (_pulse.isAnimating) _pulse.stop();
+    } else if (!_pulse.isAnimating) {
+      _pulse.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  Widget _bar(double? width, double height) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.ink.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(4),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.45, end: 1).animate(_pulse),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'UP NEXT',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.4,
+              color: AppColors.mute,
+            ),
+          ),
+          const SizedBox(height: 2),
+          for (var i = 0; i < 2; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.mist,
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _bar(double.infinity, 11),
+                        const SizedBox(height: 6),
+                        _bar(96, 9),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Slider + time labels isolated: only this row rebuilds per second.
 class _PlayerSlider extends StatefulWidget {
-  const _PlayerSlider();
+  const _PlayerSlider({this.accent});
+
+  /// Artwork colour when the option is on; null keeps the app palette.
+  final Color? accent;
 
   @override
   State<_PlayerSlider> createState() => _PlayerSliderState();
@@ -702,6 +872,7 @@ class _PlayerSlider extends StatefulWidget {
 
 class _PlayerSliderState extends State<_PlayerSlider> {
   double? _dragValue;
+  String? _dragSongId;
 
   String _fmt(Duration d) {
     final m = d.inMinutes;
@@ -715,9 +886,17 @@ class _PlayerSliderState extends State<_PlayerSlider> {
         context.select<AudioPlayerService, int>((s) => s.position.inSeconds);
     final durSec =
         context.select<AudioPlayerService, int>((s) => s.duration.inSeconds);
+    final songId =
+        context.select<AudioPlayerService, String?>((s) => s.currentSong?.id);
+    if (songId != _dragSongId) {
+      // A track change must not carry an unfinished drag onto the new song.
+      _dragSongId = songId;
+      _dragValue = null;
+    }
     final audio = context.read<AudioPlayerService>();
     final max = durSec > 0 ? durSec.toDouble() : 1.0;
     final value = (_dragValue ?? posSec.toDouble()).clamp(0.0, max);
+    final shownSec = _dragValue?.round() ?? posSec;
     return Column(
       children: [
         SliderTheme(
@@ -725,9 +904,9 @@ class _PlayerSliderState extends State<_PlayerSlider> {
             trackHeight: 3,
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-            activeTrackColor: Colors.white,
+            activeTrackColor: widget.accent ?? AppColors.ink,
             inactiveTrackColor: AppColors.line,
-            thumbColor: Colors.white,
+            thumbColor: widget.accent ?? AppColors.ink,
           ),
           child: Slider(
             value: value,
@@ -744,12 +923,13 @@ class _PlayerSliderState extends State<_PlayerSlider> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(_fmt(Duration(seconds: posSec)),
+              // The clock follows the thumb while dragging, not the stream.
+              Text(_fmt(Duration(seconds: shownSec)),
                   style:
-                      const TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+                      TextStyle(fontSize: 11, color: AppColors.inkSoft)),
               Text(_fmt(durSec > 0 ? Duration(seconds: durSec) : Duration.zero),
                   style:
-                      const TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+                      TextStyle(fontSize: 11, color: AppColors.inkSoft)),
             ],
           ),
         ),

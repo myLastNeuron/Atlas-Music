@@ -98,7 +98,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
       height: MediaQuery.of(context).size.height * 0.72,
       child: GlassSurface(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: const Border(top: BorderSide(color: AppColors.line)),
+        border: Border(top: BorderSide(color: AppColors.line)),
         shadow: false,
         child: Column(
         children: [
@@ -126,7 +126,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
                       Text('${song.title} • ${song.artist}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
                     ],
                   ),
@@ -166,7 +166,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
               ],
             ),
           ),
-          const Divider(height: 1, color: AppColors.line),
+          Divider(height: 1, color: AppColors.line),
           Expanded(
             child: FutureBuilder<SyncedLyrics?>(
               future: _future,
@@ -213,7 +213,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
                         for (var i = 0; i < src.length; i++) ...[
                           Text(
                             src[i],
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 12.5,
                                 height: 1.5,
                                 color: AppColors.mute),
@@ -223,7 +223,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
                               i < _translated!.length)
                             Text(
                               _translated![i],
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 16,
                                   height: 1.5,
                                   color: AppColors.inkSoft),
@@ -325,7 +325,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
             const SizedBox(height: 6),
             Text(sub,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, color: AppColors.inkSoft)),
+                style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
           ],
         ),
       ),

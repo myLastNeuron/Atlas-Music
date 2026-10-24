@@ -5,16 +5,17 @@ import 'package:atlas_music/screens/advanced_settings_screen.dart';
 import 'package:atlas_music/services/glass_settings.dart';
 import 'package:atlas_music/widgets/liquid_background.dart';
 
-/// The alpha of the surface's tint (the gradient's final stop — a
-/// BoxDecoration with a gradient never paints its `color`).
+/// The alpha of the surface's tint. It is a flat colour: the white sheen that
+/// used to be a gradient behind it is gone, so no gradient may come back.
 double surfaceAlpha(WidgetTester tester) {
   final container = tester.widget<Container>(find.descendant(
     of: find.byType(GlassSurface),
     matching: find.byType(Container),
   ));
   final decoration = container.decoration! as BoxDecoration;
-  final gradient = decoration.gradient! as LinearGradient;
-  return gradient.colors.last.a;
+  expect(decoration.gradient, isNull,
+      reason: 'a white sheen is a bloom over every panel');
+  return decoration.color!.a;
 }
 
 Widget app(double level, Widget child) {

@@ -21,20 +21,29 @@ import java.io.File
 
 class MainActivity : AudioServiceActivity() {
     private var identifyChannel: MethodChannel? = null
-    private var pendingIdentify = false
 
-    /// A notification tap / launcher shortcut that launched the activity while
-    /// it was not alive; Dart picks them up with the `consumeInitial*` calls.
-    private var pendingShowHistory = false
-    private var pendingAutoStart = false
+    /// Launch requests parked for Dart, backed by process-scoped flags: a
+    /// rotation (or process restore) recreates the Activity before Dart's
+    /// one-shot consumeInitial* call, and instance fields would drop the
+    /// request on the way. Dart picks them up with the `consumeInitial*` calls.
+    private var pendingIdentify: Boolean
+        get() = pendingIdentifyFlag
+        set(value) { pendingIdentifyFlag = value }
+    private var pendingShowHistory: Boolean
+        get() = pendingShowHistoryFlag
+        set(value) { pendingShowHistoryFlag = value }
+    private var pendingAutoStart: Boolean
+        get() = pendingAutoStartFlag
+        set(value) { pendingAutoStartFlag = value }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // These launch extras are parked for Dart, then cleared so an activity
         // recreate (rotation / process restore) cannot re-trigger the flow.
-        pendingIdentify = flag(intent, EXTRA_IDENTIFY)
-        pendingShowHistory = flag(intent, EXTRA_SHOW_HISTORY)
-        pendingAutoStart = flag(intent, EXTRA_AUTO_START)
+        // OR with whatever was parked before a recreate.
+        if (flag(intent, EXTRA_IDENTIFY)) pendingIdentify = true
+        if (flag(intent, EXTRA_SHOW_HISTORY)) pendingShowHistory = true
+        if (flag(intent, EXTRA_AUTO_START)) pendingAutoStart = true
         intent?.removeExtra(EXTRA_IDENTIFY)
         intent?.removeExtra(EXTRA_SHOW_HISTORY)
         intent?.removeExtra(EXTRA_AUTO_START)
@@ -353,6 +362,11 @@ class MainActivity : AudioServiceActivity() {
     }
 
     companion object {
+        // Process-scoped request flags (see the pending* properties above).
+        private var pendingIdentifyFlag = false
+        private var pendingShowHistoryFlag = false
+        private var pendingAutoStartFlag = false
+
         private const val CHANNEL = "atlas/permissions"
 
         /// Notification channel id, shared with the Auto-listen notifications.

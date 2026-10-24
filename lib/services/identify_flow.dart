@@ -22,6 +22,19 @@ final YouTubeService _youtube = YouTubeService();
 /// Serializes listens so two taps never open two microphones at once.
 Future<void> _queue = Future<void>.value();
 
+/// Completes when the running capture is abandoned (sheet dismissed, Auto
+/// listen stopped), so the capture ends now instead of holding the queue for
+/// its full six seconds and blocking the next attempt.
+Completer<void>? _cancelSignal;
+
+/// Abandons the running capture, if any. The queued next attempt then starts
+/// immediately instead of waiting behind a listen nobody is watching.
+void cancelIdentify() {
+  final signal = _cancelSignal;
+  _cancelSignal = null;
+  if (signal != null && !signal.isCompleted) signal.complete();
+}
+
 /// Input sample rate. Resampled to 16 kHz (what Shazam expects) after capture.
 const int _sampleRate = 44100;
 
@@ -47,6 +60,7 @@ Future<RecognitionStatus> identifyRaw({bool ensurePermission = true}) {
 
 Future<RecognitionStatus> _recognizeOnce({required bool ensurePermission}) async {
   final recorder = AudioRecorder();
+  Completer<void>? signal;
   try {
     if (ensurePermission) {
       final granted = await recorder.hasPermission();
@@ -73,7 +87,15 @@ Future<RecognitionStatus> _recognizeOnce({required bool ensurePermission}) async
       return RecognitionStatus.error('Could not start the microphone: $e');
     }
 
-    await Future<void>.delayed(_listenDuration);
+    signal = _cancelSignal = Completer<void>();
+    await Future.any<void>([
+      Future<void>.delayed(_listenDuration),
+      signal.future,
+    ]);
+    if (signal.isCompleted) {
+      // Abandoned while capturing: drop the clip, don't ask Shazam.
+      return RecognitionStatus.error('Cancelled');
+    }
     final stopped = await recorder.stop();
 
     final file = File(stopped ?? path);
@@ -111,6 +133,7 @@ Future<RecognitionStatus> _recognizeOnce({required bool ensurePermission}) async
   } catch (e) {
     return RecognitionStatus.error('Could not listen: $e');
   } finally {
+    if (identical(_cancelSignal, signal)) _cancelSignal = null;
     try {
       await recorder.dispose();
     } catch (_) {

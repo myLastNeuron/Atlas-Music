@@ -324,7 +324,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Stagger(
+                Stagger(
                   index: 0,
                   child: Text(
                     'Let\'s personalize your music experience',
@@ -336,7 +336,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Stagger(
+                Stagger(
                   index: 1,
                   child: Text(
                     'Select your preferred language, genres, and favorite artists to get tailored recommendations',
@@ -419,14 +419,14 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
                         ? () => _savePreferencesAndContinue()
                         : null,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
+                      backgroundColor: AppColors.action,
                       disabledBackgroundColor:
-                          Colors.white.withValues(alpha: 0.35),
+                          AppColors.action.withValues(alpha: 0.35),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
                     ),
-                    child: const Text(
+                    child: Text(
                       'Continue to Home',
                       style: TextStyle(
                         fontSize: 16,
@@ -450,7 +450,7 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.bold,
           color: AppColors.ink,
@@ -479,8 +479,8 @@ class _OnboardingPreferencesState extends State<OnboardingPreferences> {
                 _selectedArtists.clear();
               });
             },
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            selectedColor: Colors.white,
+            backgroundColor: AppColors.ink.withValues(alpha: 0.08),
+            selectedColor: AppColors.action,
             labelStyle: TextStyle(
               color: isSelected ? AppColors.charcoal : AppColors.ink,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -522,11 +522,11 @@ Widget _buildMultiSelectChips(
               }
               onChanged(newSelected);
             },
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
-            selectedColor: Colors.white,
+            backgroundColor: AppColors.ink.withValues(alpha: 0.08),
+            selectedColor: AppColors.action,
             labelStyle: TextStyle(
                 color: isSelected ? AppColors.charcoal : AppColors.ink),
-            side: const BorderSide(color: AppColors.line),
+            side: BorderSide(color: AppColors.line),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),

@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 
 /// Auto Shazam-style microphone foreground service.
 ///
@@ -24,6 +25,7 @@ import androidx.core.app.NotificationManagerCompat
 /// alert is ever posted per song.
 class AutoListenService : Service() {
     private var last: String? = null
+    private var foreground = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -33,6 +35,14 @@ class AutoListenService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_FOUND -> {
+                // A delivered intent can create the service after it was
+                // stopped: without this the app shows a phantom "listening"
+                // notification and keeps the service alive for a flow that
+                // already ended.
+                if (!foreground) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 last = intent.getStringExtra(EXTRA_LAST) ?: last
                 // Silent refresh of the ongoing notification (no heads-up).
                 try {
@@ -65,6 +75,7 @@ class AutoListenService : Service() {
         } else {
             startForeground(LISTENING_ID, buildNotification())
         }
+        foreground = true
         true
     } catch (e: Exception) {
         Log.e(TAG, "Could not start auto-listen foreground service", e)
@@ -104,6 +115,21 @@ class AutoListenService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /// The task (and with it the Flutter engine running the Dart listen loop)
+    /// was swiped away: nothing is listening any more, so drop the microphone
+    /// grant and the ongoing notification instead of holding them forever.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        foreground = false
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onDestroy() {
+        foreground = false
+        super.onDestroy()
+    }
 
     companion object {
         const val ACTION_STOP = "atlas.autolisten.stop"

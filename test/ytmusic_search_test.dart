@@ -98,6 +98,32 @@ Map<String, dynamic> continuationPage(List<Map<String, dynamic>> rows) => {
       }
     };
 
+/// A continuation page that nests the rows under continuationContents, the
+/// shape the real /youtubei/v1/search continuation returns.
+Map<String, dynamic> shelfContinuationPage(List<Map<String, dynamic>> rows) => {
+      'continuationContents': {
+        'musicShelfContinuation': {'contents': rows}
+      }
+    };
+
+/// A row whose length sits in the plural fixedColumns list, the shape real
+/// album/artist browse rows use.
+Map<String, dynamic> rowWithFixedColumnsLength(String title, String length) {
+  final r = row(title, 'Artist', 'plural');
+  r['musicResponsiveListItemRenderer']['fixedColumns'] = [
+    {
+      'musicResponsiveListItemFixedColumnRenderer': {
+        'text': {
+          'runs': [
+            {'text': length}
+          ]
+        }
+      }
+    }
+  ];
+  return r;
+}
+
 http.Response jsonResponse(Object body) => http.Response(json.encode(body), 200,
     headers: {'content-type': 'application/json'});
 
@@ -205,6 +231,36 @@ void main() {
         .searchSongs('query', limit: 20);
 
     expect(songs.single.duration, const Duration(minutes: 3, seconds: 45));
+  });
+
+  test('the length is read from the plural fixedColumns list', () async {
+    final client = MockClient((request) async =>
+        jsonResponse(tabbed([rowWithFixedColumnsLength('Song', '4:05')])));
+
+    final songs = await YouTubeMusicSearch(client: client)
+        .searchSongs('query', limit: 20);
+
+    expect(songs.single.duration, const Duration(minutes: 4, seconds: 5));
+  });
+
+  test('a continuation nested under continuationContents is parsed', () async {
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      final body = json.decode(request.body) as Map<String, dynamic>;
+      if (body.containsKey('continuation')) {
+        return jsonResponse(
+            shelfContinuationPage([row('Second page', 'Artist', 'b')]));
+      }
+      return jsonResponse(
+          tabbed([row('First page', 'Artist', 'a')], continuation: 'TOKEN'));
+    });
+
+    final songs = await YouTubeMusicSearch(client: client)
+        .searchSongs('query', limit: 20);
+
+    expect(songs.map((s) => s.title), ['First page', 'Second page']);
+    expect(calls, 2);
   });
 
   test('a throttled request is retried instead of failing the search',

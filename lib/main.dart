@@ -1,11 +1,11 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'services/atlas_audio_handler.dart';
 import 'services/audio_service.dart';
 import 'services/glass_settings.dart';
+import 'services/theme_settings.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,21 +31,17 @@ void main() async {
       androidShowNotificationBadge: false,
     ),
   );
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    statusBarBrightness: Brightness.dark,
-    systemNavigationBarColor: Color(0xFF0E0E12),
-    systemNavigationBarIconBrightness: Brightness.light,
-  ));
-  // The frost level is read before the first frame, so a stored setting
-  // never flashes the default on startup.
+  // The light/dark mode and the frost level are read before the first frame,
+  // so a stored setting never flashes the default on startup.
+  final theme = ThemeSettings();
+  await theme.load();
   final glass = GlassSettings();
   await glass.load();
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AudioPlayerService()),
+        ChangeNotifierProvider.value(value: theme),
       ],
       // The frost level: the surfaces below read it themselves, so changing
       // it restyles those surfaces and nothing else.

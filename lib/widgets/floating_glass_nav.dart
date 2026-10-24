@@ -35,7 +35,6 @@ class FloatingGlassNav extends StatelessWidget {
       child: GlassSurface(
         borderRadius: BorderRadius.circular(28),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-        strength: 0.05,
         shadow: false,
         child: Stack(
           alignment: Alignment.center,
@@ -56,9 +55,9 @@ class FloatingGlassNav extends StatelessWidget {
                       key: const ValueKey('nav_pill'),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        color: Colors.white.withValues(alpha: 0.16),
+                        color: AppColors.ink.withValues(alpha: 0.10),
                         border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.22)),
+                            color: AppColors.ink.withValues(alpha: 0.14)),
                       ),
                     ),
                   ),
@@ -88,7 +87,7 @@ class FloatingGlassNav extends StatelessWidget {
                               child: Icon(active ? data.$2 : data.$1,
                                   size: 22,
                                   color:
-                                      active ? Colors.white : AppColors.mute),
+                                      active ? AppColors.ink : AppColors.mute),
                             ),
                             const SizedBox(height: 2),
                             AnimatedDefaultTextStyle(
@@ -98,7 +97,7 @@ class FloatingGlassNav extends StatelessWidget {
                                 fontSize: 10,
                                 fontWeight:
                                     active ? FontWeight.w600 : FontWeight.w400,
-                                color: active ? Colors.white : AppColors.mute,
+                                color: active ? AppColors.ink : AppColors.mute,
                               ),
                               child: Text(data.$3),
                             ),

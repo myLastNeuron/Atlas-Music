@@ -98,7 +98,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         context: context,
         builder: (_) => AlertDialog(
           title: const Text('Delete history'),
-          content: const Text(
+          content: Text(
             'Some of these songs appear more than once. Delete every copy, '
             'or only the ones you selected?',
             style: TextStyle(color: AppColors.inkSoft),
@@ -134,7 +134,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete all history?'),
-        content: const Text(
+        content: Text(
           'The action you are gonna do can be severe and it would delete '
           'all song history locally and you won\'t be able to retrieve '
           'them again.',
@@ -191,15 +191,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
             elevation: 0,
             leading: _selecting
                 ? IconButton(
-                    icon: const Icon(Icons.close, color: AppColors.ink),
+                    icon: Icon(Icons.close, color: AppColors.ink),
                     onPressed: _exitSelection,
                   )
                 : IconButton(
-                    icon: const Icon(Icons.arrow_back, color: AppColors.ink),
+                    icon: Icon(Icons.arrow_back, color: AppColors.ink),
                     onPressed: () => Navigator.pop(context),
                   ),
             title: Text(_selecting ? '${_selected.length} selected' : 'History',
-                style: const TextStyle(
+                style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 17,
                     color: AppColors.ink)),
@@ -209,7 +209,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 IconButton(
                   tooltip: 'Delete all history',
                   onPressed: _history.isEmpty ? null : _clearAll,
-                  icon: const Icon(Icons.delete_outline, color: AppColors.ink),
+                  icon: Icon(Icons.delete_outline, color: AppColors.ink),
                 ),
             ],
           ),
@@ -230,22 +230,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               height: 24,
                               child: CircularProgressIndicator(strokeWidth: 2)))
                       : _history.isEmpty
-                          ? const Center(
-                              key: ValueKey('history_empty'),
+                          ? Center(
+                              key: const ValueKey('history_empty'),
                               child: Padding(
-                                padding: EdgeInsets.all(32),
+                                padding: const EdgeInsets.all(32),
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(Icons.history,
                                         size: 44, color: AppColors.mute),
-                                    SizedBox(height: 12),
+                                    const SizedBox(height: 12),
                                     Text('No listening history',
                                         style: TextStyle(
                                             fontSize: 15,
                                             fontWeight: FontWeight.w600,
                                             color: AppColors.ink)),
-                                    SizedBox(height: 6),
+                                    const SizedBox(height: 6),
                                     Text('Songs you play will appear here',
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
@@ -279,7 +279,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                     child: Container(
                                       decoration: BoxDecoration(
                                         color: selected
-                                            ? Colors.white
+                                            ? AppColors.ink
                                                 .withValues(alpha: 0.06)
                                             : null,
                                         borderRadius: BorderRadius.circular(14),
@@ -300,7 +300,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                                     maxLines: 1,
                                                     overflow:
                                                         TextOverflow.ellipsis,
-                                                    style: const TextStyle(
+                                                    style: TextStyle(
                                                         fontSize: 14,
                                                         fontWeight:
                                                             FontWeight.w500,
@@ -309,7 +309,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                                     maxLines: 1,
                                                     overflow:
                                                         TextOverflow.ellipsis,
-                                                    style: const TextStyle(
+                                                    style: TextStyle(
                                                         color:
                                                             AppColors.inkSoft,
                                                         fontSize: 12)),
@@ -318,7 +318,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                           ),
                                           const SizedBox(width: 8),
                                           Text(formatClock(s.duration),
-                                              style: const TextStyle(
+                                              style: TextStyle(
                                                   color: AppColors.mute,
                                                   fontSize: 12)),
                                           const SizedBox(width: 4),
@@ -333,7 +333,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                                       'Remove from history',
                                                   visualDensity:
                                                       VisualDensity.compact,
-                                                  icon: const Icon(
+                                                  icon: Icon(
                                                       Icons.delete_outline,
                                                       size: 20,
                                                       color: AppColors.mute),

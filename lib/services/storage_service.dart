@@ -104,7 +104,10 @@ class StorageService extends ChangeNotifier {
     });
   }
 
-  Future<void> deletePlaylist(String playlistId) {
+  /// Returns false when the playlist is protected — the system Downloaded
+  /// Music playlist, or one that still holds offline tracks — so the caller
+  /// can say why nothing was deleted instead of pretending it worked.
+  Future<bool> deletePlaylist(String playlistId) {
     return _serialized(() async {
       final playlists = await getPlaylists();
       Playlist? target;
@@ -114,19 +117,22 @@ class StorageService extends ChangeNotifier {
           break;
         }
       }
-      if (target == null) return;
+      if (target == null) return false;
       // System Downloaded Music is managed separately.
-      if (target.id == downloadedPlaylistId) return;
+      if (target.id == downloadedPlaylistId) return false;
       // Protected while it still holds offline content. Must be cleared via
       // Offline Content first. Once downloadedSongIds is empty and
       // isDownloaded is false, it behaves normally again (deletable), even
       // if a stale isSystemManaged flag lingered from an older build.
-      if (target.isDownloaded || target.downloadedSongIds.isNotEmpty) return;
+      if (target.isDownloaded || target.downloadedSongIds.isNotEmpty) {
+        return false;
+      }
       playlists.removeWhere((p) => p.id == playlistId);
       final prefs = await SharedPreferences.getInstance();
       final jsonList = playlists.map((p) => p.toJson()).toList();
       await prefs.setString(_playlistsKey, json.encode(jsonList));
       notifyListeners();
+      return true;
     });
   }
 
@@ -363,11 +369,16 @@ class StorageService extends ChangeNotifier {
   }
 
   /// Removes the entry at [index] in the newest-first list.
-  Future<void> removeAutoFind(int index) {
+  /// Removes exactly [target], matching on the moment it was heard. Callers
+  /// must not pass a list position: the newest-first list can change while a
+  /// row's menu is open, and a position would delete a different entry.
+  Future<void> removeAutoFind(AutoFind target) {
     return _serialized(() async {
       final finds = await getAutoFinds();
-      if (index < 0 || index >= finds.length) return;
-      finds.removeAt(index);
+      final at = finds.indexWhere((f) =>
+          f.foundAt == target.foundAt && f.song.id == target.song.id);
+      if (at < 0) return;
+      finds.removeAt(at);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
           _autoFindsKey, json.encode(finds.map((f) => f.toJson()).toList()));

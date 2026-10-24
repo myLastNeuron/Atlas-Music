@@ -4,6 +4,56 @@ All notable changes to Atlas Music are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Share a playlist as a QR code** (playlist menu → *Share Playlist*): the
+  code carries the playlist name and every track, and a *Share QR Code* button
+  shares it as an image through any app (WhatsApp, chat, email). Playlists too
+  long for one code are split into numbered parts that cycle on screen and are
+  all included in the shared image.
+- **Import Atlas Music Playlist** (Library → Import): scans a shared playlist
+  QR code with the camera, or reads it from a saved photo, and clones the
+  playlist locally — no account, no server, no network needed. The clone is an
+  ordinary editable playlist.
+
+### Fixed
+- **Playlist delete no longer lies**: a playlist that still holds downloads is
+  protected, and the screen now says so instead of closing as if it were gone.
+- **Changing a playlist cover shows the new image** immediately (the decoded
+  image cache is dropped), and *Remove cover* actually clears it — `copyWith`
+  could never clear a nullable field.
+- **Wrong lyrics**: the cache key now uses the whole title, so two songs by the
+  same artist no longer share one lyrics entry.
+- **UP NEXT**: tapping the pending *Play next* row plays it instead of showing
+  "Could not play that song".
+- **Recently Played** no longer lags one song behind, and tapping a repeated
+  row starts at the row you tapped.
+- **Search**: clearing the field cancels the in-flight search; playlist
+  download progress can no longer exceed 100%.
+- **Player slider**: the elapsed clock follows the thumb while dragging, and a
+  track change clears a half-finished drag.
+- **Auto finds**: deleting a find removes the entry you picked (not a stale
+  position), and *Today*/*Yesterday* grouping survives DST.
+- **Update check** distinguishes "could not reach GitHub" from "you're on the
+  latest version"; a stalled APK download times out and leaves no partial file.
+- **Find song**: dismissing the sheet cancels the capture, so the next attempt
+  records immediately; Auto-listen can no longer start twice.
+- **Auto-listen**: swiping the app away stops the microphone service instead of
+  leaving a phantom "listening" notification.
+- **Full player**: the cover only flies from the mini bar that opened it (no
+  more big-cover-into-thumb animation when opening an artist page), and the
+  player no longer morphs out of a stale bar rect from an earlier screen.
+- **YTMusic**: continuation pages are parsed (search pages past the first no
+  longer come back empty) and album/artist rows get their real length.
+- **Playback**: a superseded load can no longer evict a healthy cached file; a
+  false "completed" event reloads instead of parking the player; an offline
+  skip-search that a newer tap superseded no longer overrides it; resuming after
+  connectivity returns plays the paused song, not whatever now sits at that
+  queue index.
+- **Auto-listen / playback service**: the wake + Wi-Fi locks are released on
+  stop, and parked launch intents survive an activity recreate.
+
 ## [2.1.0] - 2026-10-22
 
 ### Added

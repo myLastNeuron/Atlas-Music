@@ -84,7 +84,7 @@ class _VideoStatsBarState extends State<VideoStatsBar> {
           const SizedBox(width: 5),
           Text(
             VideoStats.formatCount(value),
-            style: const TextStyle(fontSize: 12, color: AppColors.inkSoft),
+            style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
           ),
         ],
       ),

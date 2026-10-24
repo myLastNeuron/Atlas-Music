@@ -388,6 +388,24 @@ class AudioPlayerService extends ChangeNotifier {
   Duration get position => _position;
   Song? get currentSong => _currentSong;
 
+  /// How many tracks the up-next list always shows. The queue is topped up to
+  /// this depth after every song starts, and the list never shows more, so the
+  /// sheet is always the same length no matter how long the queue is.
+  static const int upNextCount = 10;
+
+  /// How many songs the always-ten window is short of after [index] in a queue
+  /// of [queueLength]. Negative means the tail is already deep enough (a long
+  /// playlist needs no refill). Pure so the arithmetic is unit-tested without
+  /// a live player.
+  static int upNextDeficit(int queueLength, int index) =>
+      upNextCount - (queueLength - 1 - index);
+
+  /// True while the up-next window is being refilled. The player shows its
+  /// skeleton on this rather than on [isLoading]: the audio load finishes
+  /// seconds before the recommender answers, so tying the placeholder to the
+  /// load left a blank gap and then made the rows pop in.
+  bool get upNextLoading => _topUp.running;
+
   /// Tracks that will play after the current one, in queue order. A pending
   /// "Play next" is first. With shuffle on, the order is only approximate.
   List<Song> get upcoming {
@@ -403,7 +421,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (override != null && song.id == override.id) continue;
       out.add(song);
     }
-    return out;
+    return out.length > upNextCount ? out.sublist(0, upNextCount) : out;
   }
 
   /// Why [song] was picked, when it came from the recommender.
@@ -677,7 +695,7 @@ class AudioPlayerService extends ChangeNotifier {
           // song's prefetch too: if this reload stalls again, the advance
           // after it should find its file already cached.
           _unblockPreloadAhead();
-          await playSong(song, index: _currentIndex);
+          await playSong(song, index: _currentIndex, forceReload: true);
           return;
         } catch (e) {
           try {
@@ -765,7 +783,8 @@ class AudioPlayerService extends ChangeNotifier {
       {List<Song>? queue,
       int? index,
       bool autoplayOnEnd = true,
-      String? queueOrigin}) async {
+      String? queueOrigin,
+      bool forceReload = false}) async {
     // Duplicate request for the song already loading (double-tap, retap
     // during a slow load): absorb it BEFORE bumping the generation. A
     // second sequence would stop the first one's source mid-play and
@@ -836,7 +855,10 @@ class AudioPlayerService extends ChangeNotifier {
     // If the SAME song is already playing past 5 s, absorb ANY reload
     // (preload, continuation, retry, background heal) â€” a second
     // setSource would reset position to 0 and cause the 17 s restart.
-    if (_activeSongId == song.id &&
+    // [forceReload] is the recovery path for a false `completed` event, where
+    // the same song is deliberately reloaded at that position.
+    if (!forceReload &&
+        _activeSongId == song.id &&
         _player.playing &&
         _position.inSeconds > 5) {
       return true;
@@ -936,12 +958,21 @@ class AudioPlayerService extends ChangeNotifier {
           _finishPlaying();
           return true;
         } catch (e) {
-          // Cache playback failure is not necessarily permanent â€” the file
+          // A load superseded mid-setAudioSource is not a broken file: any
+          // decision taken here would evict a healthy cache entry the newer
+          // load is about to use.
+          if (stale()) {
+            return false;
+          }
+          // Cache playback failure is not necessarily permanent — the file
           // may still be valid. Only invalidate if the error is a format/codec
-          // issue, not a transient network/timeout issue.
+          // issue, not a transient network/timeout/interruption issue.
           final t = e.toString().toLowerCase();
           final isTransient = e is TimeoutException ||
+              e is PlayerInterruptedException ||
               t.contains('timeout') ||
+              t.contains('interrupt') ||
+              t.contains('aborted') ||
               t.contains('host lookup') ||
               t.contains('socket') ||
               t.contains('connection') ||
@@ -1069,7 +1100,7 @@ class AudioPlayerService extends ChangeNotifier {
         if (stale()) {
           return false;
         }
-      } on TimeoutException catch (_) {
+      } on TimeoutException catch (err) {
         // Non-fatal: the surrounding watchdog covers this path.
         if (stale()) {
           return false;
@@ -1077,7 +1108,7 @@ class AudioPlayerService extends ChangeNotifier {
         report.add(ResolveFailure(
           provider: source.provider,
           stage: ResolveStage.download,
-          detail: 'download exceeded 180s: $e',
+          detail: 'download exceeded 180s: $err',
           retryable: true,
         ));
         audioFile = null;
@@ -1774,20 +1805,7 @@ class AudioPlayerService extends ChangeNotifier {
     // candidates were long-form/music videos/unknown length), fall back to
     // the user's own library, which needs no network.
     if (songs.isEmpty) {
-      try {
-        final liked = await _storage.getLikedSongs();
-        final recent = await _storage.getRecentlyPlayed();
-        final played = <String>{
-          ..._queue.map((s) => s.id),
-          ..._queue.map((s) => s.videoId ?? s.id),
-        };
-        songs = SongFilter.apply([...liked, ...recent])
-            .where((s) =>
-                !played.contains(s.id) && !played.contains(s.videoId ?? s.id))
-            .toList();
-      } catch (_) {
-        // Non-fatal: the surrounding watchdog covers this path.
-      }
+      songs = await _libraryFallbackSongs();
     }
     if (songs.isEmpty) {
       _noteFailure('could not build continuation');
@@ -1895,15 +1913,14 @@ class AudioPlayerService extends ChangeNotifier {
     }
     _cancelOfflineResumeRetry('playing');
     unawaited(_saveSession());
-    // A queue that is already dry when the song starts (a lone search result,
-    // the last track of a playlist) has nothing to show as "up next" and
-    // nothing to play when this song ends. Build the continuation now instead
-    // of waiting for the 45s-before-the-end prefetch window, so the player
-    // fills itself while the song is still playing.
-    _resyncIndex();
-    if (_currentIndex >= _queue.length - 1) {
-      unawaited(_prepareContinuation());
-    }
+    // Top the tail back up to [upNextCount] so the up-next list is the same
+    // length after every track, however this song started. This also covers a
+    // queue that is already dry at the start (a lone search result, the last
+    // track of a playlist): it fills the whole ten itself. A new song gets a
+    // fresh retry budget for a refill that came back empty.
+    _cancelUpNextRetry();
+    _upNextRetryAttempt = 0;
+    unawaited(_topUpUpNext());
   }
 
   /// Arms the load watchdog for [gen]. Safety net only: every await in the
@@ -2399,8 +2416,12 @@ class AudioPlayerService extends ChangeNotifier {
   /// closure â€” passed in because this runs outside playSong's body.
   Future<bool> _skipOrWaitOffline(
       Song song, int gen, int base, void Function() revertPending) async {
+    // A newer user tap / load owns playback now: this offline skip-search is
+    // stale and must not start its own playSong on top of it.
+    bool stale() => gen != _playGen;
     // (a) Skip to a cached track. Bounded: one cache-check pass.
     final skipIndex = await _findCachedIndex(base, song.id, wrap: false);
+    if (stale()) return false;
     if (skipIndex != null) {
       final target = _queue[skipIndex];
       revertPending();
@@ -2441,6 +2462,7 @@ class AudioPlayerService extends ChangeNotifier {
     // outcome; a repeat is recoverable by the user. Pause only when nothing
     // at all is cached.
     final fallback = await _findCachedIndex(base, song.id, wrap: true);
+    if (stale()) return false;
     if (fallback != null) {
       final target = _queue[fallback];
       revertPending();
@@ -2543,16 +2565,23 @@ class AudioPlayerService extends ChangeNotifier {
     }
     if (_pausedForOffline && _pausedForOfflineGen == _playGen) {
       final idx = _pausedForOfflineIndex;
+      // Resolve the paused song by id: the queue may have changed shape while
+      // the app was offline, and a stale index would resume a different track.
+      final pausedId = _pausedForOfflineSongId;
+      final byId = pausedId == null
+          ? -1
+          : _queue.indexWhere((q) => q.id == pausedId);
       final inRange =
           idx != null && _queue.isNotEmpty && idx >= 0 && idx < _queue.length;
-      final song = inRange ? _queue[idx] : null;
+      final at = byId >= 0 ? byId : (inRange ? idx : null);
+      final song = at == null ? null : _queue[at];
       _pausedForOffline = false;
       if (song == null) {
         return;
       }
       try {
         await playSong(song,
-            index: idx,
+            index: at,
             autoplayOnEnd: _autoplayOnEnd,
             queueOrigin: _queueOrigin);
       } catch (_) {
@@ -3211,6 +3240,222 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The song pinned by "Play next" in a row's menu. It plays before the queue
+  /// continues, and the list shows it pinned; null when nothing is pinned.
+  Song? get pinnedNext => _playNextOverride;
+
+  /// Single-flight gate for the up-next refill. A pass superseded by a newer
+  /// song is re-run when it finishes, never dropped, so a burst of skips
+  /// cannot stack recommender calls or leave the list empty.
+  final TopUpCoalescer _topUp = TopUpCoalescer();
+
+  /// Retry budget for a refill that came back empty (cold network, radio
+  /// timeout, thin pool). One shot per track left "up next" empty for the
+  /// rest of the song whenever that shot landed on a bad moment.
+  Timer? _upNextRetryTimer;
+  int _upNextRetryAttempt = 0;
+  static const List<int> _upNextRetrySeconds = [5, 15, 40, 90];
+
+  /// Spare songs fetched ahead of the queue, so the next top-up is instant
+  /// instead of waiting on a network recommender round-trip.
+  static const int _reserveSpare = 4;
+
+  /// How many songs a refill pass should fetch: the rows the window is
+  /// missing plus whatever the spare is short of [_reserveSpare]. A full window
+  /// with a stocked spare asks for zero, which is what keeps a refill from
+  /// re-querying (and the spare from growing) on every track. Pure,
+  /// unit-tested.
+  static int upNextRefillTarget(int deficit, int spareHeld) =>
+      max(0, deficit) + _reserveSpare - spareHeld;
+
+  /// Keeps the [candidates] that are not already in [seenIds] (by song id or
+  /// video id), records the kept ones in [seenIds], and stops after [limit].
+  ///
+  /// Deliberately not written as `if (!seenIds.add(song.id) ||
+  /// !seenIds.add(videoId)) continue;`: for YouTube tracks [Song.id] and
+  /// [Song.videoId] are the same string, so the second `add` always failed and
+  /// the whole batch was discarded as "duplicate" -- up-next stayed empty no
+  /// matter how many songs the recommender returned. Pure, unit-tested.
+  static List<Song> takeNewSongs(
+    List<Song> candidates,
+    Set<String> seenIds, {
+    int? limit,
+  }) {
+    final out = <Song>[];
+    for (final song in candidates) {
+      final vid = song.videoId ?? song.id;
+      if (seenIds.contains(song.id) || seenIds.contains(vid)) continue;
+      seenIds.addAll([song.id, vid]);
+      out.add(song);
+      if (limit != null && out.length >= limit) break;
+    }
+    return out;
+  }
+  final List<Song> _reserve = [];
+
+  /// Candidates from the user's own library (liked + recently played, already
+  /// language-filtered). With [allowRepeats] the songs already queued come
+  /// back too, minus the ones in the visible up-next window: "always ten rows"
+  /// wins over "never repeat" once the library is exhausted.
+  Future<List<Song>> _libraryFallbackSongs({bool allowRepeats = false}) async {
+    try {
+      final liked = await _storage.getLikedSongs();
+      final recent = await _storage.getRecentlyPlayed();
+      final blocked = <String>{};
+      if (allowRepeats) {
+        _resyncIndex();
+        final from = _currentIndex < 0 ? 0 : _currentIndex;
+        final to = (from + 1 + upNextCount).clamp(0, _queue.length);
+        for (final s in _queue.sublist(from, to)) {
+          blocked.add(s.id);
+          blocked.add(s.videoId ?? s.id);
+        }
+      } else {
+        for (final s in _queue) {
+          blocked.add(s.id);
+          blocked.add(s.videoId ?? s.id);
+        }
+      }
+      return SongFilter.apply([...liked, ...recent])
+          .where((s) =>
+              !blocked.contains(s.id) && !blocked.contains(s.videoId ?? s.id))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Appends from [_reserve] until [upNextCount] songs sit after the current
+  /// one. Synchronous and cheap, so the list is the right length the instant a
+  /// song starts instead of a few seconds later.
+  void _fillFromReserve() {
+    _resyncIndex();
+    var need = upNextDeficit(_queue.length, _currentIndex);
+    if (need <= 0 || _reserve.isEmpty) return;
+    final queued = <String>{
+      ..._queue.map((s) => s.id),
+      ..._queue.map((s) => s.videoId ?? s.id),
+    };
+    final add = <Song>[];
+    while (need > 0 && _reserve.isNotEmpty) {
+      final song = _reserve.removeAt(0);
+      final vid = song.videoId ?? song.id;
+      if (queued.contains(song.id) || queued.contains(vid)) continue;
+      queued.add(song.id);
+      queued.add(vid);
+      add.add(song);
+      need--;
+    }
+    if (add.isEmpty) return;
+    _queue = [..._queue, ...add];
+    notifyListeners();
+    _ensurePrefetch();
+  }
+
+  /// Keeps the queue's tail at exactly [upNextCount] songs.
+  ///
+  /// Called from [_commitSong], so every way a song can start (completion,
+  /// skip, tap) leaves the up-next list the same length it was. The reserve is
+  /// drained first (instant), then refilled in the background from the
+  /// recommender, then from the library when that comes back empty.
+  Future<void> _topUpUpNext() async {
+    if (!_autoplayOnEnd) return;
+    _fillFromReserve();
+    if (!_topUp.begin()) return; // running: end() sees the pending pass
+    final gen = _playGen;
+    final anchor = _currentSong;
+    try {
+      if (anchor == null) return;
+      _resyncIndex();
+      // Fill the rows missing now, and top the spare back up to [_reserveSpare]
+      // so the next song starts without a network wait. With the tail already
+      // full and the spare stocked this is zero: no recommender round-trip and
+      // no unbounded spare growth on every track.
+      final want = upNextRefillTarget(
+          upNextDeficit(_queue.length, _currentIndex), _reserve.length);
+      final reserveTarget = want + _reserve.length;
+      if (want <= 0) return;
+      // Tell the UI a refill started: the skeleton belongs here, not on the
+      // audio load.
+      notifyListeners();
+      final picks = await _buildContinuation(count: want);
+      if (gen != _playGen || _currentSong?.id != anchor.id) {
+        // These picks were ranked for the previous song: hand the work to the
+        // song that owns playback now instead of dropping it.
+        _topUp.again();
+        return;
+      }
+      _rememberPicks(picks);
+      final fresh = [for (final pick in picks) pick.song];
+      // Recommender empty (offline, thin pool, rate limit): the library needs
+      // no network, and past the first pass it may repeat what already played.
+      if (fresh.length < want) {
+        fresh.addAll(await _libraryFallbackSongs());
+        if (gen != _playGen || _currentSong?.id != anchor.id) {
+          _topUp.again();
+          return;
+        }
+      }
+      if (fresh.length < want) {
+        fresh.addAll(await _libraryFallbackSongs(allowRepeats: true));
+        if (gen != _playGen || _currentSong?.id != anchor.id) {
+          _topUp.again();
+          return;
+        }
+      }
+      if (fresh.isEmpty) {
+        // Nothing at all: the network or the pool let us down. Never leave the
+        // window empty for the rest of the track -- retry with backoff.
+        _scheduleUpNextRetry();
+        return;
+      }
+      final seen = <String>{
+        ..._queue.map((s) => s.id),
+        ..._queue.map((s) => s.videoId ?? s.id),
+        ..._reserve.map((s) => s.id),
+        ..._reserve.map((s) => s.videoId ?? s.id),
+      };
+      _reserve.addAll(takeNewSongs(fresh, seen,
+          limit: reserveTarget - _reserve.length));
+      _fillFromReserve();
+      _upNextRetryAttempt = 0;
+      _cancelUpNextRetry();
+    } catch (_) {
+      // Ignored: the list stays as long as the reserve allowed, and the retry
+      // below gets another chance while this song still plays.
+      _scheduleUpNextRetry();
+    } finally {
+      final again = _topUp.end();
+      notifyListeners(); // skeleton off once the rows (or nothing) are in
+      if (again && _autoplayOnEnd) unawaited(_topUpUpNext());
+    }
+  }
+
+  /// True while the visible window is short of [upNextCount].
+  bool get _upNextShort {
+    _resyncIndex();
+    return _currentSong != null &&
+        upNextDeficit(_queue.length, _currentIndex) > 0;
+  }
+
+  /// Retries an empty refill a few times with backoff, while the same song is
+  /// still playing and the window is still short.
+  void _scheduleUpNextRetry() {
+    if (_upNextRetryTimer != null || _released || !_autoplayOnEnd) return;
+    if (_upNextRetryAttempt >= _upNextRetrySeconds.length) return;
+    final wait = Duration(seconds: _upNextRetrySeconds[_upNextRetryAttempt++]);
+    _upNextRetryTimer = Timer(wait, () {
+      _upNextRetryTimer = null;
+      if (_released || !_upNextShort) return;
+      unawaited(_topUpUpNext());
+    });
+  }
+
+  void _cancelUpNextRetry() {
+    _upNextRetryTimer?.cancel();
+    _upNextRetryTimer = null;
+  }
+
   /// Queue [song] to play once, immediately after the current song. A second
   /// call replaces the pending slot; a fresh explicit queue drops it.
   void setPlayNext(Song song) {
@@ -3351,6 +3596,7 @@ class AudioPlayerService extends ChangeNotifier {
     _cancelCompletionGuard();
     _cancelPreloadRetry();
     _cancelEndPreload();
+    _cancelUpNextRetry();
     try {
       await _player.pause().timeout(const Duration(seconds: 5));
     } catch (_) {
@@ -3592,6 +3838,7 @@ class AudioPlayerService extends ChangeNotifier {
     _cancelCompletionGuard();
     _cancelPreloadRetry();
     _cancelEndPreload();
+    _cancelUpNextRetry();
     for (final s in _subs) {
       s.cancel();
     }
@@ -3600,5 +3847,44 @@ class AudioPlayerService extends ChangeNotifier {
     _youtubeService.dispose();
     _youTube.dispose();
     super.dispose();
+  }
+}
+
+/// Single-flight gate for the up-next refill.
+///
+/// The refill is a network round-trip, so a skip during it used to find the
+/// gate closed and return: the new song never refilled the list and the picks
+/// the old pass was building were thrown away, leaving "up next" empty for the
+/// whole track. Here a pass that finds the gate closed records the debt and
+/// [end] reports it, so the caller re-runs the work for the current song.
+/// Pure (no plugins), unit-tested in test/up_next_queue_test.dart.
+class TopUpCoalescer {
+  bool _running = false;
+  bool _again = false;
+
+  /// True while a pass owns the refill.
+  bool get running => _running;
+
+  /// True when the caller should start a pass now; false means a pass is
+  /// already running and will re-run once when it finishes.
+  bool begin() {
+    if (_running) {
+      _again = true;
+      return false;
+    }
+    _running = true;
+    return true;
+  }
+
+  /// Marks the running pass as superseded: its result belongs to an older
+  /// song, so another pass is owed for the current one.
+  void again() => _again = true;
+
+  /// Releases the gate. True means a pass is still owed.
+  bool end() {
+    _running = false;
+    final owed = _again;
+    _again = false;
+    return owed;
   }
 }

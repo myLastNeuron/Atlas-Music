@@ -72,8 +72,9 @@ class UpdateService {
     return info.version;
   }
 
-  /// Never throws: a failure to reach GitHub resolves to "no update".
-  Future<UpdateResult> check() async {
+  /// Null when GitHub could not be reached (offline, rate-limited, non-200),
+  /// so the UI can say that instead of claiming the app is up to date.
+  Future<UpdateResult?> check() async {
     final installed = await installedVersion();
     AppRelease? latest;
     try {
@@ -84,11 +85,11 @@ class UpdateService {
           'User-Agent': _ua,
         },
       ).timeout(_timeout);
-      if (res.statusCode == 200) {
-        latest = parseNewestRelease(res.body);
-      }
+      if (res.statusCode != 200) return null;
+      latest = parseNewestRelease(res.body);
     } catch (_) {
-      // Offline / rate-limited / malformed → treat as up to date.
+      // Offline / rate-limited / malformed body.
+      return null;
     }
     final available =
         latest != null && (compareVersions(latest.version, installed) ?? 0) > 0;
@@ -119,13 +120,25 @@ class UpdateService {
     final sink = file.openWrite();
     var received = 0;
     try {
-      await for (final chunk in res.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        if (total > 0) onProgress?.call(received / total);
+      try {
+        // The timeout also covers the body: a connection that stalls after
+        // the response headers used to hang the caller forever.
+        await for (final chunk in res.stream.timeout(_timeout)) {
+          sink.add(chunk);
+          received += chunk.length;
+          if (total > 0) onProgress?.call(received / total);
+        }
+      } finally {
+        await sink.close();
       }
-    } finally {
-      await sink.close();
+    } catch (e) {
+      // Never leave a half-written APK behind for the installer to pick up.
+      try {
+        await file.delete();
+      } catch (_) {
+        // Nothing to clean up.
+      }
+      rethrow;
     }
     return file;
   }

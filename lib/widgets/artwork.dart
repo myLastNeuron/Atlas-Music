@@ -56,7 +56,13 @@ class Artwork extends StatelessWidget {
             height: fillWidth ? null : h,
             fit: fit,
             cacheWidth: px.clamp(96, 1024),
-            errorBuilder: (_, __, ___) => _fallback(w, h),
+            // A corrupt/missing cover file falls back to the network thumbnail
+            // it already has, not a blank note for the rest of the session.
+            errorBuilder: (_, __, ___) => url.isEmpty
+                ? _fallback(w, h)
+                : _networkImage(url, px, w, h,
+                    placeholder: () => const SizedBox.shrink(),
+                    fallbackWidth: w),
           ),
         ),
       );
@@ -121,7 +127,7 @@ class Artwork extends StatelessWidget {
         width: w,
         height: h,
         color: AppColors.mist,
-        child: const Icon(Icons.music_note, color: AppColors.mute),
+        child: Icon(Icons.music_note, color: AppColors.mute),
       );
 }
 
@@ -144,7 +150,7 @@ class PlayerRectTween extends MaterialRectArcTween {
   PlayerRectTween({super.begin, super.end});
 
   @override
-  Rect lerp(double t) => super.lerp(AppMotion.emphasized.transform(t));
+  Rect lerp(double t) => super.lerp(AppMotion.player.transform(t));
 }
 
 /// Full-bleed cover for a Hero flight between the mini player and the full
@@ -213,7 +219,7 @@ class CoverFlightShuttle extends StatelessWidget {
       builder: (context, child) => ClipRRect(
         borderRadius: BorderRadius.circular(beginRadius +
             (endRadius - beginRadius) *
-                AppMotion.emphasized.transform(animation.value)),
+                AppMotion.player.transform(animation.value)),
         child: child,
       ),
       child: Stack(

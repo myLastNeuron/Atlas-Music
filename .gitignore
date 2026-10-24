@@ -29,7 +29,7 @@ migrate_working_dir/
 .packages
 .pub-cache/
 .pub/
-/build/
+**/build/
 
 # Symbolication related
 app.*.symbols
@@ -76,3 +76,21 @@ app.*.map.json
 
 # Platform-specific Exceptions
 **/ios/Flutter/flutter_export_environment.sh
+
+# Secrets / local config
+.env
+.env.*
+*.env.local
+
+# Build artifacts
+*.apk
+*.aab
+*.ipa
+coverage/
+fastlane/report.xml
+fastlane/Preview.html
+
+# Agent / tool scratch output (regenerable)
+.bug-hunter/
+.claude/
+

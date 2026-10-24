@@ -445,6 +445,24 @@ class YouTubeMusicSearch {
   /// is read, not just the first: an unfiltered search carries the song rows
   /// and the upload rows in different tabs.
   static Iterable<Map> _songItems(Map<String, dynamic> data) sync* {
+    // Continuation pages carry no top-level `contents`: the rows sit under
+    // continuationContents.musicShelfContinuation.contents (or the playlist
+    // shelf variant). Without this shape every "next page" parsed as empty.
+    final continuation = data['continuationContents'];
+    if (continuation is Map) {
+      for (final key in const [
+        'musicShelfContinuation',
+        'musicPlaylistShelfContinuation',
+      ]) {
+        final items = _dig(continuation, [key, 'contents']) as List?;
+        if (items == null) continue;
+        for (final raw in items) {
+          if (raw is! Map) continue;
+          final renderer = raw['musicResponsiveListItemRenderer'];
+          if (renderer is Map) yield renderer;
+        }
+      }
+    }
     final contents = data['contents'];
     if (contents is! Map) return;
 
@@ -530,10 +548,27 @@ class YouTubeMusicSearch {
 
   /// Length from the row's fixed column ("3:45"), used when the subtitle
   /// runs carry none.
+  /// Rows use either a single `fixedColumn` or a `fixedColumns` list of
+  /// `musicResponsiveListItemFixedColumnRenderer` entries. Reading only the
+  /// singular key left most album/artist rows at 0:00.
   static Duration _fixedLength(Map item) {
-    final column = item['fixedColumn'];
+    final columns = item['fixedColumn'] ?? item['fixedColumns'];
+    if (columns is List) {
+      for (final column in columns) {
+        final d = _fixedColumnDuration(column);
+        if (d > Duration.zero) return d;
+      }
+      return Duration.zero;
+    }
+    return _fixedColumnDuration(columns);
+  }
+
+  static Duration _fixedColumnDuration(Object? column) {
     if (column is! Map) return Duration.zero;
-    final inner = _map(column, 'musicFixedColumnsRenderer') ?? column;
+    final inner =
+        _map(column, 'musicResponsiveListItemFixedColumnRenderer') ??
+            _map(column, 'musicFixedColumnsRenderer') ??
+            column;
     final text = _map(_map(inner, 'fixedColumn') ?? inner, 'text');
     if (text is! Map) return Duration.zero;
     String? raw = text['simpleText'] as String?;

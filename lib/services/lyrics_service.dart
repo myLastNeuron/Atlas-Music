@@ -77,38 +77,137 @@ class LyricsService {
     }
   }
 
-  /// Translates lyric lines into [target] (language code) with Google's
-  /// free endpoint. Returns null when offline, on error, or when the
-  /// translated line count does not match, so the caller never misaligns.
+  /// Lines per translation request: small enough that a merge or a split stays
+  /// inside one batch, big enough to keep a whole song to a handful of calls.
+  static const _translateBatch = 12;
+
+  /// Translates lyric lines into [target] (language code) with Google's free
+  /// endpoint. Returns null when offline or when nothing could be translated.
+  ///
+  /// Line alignment is the whole problem here. Google drops blank lines and
+  /// merges or splits sentences, so one request for the whole song came back
+  /// with a different number of lines and the caller threw it away — which is
+  /// what made Devanagari lyrics read as "untranslatable". Blank lines are now
+  /// mapped separately, the rest go in small batches in parallel, and a batch
+  /// that still comes back reshaped is retried one line at a time, where a
+  /// mismatch is impossible.
+  ///
+  /// Romanised Hindi needed a second fix: auto-detect calls "tum hi ho" English
+  /// and returns it untouched. Text that looks romanised is sent as Hindi.
   // ponytail: unofficial endpoint, may break; swap for ML Kit or a paid API if it does.
   Future<List<String>?> translate(List<String> lines, String target) async {
-    final joined = lines.join('\n');
-    if (joined.trim().isEmpty) return null;
+    final indexes = [
+      for (var i = 0; i < lines.length; i++)
+        if (lines[i].trim().isNotEmpty) i
+    ];
+    if (indexes.isEmpty) return null;
+
+    final batches = <List<int>>[];
+    for (var start = 0; start < indexes.length; start += _translateBatch) {
+      final end = start + _translateBatch;
+      batches.add(indexes.sublist(
+          start, end > indexes.length ? indexes.length : end));
+    }
+    final results = await Future.wait([
+      for (final batch in batches)
+        _translateBlockOf([for (final i in batch) lines[i]], target),
+    ]);
+    if (results.any((r) => r == null)) return null;
+
+    final out = List<String>.filled(lines.length, '');
+    for (var b = 0; b < batches.length; b++) {
+      final translated = results[b]!;
+      for (var k = 0; k < batches[b].length; k++) {
+        out[batches[b][k]] = translated[k];
+      }
+    }
+    return out;
+  }
+
+  /// One batch: a single newline-joined request, else one request per line.
+  Future<List<String>?> _translateBlockOf(
+      List<String> lines, String target) async {
+    final block = await _translateText(lines.join('\n'), target);
+    if (block != null) {
+      final parts = block.split('\n');
+      if (parts.length == lines.length) return parts;
+    }
+    // Reshaped: a request per line cannot misalign.
+    final out = <String>[];
+    for (final line in lines) {
+      final one = await _translateText(line, target);
+      if (one == null) return null;
+      out.add(_collapse(one));
+    }
+    return out;
+  }
+
+  /// Sends one block of text, choosing the source language.
+  Future<String?> _translateText(String text, String target) async {
+    if (text.trim().isEmpty) return null;
+    final romanHindi = looksRomanHindi(text);
+    // Hindi first for romanised lyrics: with `auto` the text is detected as
+    // English and handed straight back, which is the bug being fixed.
+    for (final source in romanHindi ? const ['hi', 'auto'] : const ['auto']) {
+      final result = await _translateOnce(text, target, source);
+      if (result == null) continue;
+      if (romanHindi && _sameText(result, text)) continue;
+      return result;
+    }
+    return null;
+  }
+
+  Future<String?> _translateOnce(
+      String text, String target, String source) async {
     try {
       final uri = Uri.https('translate.googleapis.com', '/translate_a/single', {
         'client': 'gtx',
-        'sl': 'auto',
+        'sl': source,
         'tl': target,
         'dt': 't',
       });
       final resp = await _http
-          .post(uri, headers: {'User-Agent': _ua}, body: {'q': joined})
+          .post(uri, headers: {'User-Agent': _ua}, body: {'q': text})
           .timeout(_netBudget);
       if (resp.statusCode != 200) return null;
       final data = json.decode(resp.body) as List;
-      final text = (data[0] as List)
-          .map((seg) => ((seg as List)[0] as String?) ?? '')
+      if (data.isEmpty || data[0] is! List) return null;
+      return (data[0] as List)
+          .map((seg) =>
+              seg is List && seg.isNotEmpty ? (seg[0] as String? ?? '') : '')
           .join();
-      final out = text.split('\n');
-      return out.length == lines.length ? out : null;
     } catch (_) {
       return null;
     }
   }
 
+  static bool _sameText(String a, String b) =>
+      _collapse(a).toLowerCase() == _collapse(b).toLowerCase();
+
+  /// Romanised Hindi ("tum hi ho", "dil hai") — Latin script, Hindi words.
+  /// The markers are Hindi-only spellings (no English word looks like them),
+  /// so a single hit is enough; short lyric lines often carry just one.
+  // shortcut: word-list heuristic. Swap for a language-ID model if it misfires
+  // on English lyrics or misses heavily code-mixed ones.
+  static final RegExp _romanHindiWords = RegExp(
+      r'\b(hai|hain|nahi|nahin|kya|kyun|kyu|tum|tumhe|tera|teri|tere|mera|'
+      r'meri|mere|mujhe|tujhe|humko|tumko|dil|pyaar|pyar|ishq|jaan|jaana|'
+      r'jaaniye|zindagi|sapna|sapne|yaar|khuda|duniya|baat|baatein|raat|'
+      r'raatein|lamhe|aankhein|ankhon|nazar|sach|jhooth|kabhi|phir|abhi|'
+      r'bahut|bohot|kuch|sab|sath|saath|zara|bata|kaise|kaisa|chale|chalta|'
+      r'raha|rahi|rahe|gaya|gayi|hoga|hogi)\b',
+      caseSensitive: false);
+
+  /// True when [text] is Latin-script romanised Hindi. Devanagari returns
+  /// false: auto-detect already knows it, and forcing Hindi changes nothing.
+  static bool looksRomanHindi(String text) {
+    if (RegExp(r'[\u0900-\u097F]').hasMatch(text)) return false;
+    return _romanHindiWords.hasMatch(text.toLowerCase());
+  }
+
   /// Strips YouTube junk so "Blinding Lights (Official Video)"
   /// queries as "Blinding Lights". Public + static for tests.
-  static String cleanTrack(String raw) {
+  static String cleanTrack(String raw, {bool keepSeparator = false}) {
     var s = raw;
     s = s.replaceAll(RegExp(r'\.{3,}'), '');
     s = s.replaceAll(RegExp(r'\.{2,}'), '');
@@ -116,9 +215,11 @@ class LyricsService {
     s = s.replaceAll(RegExp(r'\([^)]*(official|video|audio|lyric|visualizer|remix|cover|live|mv|m\/v)[^)]*\)', caseSensitive: false), ' ');
     // Drop "(From ...)" / "(Feat ...)" suffixes, keep core title.
     s = s.replaceAll(RegExp(r'\([^)]*\)'), ' ');
-    for (final sep in [' - ', ' | ', ' ~ ', ' // ']) {
-      if (s.contains(sep)) {
-        s = s.split(sep).first;
+    if (!keepSeparator) {
+      for (final sep in [' - ', ' | ', ' ~ ', ' // ']) {
+        if (s.contains(sep)) {
+          s = s.split(sep).first;
+        }
       }
     }
     s = s.replaceAll(RegExp(r'\s+(feat\.?|ft\.?)\s+.*$', caseSensitive: false), ' ');
@@ -281,7 +382,10 @@ class LyricsService {
       s.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
 
   String _cacheKey(Song song) {
-    final t = cleanTrack(song.title).toLowerCase();
+    // The whole title, not the search-side cleanTrack (which keeps only the
+    // first "Artist - Title" segment): two songs by one artist would share a
+    // key and be served each other's lyrics.
+    final t = cleanTrack(song.title, keepSeparator: true).toLowerCase();
     final a = cleanArtist(song.artist).toLowerCase();
     return 'lyrics_${safeKey(a)}__${safeKey(t)}';
   }

@@ -13,7 +13,7 @@ void main() {
       expect(
         tween.lerp(t),
         MaterialRectArcTween(begin: begin, end: end)
-            .lerp(AppMotion.emphasized.transform(t)),
+            .lerp(AppMotion.player.transform(t)),
         reason: 'cover must follow the same curve as its page at t=$t',
       );
     }

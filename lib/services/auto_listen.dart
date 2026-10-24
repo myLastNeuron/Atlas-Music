@@ -19,6 +19,12 @@ class AutoListenController extends ChangeNotifier {
   static final AutoListenController instance = AutoListenController._();
 
   bool _active = false;
+  bool _starting = false;
+
+  /// Bumped on every stop. An in-flight [_listen] loop compares its own run id
+  /// against this and exits, so a stop+start pair can never leave two loops
+  /// recording and identifying in parallel.
+  int _run = 0;
 
   /// Whether Auto-listen is currently running.
   bool get active => _active;
@@ -30,23 +36,35 @@ class AutoListenController extends ChangeNotifier {
   /// foreground service could not be started.
   Future<bool> start() async {
     if (_active) return true;
-    // Subscribe first so a service-side failure (autoStop) is never missed.
-    _stopSub ??= IdentifyBridge.instance.autoStops.listen((_) => stop());
-    if (!await ensureMicPermission()) return false;
-    if (!await IdentifyBridge.instance.startAutoListen()) return false;
-    _active = true;
-    _lastTrackId = null;
-    await IdentifyBridge.instance.setAutoActive(true);
-    notifyListeners();
-    unawaited(_listen());
-    return true;
+    // Re-entrancy guard: start() awaits permission and a platform call, so a
+    // second tap in that window would otherwise start the service twice.
+    if (_starting) return false;
+    _starting = true;
+    try {
+      // Subscribe first so a service-side failure (autoStop) is never missed.
+      _stopSub ??= IdentifyBridge.instance.autoStops.listen((_) => stop());
+      if (!await ensureMicPermission()) return false;
+      if (!await IdentifyBridge.instance.startAutoListen()) return false;
+      _active = true;
+      _lastTrackId = null;
+      await IdentifyBridge.instance.setAutoActive(true);
+      notifyListeners();
+      unawaited(_listen(++_run));
+      return true;
+    } finally {
+      _starting = false;
+    }
   }
 
   /// Stops listening and tears the foreground service down.
   Future<void> stop() async {
     if (!_active) return;
     _active = false;
+    _run++;
     notifyListeners();
+    // Drop the clip being recorded: the loop is exiting and a queued Find-song
+    // tap must not wait behind it.
+    cancelIdentify();
     await IdentifyBridge.instance.setAutoActive(false);
     await IdentifyBridge.instance.stopAutoListen();
   }
@@ -54,9 +72,10 @@ class AutoListenController extends ChangeNotifier {
   /// Records a clip, identifies it, and repeats until [stop] runs. A track is
   /// reported once (no repeats while the same song keeps playing) and misses
   /// stay silent, so the notification shade is never spammed.
-  Future<void> _listen() async {
-    while (_active) {
+  Future<void> _listen(int run) async {
+    while (run == _run && _active) {
       final status = await identifyRaw(ensurePermission: false);
+      if (run != _run) return;
       final result = status.result;
       if (status.state == RecognitionStatusState.success && result != null) {
         if (result.trackId != _lastTrackId) {
@@ -75,7 +94,7 @@ class AutoListenController extends ChangeNotifier {
           }
         }
       }
-      if (_active) {
+      if (run == _run && _active) {
         await Future<void>.delayed(const Duration(seconds: 2));
       }
     }

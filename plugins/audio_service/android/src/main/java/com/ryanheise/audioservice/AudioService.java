@@ -377,6 +377,10 @@ public class AudioService extends MediaBrowserServiceCompat {
         // lingering after playback ends.
         ServiceCompat.stopForeground(this, STOP_FOREGROUND_REMOVE);
         deactivateMediaSession();
+        // A bound client keeps the service alive past stopSelf(), so onDestroy
+        // (and its releaseWakeLock) may never run: release here or playback
+        // keeps a partial CPU + high-perf Wi-Fi lock after it stops.
+        releaseWakeLock();
         stopSelf();
     }
 

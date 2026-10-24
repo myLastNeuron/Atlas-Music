@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
@@ -246,8 +247,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // preloads, and queue growth never count as new activity.
       if (cur != null && svc.isPlaying && cur.id != _lastRecentId) {
         _lastRecentId = cur.id;
-        _storage.addToRecentlyPlayed(cur);
-        _refreshRecent();
+        unawaited(_recordPlay(cur));
         // First real signal: swap cold-start generic picks for
         // session-driven ones exactly once.
         if (_qpCold && !_qpLoading) {
@@ -266,6 +266,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // reflects exactly what was played (including playlist tracks).
       setState(() => _recent = r);
     }
+  }
+
+  /// Write then re-read: re-reading before the write lands rendered the rail
+  /// one song behind (and left the first play missing entirely).
+  Future<void> _recordPlay(Song song) async {
+    await _storage.addToRecentlyPlayed(song);
+    if (!mounted) return;
+    await _refreshRecent();
   }
 
   Future<void> _openHistory() async {
@@ -661,13 +669,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _play(Song song, List<Song> queue, int index,
       {String? queueOrigin}) async {
-    final safeIndex = queue.indexWhere((s) =>
-        (song.videoId != null && s.videoId == song.videoId) || s.id == song.id);
-    final idx = safeIndex >= 0 ? safeIndex : index;
+    bool matches(Song s) =>
+        (song.videoId != null && s.videoId == song.videoId) ||
+        s.id == song.id;
+    // Keep the tapped position when it still holds this song: queues keep
+    // non-consecutive duplicates, so resolving by id alone started the wrong
+    // row.
+    final at = index >= 0 && index < queue.length && matches(queue[index])
+        ? index
+        : queue.indexWhere(matches);
     await playSongs(context,
-        song: song, queue: queue, index: idx, queueOrigin: queueOrigin);
-    _storage.addToRecentlyPlayed(song);
-    _refreshRecent();
+        song: song,
+        queue: queue,
+        index: at >= 0 ? at : index,
+        queueOrigin: queueOrigin);
+    await _storage.addToRecentlyPlayed(song);
+    await _refreshRecent();
   }
 
   /// "Play Quick Picks": play every currently displayed pick in order,
@@ -747,27 +764,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   Container(
                     width: 84,
                     height: 84,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: AppColors.mist,
                     ),
-                    child: const Icon(Icons.album,
+                    child: Icon(Icons.album,
                         size: 84, color: AppColors.mute),
                   ),
                   Container(
                     width: 44,
                     height: 44,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white,
+                      color: AppColors.action,
                     ),
-                    child: const Icon(Icons.add,
+                    child: Icon(Icons.add,
                         size: 28, color: AppColors.charcoal),
                   ),
                 ],
               ),
               const SizedBox(width: 16),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -777,7 +794,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             fontSize: 20,
                             fontWeight: FontWeight.w800,
                             height: 1.1)),
-                    SizedBox(height: 8),
+                    const SizedBox(height: 8),
                     Text('Build your dream mix',
                         style:
                             TextStyle(color: AppColors.inkSoft, fontSize: 12)),
@@ -801,14 +818,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: const EdgeInsets.symmetric(vertical: 22),
             decoration: liquidGlassDecoration(BorderRadius.circular(16),
                 level: glassLevel(context)),
-            child: const Column(
+            child: Column(
               children: [
                 Icon(Icons.queue_music, size: 32, color: AppColors.mute),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 Text('No playlists yet',
                     style: TextStyle(
                         color: AppColors.inkSoft, fontWeight: FontWeight.w600)),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text('Tap to build your first mix',
                     style: TextStyle(color: AppColors.mute, fontSize: 12)),
               ],
@@ -862,7 +879,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               color: AppColors.mist,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Icon(Icons.queue_music,
+                            child: Icon(Icons.queue_music,
                                 color: AppColors.mute),
                           )
                         : Artwork(art, size: 64, radius: 12),
@@ -875,13 +892,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           Text(p.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: AppColors.ink,
                                   fontWeight: FontWeight.w600,
                                   fontSize: 13)),
                           const SizedBox(height: 4),
                           Text('${p.songs.length} songs',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: AppColors.inkSoft, fontSize: 11)),
                         ],
                       ),
@@ -903,14 +920,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         padding: const EdgeInsets.symmetric(vertical: 24),
         decoration: liquidGlassDecoration(BorderRadius.circular(16),
             level: glassLevel(context)),
-        child: const Column(
+        child: Column(
           children: [
             Icon(Icons.history, size: 32, color: AppColors.mute),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text('No recently played songs',
                 style: TextStyle(
                     color: AppColors.inkSoft, fontWeight: FontWeight.w600)),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             Text('Songs you play will appear here',
                 style: TextStyle(color: AppColors.mute, fontSize: 12)),
           ],
@@ -962,7 +979,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     Text(s.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: AppColors.ink,
                             fontSize: 13,
                             fontWeight: FontWeight.w500)),
@@ -992,13 +1009,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: AppColors.ink.withValues(alpha: 0.08),
                   border: Border.all(color: AppColors.glassBorder),
                 ),
-                child: const Icon(Icons.arrow_forward, color: AppColors.ink),
+                child: Icon(Icons.arrow_forward, color: AppColors.ink),
               ),
               const SizedBox(height: 10),
-              const Text('Show all',
+              Text('Show all',
                   style: TextStyle(
                       color: AppColors.ink,
                       fontWeight: FontWeight.w600,
@@ -1023,16 +1040,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (_recommended.isEmpty) {
       if (!_hasHistory) {
-        return const Padding(
-          padding: EdgeInsets.symmetric(vertical: 24),
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
           child: Center(
             child: Text('Listen to some music and we\'ll find your best picks.',
                 style: TextStyle(color: AppColors.inkSoft, fontSize: 13)),
           ),
         );
       }
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
         child: Center(
           child: Text('No unique recommendations — check back soon',
               style: TextStyle(color: AppColors.mute, fontSize: 12)),
@@ -1055,14 +1072,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             title: Text(s.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                     color: AppColors.ink,
                     fontSize: 13,
                     fontWeight: FontWeight.w500)),
             subtitle: Text(s.artist,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppColors.inkSoft, fontSize: 11)),
+                style: TextStyle(color: AppColors.inkSoft, fontSize: 11)),
             trailing: songTrailing(s, [
               SongMenuButton(song: s, queue: items, index: i),
             ]),
@@ -1127,7 +1144,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: RefreshIndicator(
           onRefresh: _onRefresh,
           backgroundColor: AppColors.glass,
-          color: AppColors.charcoal,
+          color: AppColors.ink,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(
                 parent: BouncingScrollPhysics()),
@@ -1157,7 +1174,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           }
                         },
                         child: (_avatarUrl == null || _avatarError)
-                            ? const Icon(Icons.person,
+                            ? Icon(Icons.person,
                                 size: 20, color: AppColors.inkSoft)
                             : null,
                       ),
@@ -1166,7 +1183,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(widget.userName,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: AppColors.ink,
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold)),
@@ -1178,7 +1195,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   if (_recent.isNotEmpty) ...[
                     Row(
                       children: [
-                        const Text('Recently Played',
+                        Text('Recently Played',
                             style: TextStyle(
                                 color: AppColors.ink,
                                 fontSize: 16,
@@ -1188,13 +1205,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.08),
+                            color: AppColors.ink.withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: AppColors.glassBorder),
                           ),
                           child: Text(
                             '${_recent.length} songs',
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: AppColors.inkSoft, fontSize: 11),
                           ),
                         ),
@@ -1209,15 +1226,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       Container(
                         padding: const EdgeInsets.all(7),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
+                          color: AppColors.ink.withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: AppColors.glassBorder),
                         ),
-                        child: const Icon(Icons.bolt,
-                            size: 16, color: Colors.white),
+                        child: Icon(Icons.bolt,
+                            size: 16, color: AppColors.ink),
                       ),
                       const SizedBox(width: 10),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -1235,7 +1252,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       IconButton(
                         tooltip: 'Refresh Quick Picks',
                         onPressed: _refreshQuickPicks,
-                        icon: const Icon(Icons.refresh,
+                        icon: Icon(Icons.refresh,
                             size: 20, color: AppColors.inkSoft),
                       ),
                     ],
@@ -1250,10 +1267,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           style: TextStyle(
                               fontSize: 14, fontWeight: FontWeight.w600)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
+                        backgroundColor: AppColors.action,
                         foregroundColor: AppColors.charcoal,
                         disabledBackgroundColor:
-                            Colors.white.withValues(alpha: 0.25),
+                            AppColors.action.withValues(alpha: 0.25),
                         disabledForegroundColor:
                             AppColors.inkSoft.withValues(alpha: 0.6),
                         shape: RoundedRectangleBorder(
@@ -1287,15 +1304,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                             setState(() => _recError = false);
                                             _load();
                                           },
-                                          icon: const Icon(Icons.refresh,
+                                          icon: Icon(Icons.refresh,
                                               color: AppColors.inkSoft),
-                                          label: const Text(
+                                          label: Text(
                                               'Couldn\'t load songs — tap to retry',
                                               style: TextStyle(
                                                   color: AppColors.inkSoft,
                                                   fontSize: 13)),
                                         )
-                                      : const Text(
+                                      : Text(
                                           'Play a song to get picks tuned to your session',
                                           textAlign: TextAlign.center,
                                           style: TextStyle(
@@ -1369,7 +1386,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                                 ),
                                                               ],
                                                             ),
-                                                            child: const Icon(
+                                                            child: Icon(
                                                                 Icons
                                                                     .play_arrow,
                                                                 size: 18,
@@ -1385,7 +1402,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                       maxLines: 1,
                                                       overflow:
                                                           TextOverflow.ellipsis,
-                                                      style: const TextStyle(
+                                                      style: TextStyle(
                                                           color: AppColors.ink,
                                                           fontSize: 13,
                                                           fontWeight:
@@ -1395,7 +1412,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                       maxLines: 1,
                                                       overflow:
                                                           TextOverflow.ellipsis,
-                                                      style: const TextStyle(
+                                                      style: TextStyle(
                                                           color: AppColors.mute,
                                                           fontSize: 10)),
                                                 ],
@@ -1411,7 +1428,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 20),
                   _createPlaylistBanner(),
                   const SizedBox(height: 20),
-                  const Text('YOUR PLAYLISTS',
+                  Text('YOUR PLAYLISTS',
                       style: TextStyle(
                           color: AppColors.ink,
                           fontSize: 15,
@@ -1419,7 +1436,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 10),
                   _playlistsSection(),
                   const SizedBox(height: 20),
-                  const Text('RECOMMENDED FOR YOU',
+                  Text('RECOMMENDED FOR YOU',
                       style: TextStyle(
                           color: AppColors.ink,
                           fontSize: 15,

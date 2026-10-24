@@ -67,7 +67,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Add a profile photo'),
-        content: const Text(
+        content: Text(
           'Choose a photo from your device, or skip and use your initials.',
           style: TextStyle(color: AppColors.inkSoft),
         ),

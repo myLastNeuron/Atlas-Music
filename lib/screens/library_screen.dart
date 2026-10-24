@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/playlist.dart';
 import '../services/audio_service.dart';
+import '../services/playlist_qr.dart';
 import '../services/storage_service.dart';
 import '../services/spotify_service.dart';
 import '../services/youtube_service.dart';
@@ -14,6 +15,7 @@ import 'history_screen.dart';
 import 'liked_songs_screen.dart';
 import 'offline_music_screen.dart';
 import 'playlist_detail_screen.dart';
+import 'playlist_qr_import_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -93,6 +95,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _importFlow() async {
     final src = await _importSource();
     if (src == null) return;
+    if (src == 'atlas') {
+      await _importAtlasQr();
+      return;
+    }
     if (src == 'spotify') {
       await _importSpotify();
       return;
@@ -174,6 +180,77 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  /// Clones a playlist from one of our own QR codes, scanned with the camera
+  /// or read out of a shared photo. The code carries name + every track, so
+  /// the clone is instant and needs no network.
+  Future<void> _importAtlasQr() async {
+    final payload = await pushAppPage<PlaylistQrPayload>(
+      context,
+      const PlaylistQrImportScreen(),
+    );
+    if (payload == null || !mounted) return;
+    final existing = await _storage.getPlaylists();
+    // Importing the same code twice is allowed; keep names distinguishable
+    // instead of silently ending up with two identical rows.
+    var name = payload.name;
+    var n = 2;
+    while (existing.any((p) => p.name == name)) {
+      name = '${payload.name} ($n)';
+      n++;
+    }
+    final count = payload.tracks.length;
+    if (!mounted) return;
+    final preview = payload.tracks.take(3).map((t) => t.title).join('\n');
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import playlist?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(name,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(count == 1 ? '1 song' : '$count songs',
+                style: TextStyle(
+                    fontSize: 13, color: AppColors.inkSoft)),
+            if (preview.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(preview,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 12, color: AppColors.inkSoft)),
+              if (count > 3)
+                Text('+ ${count - 3} more',
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.mute)),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Clone')),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    final playlist = payload
+        .toPlaylist(id: 'qr_${DateTime.now().microsecondsSinceEpoch}')
+        .copyWith(name: name);
+    await _storage.savePlaylist(playlist);
+    if (!mounted) return;
+    _load();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Cloned "$name" ($count songs)')),
+    );
+  }
+
   /// YouTube vs Spotify source picker for import/clone.
   Future<String?> _importSource() {
     return showDialog<String>(
@@ -182,17 +259,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
         title: const Text('Import playlist'),
         children: [
           SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, 'youtube'),
-            child: const Row(
+            onPressed: () => Navigator.pop(context, 'atlas'),
+            child: Row(
               children: [
-                Icon(Icons.smart_display_outlined,
+                Icon(Icons.qr_code_2_outlined,
                     size: 20, color: AppColors.inkSoft),
-                SizedBox(width: 12),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('YouTube',
+                      const Text('Import Atlas Music Playlist',
+                          style: TextStyle(fontWeight: FontWeight.w500)),
+                      Text('Scan or pick a playlist QR code',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.inkSoft)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'youtube'),
+            child: Row(
+              children: [
+                Icon(Icons.smart_display_outlined,
+                    size: 20, color: AppColors.inkSoft),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('YouTube',
                           style: TextStyle(fontWeight: FontWeight.w500)),
                       Text('Paste playlist URL or ID',
                           style: TextStyle(
@@ -205,16 +304,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'spotify'),
-            child: const Row(
+            child: Row(
               children: [
                 Icon(Icons.music_note_outlined,
                     size: 20, color: AppColors.inkSoft),
-                SizedBox(width: 12),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Spotify (clone)',
+                      const Text('Spotify (clone)',
                           style: TextStyle(fontWeight: FontWeight.w500)),
                       Text('Needs API keys · match each track',
                           style: TextStyle(
@@ -227,16 +326,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'paste'),
-            child: const Row(
+            child: Row(
               children: [
                 Icon(Icons.content_paste_outlined,
                     size: 20, color: AppColors.inkSoft),
-                SizedBox(width: 12),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Paste track list',
+                      const Text('Paste track list',
                           style: TextStyle(fontWeight: FontWeight.w500)),
                       Text('No keys needed · one per line',
                           style: TextStyle(
@@ -382,7 +481,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       hintText: 'Playlist name', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   'One per line: Title - Artist. Spotify copies paste as-is.',
                   style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
                 ),
@@ -555,7 +654,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         child: GlassPanel(
                           radius: 20,
                           padding: const EdgeInsets.all(6),
-                          opacity: 0.07,
                           child: Row(
                             children: [
                               _quick(Icons.download, 'Import', _import),
@@ -578,9 +676,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                     ),
                     if (_playlists.isEmpty)
-                      const SliverToBoxAdapter(
+                      SliverToBoxAdapter(
                         child: Padding(
-                          padding: EdgeInsets.all(24),
+                          padding: const EdgeInsets.all(24),
                           child: Center(
                             child: Text(
                               'No playlists yet\nTap + to create or import',
@@ -606,7 +704,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                           borderRadius:
                                               BorderRadius.circular(10),
                                         ),
-                                        child: const Icon(Icons.queue_music,
+                                        child: Icon(Icons.queue_music,
                                             color: AppColors.mute),
                                       )
                                     : Artwork(
@@ -618,9 +716,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis),
                                 subtitle: Text('${p.songs.length} songs',
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                         color: AppColors.inkSoft)),
-                                trailing: const Icon(Icons.chevron_right,
+                                trailing: Icon(Icons.chevron_right,
                                     color: AppColors.mute),
                                 onTap: () async {
                                   await pushAppPage(
@@ -690,7 +788,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Column(
               children: [
-                Icon(icon, color: Colors.white, size: 22),
+                Icon(icon, color: AppColors.ink, size: 22),
                 const SizedBox(height: 6),
                 Text(label,
                     textAlign: TextAlign.center,

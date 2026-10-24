@@ -44,6 +44,21 @@ void main() {
       expect(out.map((s) => s.title), contains('Pasoori'));
     });
 
+    test('a duration-less block does not swallow the next track', () {
+      // A local-file/episode row (no duration line) used to consume the
+      // following track's title and artist lines.
+      final out = SpotifyService.parseTrackList('''
+Local file
+Some Artist
+Some Album
+Next Song - Next Artist''');
+      // With the old scan the next track was eaten by the block and vanished;
+      // now it survives with its own artist.
+      expect(out.map((s) => s.title), contains('Next Song'));
+      expect(out.firstWhere((s) => s.title == 'Next Song').artist,
+          'Next Artist');
+    });
+
     test('dedupes + drops empties, empty text throws nothing', () {
       final out = SpotifyService.parseTrackList(
           'Same - Artist\nSame - Artist\n\n');

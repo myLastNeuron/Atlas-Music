@@ -112,13 +112,13 @@ class _ArtistScreenState extends State<ArtistScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: AppColors.ink),
+            icon: Icon(Icons.arrow_back, color: AppColors.ink),
             onPressed: () => Navigator.pop(context),
           ),
           title: Text(widget.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 17,
                   color: AppColors.ink)),
@@ -164,9 +164,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.cloud_off, size: 44, color: AppColors.mute),
+              Icon(Icons.cloud_off, size: 44, color: AppColors.mute),
               const SizedBox(height: 12),
-              const Text('Could not load artist',
+              Text('Could not load artist',
                   style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
@@ -176,7 +176,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                   textAlign: TextAlign.center,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 13, color: AppColors.inkSoft)),
               const SizedBox(height: 16),
               OutlinedButton(onPressed: _load, child: const Text('Retry')),
@@ -187,21 +187,21 @@ class _ArtistScreenState extends State<ArtistScreen> {
     }
     final page = _page;
     if (page == null || page.isEmpty) {
-      return const Center(
-        key: ValueKey('artist_empty'),
+      return Center(
+        key: const ValueKey('artist_empty'),
         child: Padding(
-          padding: EdgeInsets.all(32),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.person_outline, size: 44, color: AppColors.mute),
-              SizedBox(height: 12),
+              const SizedBox(height: 12),
               Text('No music found',
                   style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                       color: AppColors.ink)),
-              SizedBox(height: 6),
+              const SizedBox(height: 6),
               Text('Nothing to show for this artist right now.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
@@ -252,7 +252,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                     textAlign: TextAlign.center,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
                         color: AppColors.ink)),
@@ -260,20 +260,20 @@ class _ArtistScreenState extends State<ArtistScreen> {
               if (songCount > 0) ...[
                 const SizedBox(width: 8),
                 Text('$songCount song${songCount == 1 ? '' : 's'}',
-                    style: const TextStyle(fontSize: 13, color: AppColors.mute)),
+                    style: TextStyle(fontSize: 13, color: AppColors.mute)),
               ],
             ],
           ),
           const SizedBox(height: 4),
-          const Text('Artist',
+          Text('Artist',
               style: TextStyle(fontSize: 13, color: AppColors.mute)),
         ],
       ),
     );
   }
 
-  Widget _albumsTitle() => const Padding(
-        padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+  Widget _albumsTitle() => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
         child: Text('Albums & singles',
             style: TextStyle(
                 fontSize: 16,
@@ -306,7 +306,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                     Text(album.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                             color: AppColors.ink,
                             fontSize: 13,
                             fontWeight: FontWeight.w500)),
@@ -314,7 +314,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                       Text(album.year!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: AppColors.inkSoft, fontSize: 11)),
                   ],
                 ),
@@ -326,8 +326,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
     );
   }
 
-  Widget _songsTitle() => const Padding(
-        padding: EdgeInsets.fromLTRB(20, 16, 20, 4),
+  Widget _songsTitle() => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
         child: Text('Songs',
             style: TextStyle(
                 fontSize: 16,
@@ -343,7 +343,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
         title: Text(song.title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
                 color: AppColors.ink)),
@@ -353,7 +353,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                 : song.artist,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.inkSoft, fontSize: 12)),
+            style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
         trailing: SongMenuButton(
           song: song,
           queue: songs,

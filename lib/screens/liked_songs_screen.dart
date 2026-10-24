@@ -23,7 +23,7 @@ class LikedSongsScreen extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            icon: const Icon(Icons.favorite, size: 20, color: AppColors.ink),
+            icon: Icon(Icons.favorite, size: 20, color: AppColors.ink),
             tooltip: 'Unlike',
             onPressed: () => storage.toggleLikedSong(s),
           ),

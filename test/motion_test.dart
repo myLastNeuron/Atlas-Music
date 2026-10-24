@@ -5,8 +5,7 @@ import 'package:atlas_music/widgets/floating_glass_nav.dart';
 import 'package:atlas_music/widgets/liquid_background.dart';
 
 void main() {
-  testWidgets('ambient background stays still under reduce motion',
-      (tester) async {
+  testWidgets('background paints no running animation', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: MediaQuery(
@@ -15,7 +14,7 @@ void main() {
         ),
       ),
     );
-    // If the ambient loop ignored reduce motion this would never settle.
+    // A drifting background would never settle here.
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });

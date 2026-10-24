@@ -1,7 +1,7 @@
 name: atlas_music
 description: Open-source music player with YouTube integration.
 publish_to: 'none'
-version: 2.1.0+9
+version: 2.2.0+10
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -25,6 +25,9 @@ dependencies:
   # Used directly by the identify flow (shazam_identifier pulls it in anyway).
   record: ^7.1.2
   package_info_plus: ^10.2.2
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.2
+  share_plus: ^13.3.1
 
 dependency_overrides:
   audio_service:
@@ -34,6 +37,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.1
+  # Test-only: a real QR decoder so the tests prove the generated code (and
+  # the shared image) is actually scannable, not just a picture of a grid.
+  zxing2: ^0.2.4
 
 flutter:
   uses-material-design: true

@@ -16,7 +16,11 @@ String friendlyError(Object e) {
   if (t.contains('429') || t.contains('too many') || t.contains('rate limit')) {
     return 'Too many requests right now. Wait a minute and try again.';
   }
-  if (RegExp(r'\b5\d\d\b').hasMatch(t)) {
+  // Only a number in status position counts: "expected 512 bytes" used to be
+  // read as a server outage.
+  final code = int.tryParse(
+      RegExp(r'(?:status|http|code|error)[^0-9]{0,6}(\d{3})').firstMatch(t)?.group(1) ?? '');
+  if (code != null && code >= 500 && code <= 599) {
     return 'The music service is having problems. Try again later.';
   }
   return 'Something went wrong. Please try again.';
@@ -32,7 +36,7 @@ Future<void> showFriendlyError(
   return showDialog(
     context: context,
     builder: (ctx) => AlertDialog(
-      icon: const Icon(Icons.error_outline, color: Color(0xFFFF8A80), size: 32),
+      icon: Icon(Icons.error_outline, color: AppColors.danger, size: 32),
       title: Text(title, textAlign: TextAlign.center),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -40,15 +44,15 @@ Future<void> showFriendlyError(
           Text(
             friendlyError(error),
             textAlign: TextAlign.center,
-            style: const TextStyle(color: AppColors.inkSoft, fontSize: 15),
+            style: TextStyle(color: AppColors.inkSoft, fontSize: 15),
           ),
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
-            title: const Text('Technical details',
+            title: Text('Technical details',
                 style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
             children: [
               SelectableText(raw,
-                  style: const TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+                  style: TextStyle(fontSize: 11, color: AppColors.inkSoft)),
             ],
           ),
         ],

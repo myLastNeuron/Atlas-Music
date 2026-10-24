@@ -5,7 +5,7 @@
 <h1>Atlas Music</h1>
 
 **A free, open-source Android music player built with Flutter.**<br />
-Discover songs, build playlists, follow synced lyrics, and keep listening offline, all in a liquid-glass interface with background playback.
+Search YouTube Music, build playlists, follow synced lyrics, and keep listening offline — in a dark liquid-glass interface with real background playback.
 
 <br />
 
@@ -22,127 +22,112 @@ Discover songs, build playlists, follow synced lyrics, and keep listening offlin
   <a href="https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml"><img src="https://github.com/myLastNeuron/Atlas-Music/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
 </p>
 
-**[Screenshots](#-screenshots) · [Features](#-features) · [Quick start](#-quick-start) · [Architecture](#-how-it-works) · [Contributing](#-contributing)**
+**[Screenshots](#screenshots) · [Features](#features) · [Install](#install) · [Build from source](#build-from-source) · [Architecture](#architecture) · [Data and privacy](#data-and-privacy) · [Contributing](#contributing)**
 
 </div>
 
 > [!IMPORTANT]
-> **Android only.** This repository has no iOS project, and iOS builds are not supported.
+> **Android only.** This repository has no iOS project and does not support iOS builds. The app requires **Android 7.0 (API 24) or newer**.
 
 ---
 
-## 📱 Screenshots
+## Screenshots
 
 <table align="center">
   <tr>
-    <td align="center"><strong>🏠 HOME</strong><br /><a href="docs/media/home.png"><img src="docs/media/home.png" width="260" alt="Home screen with Quick Picks and playlist sections" /></a></td>
-    <td align="center"><strong>🔎 SEARCH</strong><br /><a href="docs/media/search.png"><img src="docs/media/search.png" width="260" alt="Search results for Superman by Eminem" /></a></td>
+    <td align="center"><strong>Home</strong><br /><a href="docs/media/home.png"><img src="docs/media/home.png" width="260" alt="Home screen with Quick Picks and playlist sections" /></a></td>
+    <td align="center"><strong>Search</strong><br /><a href="docs/media/search.png"><img src="docs/media/search.png" width="260" alt="Search results for Superman by Eminem" /></a></td>
   </tr>
   <tr>
-    <td align="center"><strong>📚 LIBRARY</strong><br /><a href="docs/media/library.png"><img src="docs/media/library.png" width="260" alt="Library with import, liked songs, recent and offline music" /></a></td>
-    <td align="center"><strong>👤 PROFILE</strong><br /><a href="docs/media/profile.png"><img src="docs/media/profile.png" width="260" alt="Profile and settings screen" /></a></td>
+    <td align="center"><strong>Library</strong><br /><a href="docs/media/library.png"><img src="docs/media/library.png" width="260" alt="Library with import, liked songs, recent and offline music" /></a></td>
+    <td align="center"><strong>Profile</strong><br /><a href="docs/media/profile.png"><img src="docs/media/profile.png" width="260" alt="Profile and settings screen" /></a></td>
   </tr>
 </table>
 
 ---
 
-## ✨ Features
+## Features
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
+### Playback
 
-### 🎧 Listen
-- Background playback with lock-screen and notification controls
-- Offline downloads in a validated, size-capped cache
-- Queue, shuffle, repeat, and preloading
-- Automatic offline recovery
+- Background playback with lock-screen artwork, and notification and headset controls. The notification and the in-app player share a single queue.
+- Queue, shuffle, repeat, and "Play next". The upcoming track is preloaded and validated before it starts.
+- Autoplay: when the queue runs out, Atlas explores related tracks, artist and title searches, and your liked or recently played music.
+- Offline recovery: if a stream fails mid-play or connectivity drops, Atlas falls back to the cached copy and resumes the same song rather than skipping.
+- Playback position is not restored after the app restarts (see [Current limits](#current-limits)).
 
-</td>
-    <td width="33%" valign="top">
+### Discovery
 
-### 🔍 Discover
-- Search YouTube Music and YouTube video results
-- Song-focused discovery, related tracks, and autoplay
-- On-device Quick Picks shaped by your listening history
-- Artist pages and read-only video engagement stats
-- Shazam-style **Find song** and hands-free **Auto listen**
+- Search merges YouTube Music "Songs" results with plain YouTube video results, so slowed, reverb, remix, cover, lyric and sped-up uploads are reachable.
+- A content filter removes non-music and long-form entries (trailers, movies, TV, podcasts, interviews) and results with an unknown duration. Songs already in your library and downloaded files are never removed by it.
+- "Recommended for you" fills to 15 songs from your taste pool: a strict pass first, then a relaxed pass (personal-signal gate and per-artist cap loosened) when the pool is too small.
+- Quick Picks are computed on-device from your listening history, with diversity controls and a one-line explanation for each pick.
+- Artist pages, related tracks, and read-only video engagement statistics. YouTube does not publish dislike counts, so unavailable values show as `N/A`.
 
-</td>
-    <td width="33%" valign="top">
+### Library
 
-### 🎨 Make it yours
-- Playlists, liked songs, and listening history
-- Import from YouTube, Spotify, or a pasted track list
-- Synced lyrics with line-by-line highlighting and translation
-- Dark liquid-glass design, animated backdrop, floating navigation
-- Check for updates from Profile, and install the new version in place
+- Liked songs, recently played, listening history, and offline music as separate browsable collections.
+- Create and edit playlists, add songs from search, change or remove covers, and download an entire playlist for offline listening.
+- A playlist that still contains downloads is protected from deletion, and the UI says so instead of closing silently.
 
-</td>
-  </tr>
-</table>
+### Lyrics
 
-<details>
-<summary><b>Playback that keeps going</b></summary>
+- Synced, line-by-line lyrics from [LRCLIB](https://lrclib.net/) — no API key, no account.
+- Tap any line to seek to it, and translate the displayed lyrics from the player (Google Translate).
+- The lyrics cache is keyed on the full artist and title, so two songs by the same artist never share an entry.
 
-- Audio continues with the screen off. The notification and in-app player share one queue.
-- Upcoming tracks are preloaded and validated before they play.
-- Auto-play explores related songs, artist and title searches, and your liked or recently played music.
-- Downloads use an oldest-first cache capped at **1 GB** with a **30-day TTL**. The currently playing queue is never evicted.
-- Quick Picks use on-device listening signals, with diversity controls and a short explanation for each pick.
+### Playlists and import
 
-</details>
+- Import YouTube and YouTube Music playlists.
+- Match a Spotify playlist to playable tracks using **your own** Spotify API credentials, entered in Profile and stored on the device.
+- Or paste a plain track list and let Atlas match it.
+- **Share a playlist as a QR code:** a playlist's menu has *Share Playlist*, which encodes the name and every track into a QR code (long playlists are split into several numbered codes that cycle on screen) and shares it as an image through any app.
+- **Import Atlas Music Playlist:** Library → Import reads such a code with the camera or from a saved photo and clones the playlist locally. The clone is an ordinary editable playlist. No account, no server, no network.
 
-<details>
-<summary><b>Lyrics, playlists & library</b></summary>
+### Find song and Auto listen
 
-- Synced lyrics come from [LRCLIB](https://lrclib.net/) with no API key. Tap a line to seek, and translate lyrics from the player.
-- Create and edit playlists, add songs from search, change covers, and download a whole playlist for offline listening.
-- Import YouTube and YouTube Music playlists, match Spotify playlists to playable tracks, or paste a track list.
-- Spotify import uses **your own** Spotify API credentials, stored on-device. Atlas has no accounts and no cloud sync.
+- **Find song** records roughly six seconds of the music around you, fingerprints it, and names the track. From the result you can play it or add it to a playlist. It is also available as a Quick Settings tile.
+- **Auto listen** keeps identifying songs in the background while you use other apps. Start it from Profile, its Quick Settings tile, or the launcher long-press shortcut.
+- Every match is appended to **Auto song fetch history** in Profile with an exact timestamp, grouped by Today/Yesterday. Rows behave like the rest of the library: tap to play, use the 3-dot menu to remove an entry, or clear the whole list.
+- Identification uses Shazam's public fingerprint endpoint through the [`shazam_identifier`](https://pub.dev/packages/shazam_identifier) helpers; the match is resolved to a playable track with the same YouTube search the rest of the app uses.
+- Recording never takes audio focus, so identifying a song does not pause what is already playing.
 
-</details>
+### Look and feel
 
-<details>
-<summary><b>Discovery rules</b></summary>
+- Dark liquid-glass surfaces, an animated ambient backdrop, and a floating navigation bar.
+- The mini-player cover flies into the full player as a shared-element (Hero) morph.
+- Settings: light mode, artwork-derived player colour, and a transparency slider (transparent to translucent, default halfway) that applies to every glass surface.
+- Version label comes from the platform through `package_info_plus`, so it cannot drift from `pubspec.yaml`.
 
-Discovery filters out results with unknown duration and non-music or long-form content. Songs in your library and explicitly downloaded files are never removed by these filters. Search can still surface music uploads such as remixes, slowed versions, and lyric videos.
+### Updates
 
-</details>
-
-<details>
-<summary><b>🎙️ Find song &amp; Auto listen</b></summary>
-
-- **Find song** records about six seconds of what is playing around you, fingerprints it, and names the track. From the result you can play it or add it to a playlist. It also runs from a **Find song Quick Settings tile**, which opens Atlas so it can listen (see the limit below).
-- **Auto listen** keeps naming songs in the background while you use other apps — Instagram, YouTube, a music player. Start it from Profile, the **Auto listen tile**, or the launcher long-press shortcut.
-- Every find is appended to **Auto song fetch history** (Profile) with an exact timestamp. Rows behave like the rest of the library — tap to play, or use the 3-dot menu's **Remove from Song Fetch List** — and the whole list can be cleared. Auto finds are silent: they never post a notification, and the ongoing "Listening for music" notice just updates with the latest match.
-- Identification runs against Shazam's public fingerprint endpoint through the [`shazam_identifier`](https://pub.dev/packages/shazam_identifier) helpers, and the match is resolved to a playable track with the same YouTube search the rest of the app uses.
-- Recording never takes audio focus, so identifying a song does not pause whatever is playing.
-
-</details>
+- **Profile → Check for updates** reads the newest published GitHub Release, compares its tag with the installed version, shows what changed, downloads the APK and hands it to the Android installer. No server and no API key.
+- Network failures are reported as "could not reach GitHub", distinct from "you are on the latest version", and a stalled download times out without leaving a partial file.
 
 ---
 
-## 🚀 Quick start
+## Install
 
-### Download
+1. Download the latest signed APK from the [Releases page](https://github.com/myLastNeuron/Atlas-Music/releases/latest), or use the direct link: **[Atlas.Music.apk](https://github.com/myLastNeuron/Atlas-Music/releases/latest/download/Atlas.Music.apk)**.
+2. Open the file on the device and allow installation from that source when prompted.
+3. Launch Atlas. The first run asks for a display name and a few preferences, then builds your home screen.
 
-Get the latest signed APK from the [Releases page](https://github.com/myLastNeuron/Atlas-Music/releases/latest), or download it directly:
+After that, updates install in place from **Profile → Check for updates**.
 
-**[⬇ Download Atlas Music APK](https://github.com/myLastNeuron/Atlas-Music/releases/latest/download/Atlas.Music.apk)**
+---
 
-Open it on your Android device to install. The app can also update itself afterwards (**Profile → Check for updates**).
+## Build from source
 
 ### Requirements
 
 | Tool | Version |
 |---|---|
-| Flutter | stable (developed with **3.47.2**) |
+| Flutter | stable channel (developed with 3.47.2) |
 | Dart | 3 |
-| Android | **7.0 (API 24)** or newer |
+| Android | 7.0 (API 24) or newer on the target device |
 | Tooling | Android Studio, or Android SDK + JDK |
 
-### Run it
+### Run
 
 ```bash
 git clone https://github.com/myLastNeuron/Atlas-Music.git
@@ -152,7 +137,7 @@ flutter run
 ```
 
 > [!NOTE]
-> `audio_service` is vendored at `plugins/audio_service` and wired in through a local dependency override. Keep it in place for Android builds.
+> `audio_service` is vendored at `plugins/audio_service` and wired in through a `dependency_overrides` entry in `pubspec.yaml`. Keep it in place or Android builds will lose their media session.
 
 ### Build an APK
 
@@ -166,12 +151,9 @@ flutter build apk --release --split-per-abi
 
 Output goes to `build/app/outputs/flutter-apk/`.
 
-<details>
-<summary><b>🔐 Sign a release</b></summary>
+### Sign a release
 
-<br />
-
-Without a signing configuration, release builds use the machine's debug keystore. That is fine for local testing, but APKs signed on different machines cannot update each other. To publish update-compatible builds, create a private keystore:
+Without a signing configuration, release builds fall back to the machine's debug keystore. That is fine for local testing, but APKs signed on different machines cannot update each other. To publish update-compatible builds, create a private keystore:
 
 ```bash
 keytool -genkey -v -keystore android/app/atlas-release.jks \
@@ -187,31 +169,31 @@ keyAlias=atlas
 storeFile=atlas-release.jks
 ```
 
+`android/app/build.gradle.kts` reads that file when it exists and uses the debug keystore otherwise.
+
 > [!WARNING]
 > Back up the keystore and its passwords. If you lose them, you cannot ship updates for existing installs.
 
-### Publishing an update (in-app updater)
+### Publish an update
 
-The app's **Check for updates** reads the newest **published** GitHub Release and compares its tag with the installed version, so a release *is* the update:
+The in-app updater reads the newest **published** GitHub Release and compares its tag to the installed version, so a release *is* the update:
 
-1. Bump `version` in `pubspec.yaml` (e.g. `2.1.0+9`).
+1. Bump `version` in `pubspec.yaml` (for example `2.1.0+9`).
 2. Tag it to match and push:
    ```bash
    git tag v2.1.0
    git push origin v2.1.0
    ```
-3. The `Release` workflow builds the **signed** APK and publishes it as `Atlas.Music.apk` on the release.
+3. The `Release` workflow builds the signed APK and attaches it as `Atlas.Music.apk`.
 
-Add these repository secrets once (**Settings → Secrets and variables → Actions**): `KEYSTORE_BASE64` (base64 of the `.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. The workflow refuses to publish a debug-signed APK, and it fails if the tag does not match `pubspec.yaml`.
+Add these repository secrets once under **Settings → Secrets and variables → Actions**: `KEYSTORE_BASE64` (base64 of the `.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. The workflow refuses to publish a debug-signed APK and fails when the tag does not match `pubspec.yaml`.
 
 > [!IMPORTANT]
-> The tag must match `pubspec.yaml`, and the release must be **published, not a draft** — drafts are invisible to the updater. Existing installs are debug-signed, so the **first** release under the permanent key needs a one-time uninstall/reinstall (which clears on-device data, since `allowBackup="false"`). Every update after that installs in place.
-
-</details>
+> The tag must match `pubspec.yaml`, and the release must be **published, not a draft** — drafts are invisible to the updater. Existing installs were debug-signed, so the **first** release under the permanent key needs a one-time uninstall/reinstall. That wipes on-device data, because the app sets `allowBackup="false"`. Every update after that installs in place.
 
 ---
 
-## 🧭 How it works
+## Architecture
 
 <div align="center">
 <img src="docs/media/architecture.svg" alt="Playback flow: metadata, stream resolution and failover, validated cache, audio player, notification and app UI" width="100%" />
@@ -225,20 +207,21 @@ Add these repository secrets once (**Settings → Secrets and variables → Acti
 | 4 | `AudioPlayerService` | Queue, shuffle and repeat, preloading, offline recovery, downloads |
 | 5 | `AtlasAudioHandler` | Bridge playback to Android media controls; screens follow shared state |
 
-<details>
-<summary><b>🧱 Tech stack</b></summary>
+The resolver is the interesting part. `YouTubeProvider` asks several YouTube player clients in sequence, each with a 10 second budget inside a 25 second total, so a slow or consent-gated path (for example on UK IPs) fails over instead of stalling. Resolved manifests are cached for 20 minutes, each candidate stream is validated before it is handed to the player, and a failing provider enters a cooldown instead of being retried on every tap.
 
-- **App:** Flutter and Dart, with Provider
+Downloads are staged to a temporary file, rejected if the body is implausibly small or the content type is wrong, and only then promoted into the cache atomically — a truncated download can never be mistaken for a playable file.
+
+### Tech stack
+
+- **App:** Flutter and Dart with Provider for state
 - **Audio:** `just_audio`, `audio_session`, vendored `audio_service`
 - **Metadata and streams:** YouTube Music / InnerTube and `youtube_explode_dart`
 - **Lyrics:** LRCLIB; Google Translate for lyric translation
 - **Local data:** `shared_preferences` and on-device files
+- **Identification:** `record` and `shazam_identifier`
 - **UI:** Plus Jakarta Sans, custom liquid-glass surfaces, and motion
 
-</details>
-
-<details>
-<summary><b>🗂️ Project map</b></summary>
+### Project map
 
 ```text
 lib/
@@ -247,39 +230,63 @@ lib/
 ├── models/                 # Song, playlist, artist, video stats
 ├── screens/                # Home, search, library, player, profile, …
 ├── services/               # Playback, YouTube, lyrics, storage, identify, recommendations
-├── theme/                  # Colors, typography, motion, shared theme
+├── theme/                  # Colours, typography, motion, shared theme
 └── widgets/                # Mini-player, lyrics, artwork, glass navigation
 plugins/audio_service/      # Vendored audio_service Android implementation
 docs/media/                 # Screenshots and architecture diagram
 ```
 
-</details>
+---
+
+## Data and privacy
+
+Atlas has no accounts, no cloud sync, and no analytics. Everything below stays on the device:
+
+- Playlists, liked songs, history, preferences, and the display name.
+- Downloaded audio in the app cache.
+- Spotify credentials, if you choose to enter them for playlist matching.
+- Auto listen history.
+
+The cache is capped at **1 GB** with a **30-day TTL**. Eviction is oldest-first, and files belonging to the currently playing queue are never evicted. The app sets `allowBackup="false"`, so Android will not copy this data into a device backup.
+
+### Android permissions
+
+| Permission | Why |
+|---|---|
+| `INTERNET`, `ACCESS_NETWORK_STATE` | Search, stream resolution, lyrics, updates |
+| `WAKE_LOCK`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Playback with the screen off |
+| `POST_NOTIFICATIONS` | Playback and Auto listen notifications |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Optional prompt so background playback is not killed by the system |
+| `RECORD_AUDIO`, `FOREGROUND_SERVICE_MICROPHONE` | Find song and Auto listen |
+| `CAMERA` | Scanning a shared playlist QR code |
+| `REQUEST_INSTALL_PACKAGES` | Handing a downloaded update to the Android installer |
 
 ---
 
-## 🧪 Checks
+## Checks
 
 ```bash
 flutter analyze
 flutter test
 ```
 
-GitHub Actions runs both on every push and pull request. The test suite covers content filtering, recommendations, cache and download policy, resolver failover, lyrics, playlist parsing, storage, song identification, and UI helpers. The vendored `plugins/audio_service` copy is excluded from project analysis.
+GitHub Actions runs both on every push and pull request. `flutter analyze` is expected to be clean; the vendored `plugins/audio_service` copy is excluded from analysis. The test suite covers content filtering, recommendations, cache and download policy, resolver failover and cooldowns, lyrics and translation, playlist parsing, playlist QR generation and decoding, Spotify matching, storage, song identification, the update service, and UI behaviour such as motion and queue handling.
 
 ---
 
-## 🗺️ Current limits
+## Current limits
 
 - Android only. iOS support has not started.
 - No queue-reordering screen, and playback position is not restored after the app restarts.
-- No cloud sync or user accounts. Library data stays on-device.
-- The dark appearance is fixed; there is no theme switcher.
-- One-shot **Find song** needs Atlas on screen: Android grants the microphone only to a visible app, and there is no "always allow" for the mic. **Auto listen** covers background listening, but it must be started from Atlas (its tile or shortcut) and uses more battery.
-- YouTube does not publish dislike counts in general, so unavailable values show as `N/A`.
+- No cloud sync or user accounts; library data stays on-device.
+- The dark appearance is the default look; light mode is available, and there is no separate accent-colour picker.
+- One-shot **Find song** needs Atlas on screen, because Android only grants the microphone to a visible app and there is no "always allow" option. **Auto listen** covers background listening, but it must be started from Atlas (tile or shortcut) and uses more battery.
+- YouTube does not publish dislike counts, so those values show as `N/A`.
+- Playlist QR codes are size-limited by QR capacity; long playlists need several codes, which are shared together in one image.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository and create a branch.
 2. Make your change and add or update tests where they apply.
@@ -290,7 +297,7 @@ Issues and pull requests are welcome. Keep platform claims accurate: **Android i
 
 ---
 
-## 📄 License & disclaimer
+## License and disclaimer
 
 Atlas Music is licensed under the [Apache License 2.0](LICENSE.md).
 
@@ -301,8 +308,8 @@ Atlas Music is licensed under the [Apache License 2.0](LICENSE.md).
 
 <div align="center">
 
-**If Atlas Music is useful to you, consider giving it a ⭐**
+**If Atlas Music is useful to you, consider giving the repository a star.**
 
-Made with Flutter · built for the love of music
+Built with Flutter, for the love of music.
 
 </div>

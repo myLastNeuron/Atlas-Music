@@ -210,11 +210,14 @@ class SpotifyService {
     var i = 0;
     while (i < lines.length) {
       // Duration-closed block: [..., title, artist, (album,) duration].
+      // A copied row is at most four lines long: scanning further swallowed
+      // the following rows when this one has no duration line (local files,
+      // episodes).
       var j = i;
-      while (j < lines.length && !durRe.hasMatch(lines[j])) {
+      while (j < lines.length && j - i < 4 && !durRe.hasMatch(lines[j])) {
         j++;
       }
-      if (j < lines.length && j > i) {
+      if (j < lines.length && j > i && durRe.hasMatch(lines[j])) {
         // Block lines[i..j] ends with duration at j.
         final block = lines.sublist(i, j);
         add(block.first, block.length > 1 ? block[1] : '');

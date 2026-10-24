@@ -50,8 +50,10 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
 
   String _stamp(DateTime t) {
     final now = DateTime.now();
-    final days = DateTime(now.year, now.month, now.day)
-        .difference(DateTime(t.year, t.month, t.day))
+    // Calendar days, not elapsed hours: a 23-hour DST day must still count as
+    // one day, or yesterday's finds are stamped "Today".
+    final days = DateTime.utc(now.year, now.month, now.day)
+        .difference(DateTime.utc(t.year, t.month, t.day))
         .inDays;
     final time = TimeOfDay.fromDateTime(t).format(context);
     if (days == 0) return 'Today · $time';
@@ -71,10 +73,10 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: AppColors.ink),
+            icon: Icon(Icons.arrow_back, color: AppColors.ink),
             onPressed: () => Navigator.pop(context),
           ),
-          title: const Text('Auto song fetch history',
+          title: Text('Auto song fetch history',
               style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 17,
@@ -84,7 +86,7 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
             IconButton(
               tooltip: 'Delete all',
               onPressed: _finds.isEmpty ? null : _storage.clearAutoFinds,
-              icon: const Icon(Icons.delete_outline, color: AppColors.ink),
+              icon: Icon(Icons.delete_outline, color: AppColors.ink),
             ),
           ],
         ),
@@ -99,21 +101,21 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                           height: 24,
                           child: CircularProgressIndicator(strokeWidth: 2)))
                   : _finds.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Padding(
-                            padding: EdgeInsets.all(32),
+                            padding: const EdgeInsets.all(32),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Icon(Icons.headphones,
                                     size: 44, color: AppColors.mute),
-                                SizedBox(height: 12),
+                                const SizedBox(height: 12),
                                 Text('Nothing found yet',
                                     style: TextStyle(
                                         fontSize: 15,
                                         fontWeight: FontWeight.w600,
                                         color: AppColors.ink)),
-                                SizedBox(height: 6),
+                                const SizedBox(height: 6),
                                 Text(
                                     'Songs Auto listen hears will appear here',
                                     textAlign: TextAlign.center,
@@ -153,7 +155,7 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                                                 maxLines: 1,
                                                 overflow:
                                                     TextOverflow.ellipsis,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                     fontSize: 14,
                                                     fontWeight: FontWeight.w500,
                                                     color: AppColors.ink)),
@@ -161,14 +163,14 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                                                 maxLines: 1,
                                                 overflow:
                                                     TextOverflow.ellipsis,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                     color: AppColors.inkSoft,
                                                     fontSize: 12)),
                                             Text(_stamp(find.foundAt),
                                                 maxLines: 1,
                                                 overflow:
                                                     TextOverflow.ellipsis,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                     color: AppColors.mute,
                                                     fontSize: 11)),
                                           ],
@@ -181,7 +183,7 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                                           queue: songs,
                                           index: i,
                                           onRemoveFromAutoFinds: () =>
-                                              _storage.removeAutoFind(i),
+                                              _storage.removeAutoFind(find),
                                         ),
                                       ]),
                                     ],

@@ -1,30 +1,85 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// Dark translucent-glass mono system. Single source of truth so Home /
-/// Search / Library / Profile share one premium look: deep neutral backdrop,
-/// frosted-glass floating surfaces, white ink, one light primary action.
+/// Mono glass palette: two modes, one set of names. Dark is the app's
+/// original look; light is a paper-and-ink reading of the same surfaces.
 ///
+/// The values are getters, not consts: a const colour freezes the mode it was
+/// compiled with. [ThemeSettings] swaps the mode and the app rebuilds from the
+/// root, so every surface re-reads them.
 class AppColors {
-  // Core mono tokens (dark glass).
-  static const paper = Color(0xFF0E0E12);
-  static const mist = Color(0xFF17171C);
-  static const card = Color(0xFF1A1A20);
-  static const line = Color(0x24FFFFFF);
-  static const ink = Color(0xFFFFFFFF);
-  static const inkSoft = Color(0xFFC6C6CE);
-  static const mute = Color(0xFF9A9AA3);
-  static const charcoal = Color(0xFF18181B);
+  static bool _light = false;
+
+  static bool get isLight => _light;
+
+  /// Switches the palette. The caller owns the rebuild.
+  static void setLight(bool value) => _light = value;
+
+  /// Page backdrop.
+  static Color get paper =>
+      _light ? const Color(0xFFF6F6F8) : const Color(0xFF0E0E12);
+
+  /// Recessed fill: inputs, placeholder tiles.
+  static Color get mist =>
+      _light ? const Color(0xFFECECF0) : const Color(0xFF17171C);
+
+  static Color get card =>
+      _light ? const Color(0xFFFFFFFF) : const Color(0xFF1A1A20);
+
+  /// Hairline.
+  static Color get line =>
+      _light ? const Color(0x1F000000) : const Color(0x24FFFFFF);
+
+  /// Primary text and icon.
+  static Color get ink =>
+      _light ? const Color(0xFF13131A) : const Color(0xFFFFFFFF);
+
+  static Color get inkSoft =>
+      _light ? const Color(0xFF4C4C57) : const Color(0xFFC6C6CE);
+
+  static Color get mute =>
+      _light ? const Color(0xFF7E7E89) : const Color(0xFF9A9AA3);
+
+  /// The one filled primary action surface (buttons, selected chips).
+  static Color get action =>
+      _light ? const Color(0xFF16161D) : const Color(0xFFFFFFFF);
+
+  /// Content drawn on [action].
+  static Color get charcoal =>
+      _light ? const Color(0xFFFFFFFF) : const Color(0xFF18181B);
 
   /// Glass base for menus, dialogs, sheets, cards and panels. The transparency
   /// level (see [GlassSettings]) decides how much of the backdrop shows
   /// through; this is the solid colour behind it.
-  static const glass = Color(0xFF191921);
+  static Color get glass =>
+      _light ? const Color(0xFFFFFFFF) : const Color(0xFF191921);
 
-  /// Frosted-glass rim/highlight tints, kept low so no hard white edge shows.
-  static Color get glassBorder => Colors.white.withValues(alpha: 0.10);
-  static Color get glassHighlight => Colors.white.withValues(alpha: 0.04);
+  /// Frosted-glass rim, kept low so no hard edge shows.
+  static Color get glassBorder =>
+      (_light ? Colors.black : Colors.white).withValues(alpha: 0.10);
+
+  /// Errors and destructive text.
+  static Color get danger =>
+      _light ? const Color(0xFFB3261E) : const Color(0xFFFF8A80);
+
+  /// Soft shadow under floating panels: deep on dark, faint on light.
+  static Color get shadow => Colors.black.withValues(alpha: _light ? 0.12 : 0.35);
 }
+
+/// Status/nav bar icons follow the palette: dark icons on the light one.
+void applySystemUiOverlay() => SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness:
+            AppColors.isLight ? Brightness.dark : Brightness.light,
+        statusBarBrightness:
+            AppColors.isLight ? Brightness.light : Brightness.dark,
+        systemNavigationBarColor: AppColors.paper,
+        systemNavigationBarIconBrightness:
+            AppColors.isLight ? Brightness.dark : Brightness.light,
+      ),
+    );
 
 /// `m:ss` clock shared by list rows (no leading zero on minutes).
 String formatClock(Duration d) {
@@ -46,19 +101,23 @@ class AppMotion {
   static const curve = Curves.easeOutCubic;
   static const emphasized = Cubic(0.2, 0.0, 0.0, 1.0);
   static const spring = Curves.easeOutBack;
+
+  /// Full-player morph curve. The surface and the cover travel together, so a
+  /// hard ease-out start snaps; this one eases in, glides, then settles.
+  /// Shared by the reveal window, the Hero rect and the cover radius.
+  static const player = Curves.fastOutSlowIn;
   static const page = Duration(milliseconds: 240);
-  // Full player: the cover Hero and the page ease own the motion together.
-  // Longer and eased so the player materialises smoothly rather than
-  // snapping; these also set how long the cover flight takes.
-  static const playerOpen = Duration(milliseconds: 480);
-  static const playerClose = Duration(milliseconds: 420);
+  // Full player: long enough for the surface to grow out of the mini bar and
+  // the cover to travel without feeling rushed (a short morph snapped and
+  // read as a cut). These also set the Hero flight.
+  static const playerOpen = Duration(milliseconds: 780);
+  // Same length both ways: the Hero flight is driven by the route animation,
+  // so a shorter close flew the cover back visibly faster than it opened.
+  static const playerClose = playerOpen;
 
   static const modal = Duration(milliseconds: 220);
   static const micro = Duration(milliseconds: 180);
   static const entrance = Duration(milliseconds: 320);
-
-  /// Slow ambient loop for the background washes.
-  static const ambient = Duration(milliseconds: 18000);
 
   /// Per-item delay for staggered entrances.
   static const stagger = Duration(milliseconds: 40);
@@ -75,23 +134,34 @@ class AppMotion {
 }
 
 class AppTheme {
-  /// The theme is built once and never rebuilt: the app's glass level is
-  /// held by [GlassSettings] and read by the surfaces themselves, so
-  /// changing it never restyles (and never rebuilds) the whole app.
-  static ThemeData light() {
+  /// The theme for the current palette. Rebuilt when the light/dark mode
+  /// changes (the one app-wide rebuild); the glass level is read by the
+  /// surfaces themselves, so changing it never restyles the whole app.
+  static ThemeData build() {
+    final light = AppColors.isLight;
     final base = ThemeData(
-      brightness: Brightness.dark,
+      brightness: light ? Brightness.light : Brightness.dark,
       useMaterial3: true,
       scaffoldBackgroundColor: AppColors.paper,
-      colorScheme: const ColorScheme.dark(
-        primary: Colors.white,
-        onPrimary: AppColors.charcoal,
-        secondary: AppColors.inkSoft,
-        onSecondary: AppColors.charcoal,
-        surface: AppColors.card,
-        onSurface: AppColors.ink,
-        error: Color(0xFFFF8A80),
-      ),
+      colorScheme: light
+          ? ColorScheme.light(
+              primary: AppColors.action,
+              onPrimary: AppColors.charcoal,
+              secondary: AppColors.inkSoft,
+              onSecondary: AppColors.charcoal,
+              surface: AppColors.card,
+              onSurface: AppColors.ink,
+              error: AppColors.danger,
+            )
+          : ColorScheme.dark(
+              primary: AppColors.action,
+              onPrimary: AppColors.charcoal,
+              secondary: AppColors.inkSoft,
+              onSecondary: AppColors.charcoal,
+              surface: AppColors.card,
+              onSurface: AppColors.ink,
+              error: AppColors.danger,
+            ),
     );
     // Plus Jakarta Sans: geometric, modern, multi-weight. Loaded once
     // here so screens never trigger per-build font fetches.
@@ -127,7 +197,7 @@ class AppTheme {
             displayColor: AppColors.ink,
             decoration: TextDecoration.none,
           ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         foregroundColor: AppColors.ink,
         elevation: 0,
@@ -145,11 +215,11 @@ class AppTheme {
           TargetPlatform.windows: AppPageTransitionsBuilder(),
         },
       ),
-      dialogTheme: const DialogThemeData(
+      dialogTheme: DialogThemeData(
         backgroundColor: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(20)),
+          borderRadius: const BorderRadius.all(Radius.circular(20)),
           side: BorderSide(color: AppColors.line),
         ),
         titleTextStyle: TextStyle(
@@ -162,11 +232,11 @@ class AppTheme {
           color: AppColors.inkSoft,
         ),
       ),
-      bottomSheetTheme: const BottomSheetThemeData(
+      bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           side: BorderSide(color: AppColors.line),
         ),
       ),
@@ -179,7 +249,7 @@ class AppTheme {
         ),
         behavior: SnackBarBehavior.floating,
       ),
-      listTileTheme: const ListTileThemeData(
+      listTileTheme: ListTileThemeData(
         iconColor: AppColors.inkSoft,
         textColor: AppColors.ink,
         // The tile's shape is the press-highlight and ripple clip. Without it
@@ -187,32 +257,32 @@ class AppTheme {
         // the row's rounded shape.
         shape: kRowPressShape,
       ),
-      iconTheme: const IconThemeData(color: AppColors.inkSoft),
-      dividerTheme: const DividerThemeData(
+      iconTheme: IconThemeData(color: AppColors.inkSoft),
+      dividerTheme: DividerThemeData(
         color: AppColors.line,
         thickness: 1,
         space: 1,
       ),
-      popupMenuTheme: const PopupMenuThemeData(
+      popupMenuTheme: PopupMenuThemeData(
         color: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(14)),
+          borderRadius: const BorderRadius.all(Radius.circular(14)),
           side: BorderSide(color: AppColors.line),
         ),
         textStyle: TextStyle(color: AppColors.ink, fontSize: 14),
       ),
       sliderTheme: base.sliderTheme.copyWith(
-        activeTrackColor: Colors.white,
-        inactiveTrackColor: Colors.white.withValues(alpha: 0.16),
-        thumbColor: Colors.white,
-        overlayColor: Colors.white.withValues(alpha: 0.12),
+        activeTrackColor: AppColors.action,
+        inactiveTrackColor: AppColors.ink.withValues(alpha: 0.16),
+        thumbColor: AppColors.action,
+        overlayColor: AppColors.ink.withValues(alpha: 0.12),
         trackHeight: 4,
       ),
       progressIndicatorTheme: ProgressIndicatorThemeData(
-        color: Colors.white,
-        linearTrackColor: Colors.white.withValues(alpha: 0.14),
-        circularTrackColor: Colors.white.withValues(alpha: 0.14),
+        color: AppColors.ink,
+        linearTrackColor: AppColors.ink.withValues(alpha: 0.14),
+        circularTrackColor: AppColors.ink.withValues(alpha: 0.14),
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) =>
@@ -221,12 +291,12 @@ class AppTheme {
                 : AppColors.mute),
         trackColor: WidgetStateProperty.resolveWith((states) =>
             states.contains(WidgetState.selected)
-                ? Colors.white
-                : Colors.white.withValues(alpha: 0.16)),
+                ? AppColors.action
+                : AppColors.ink.withValues(alpha: 0.16)),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.action,
           foregroundColor: AppColors.charcoal,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
@@ -235,9 +305,9 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.action,
           foregroundColor: AppColors.charcoal,
-          shadowColor: Colors.black.withValues(alpha: 0.35),
+          shadowColor: AppColors.shadow,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -246,7 +316,7 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.ink,
-          side: const BorderSide(color: AppColors.line),
+          side: BorderSide(color: AppColors.line),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -258,31 +328,31 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: AppColors.mist,
-        hintStyle: const TextStyle(color: AppColors.mute, fontSize: 14),
+        hintStyle: TextStyle(color: AppColors.mute, fontSize: 14),
         prefixIconColor: AppColors.mute,
         suffixIconColor: AppColors.inkSoft,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.line),
+          borderSide: BorderSide(color: AppColors.line),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.line),
+          borderSide: BorderSide(color: AppColors.line),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: AppColors.inkSoft, width: 1.2),
+          borderSide: BorderSide(color: AppColors.inkSoft, width: 1.2),
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
-      cardTheme: const CardThemeData(
+      cardTheme: CardThemeData(
         color: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.black38,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(16)),
+          borderRadius: const BorderRadius.all(Radius.circular(16)),
           side: BorderSide(color: AppColors.line),
         ),
       ),
@@ -304,7 +374,10 @@ Widget buildAppTransition(
   Widget child,
 ) {
   if (AppMotion.reduced(context)) return child;
-  final curved = CurvedAnimation(parent: animation, curve: AppMotion.curve);
+  // drive() instead of a CurvedAnimation: the latter registers a status
+  // listener on the route controller and is never disposed when built in
+  // build(), leaking one listener per frame of every transition.
+  final curved = animation.drive(CurveTween(curve: AppMotion.curve));
   return FadeTransition(
     opacity: curved,
     child: SlideTransition(
@@ -320,19 +393,21 @@ Widget buildAppTransition(
   );
 }
 
-/// Full-player route motion. The mini-player cover flies into the full
-/// player via a [Hero] (see MiniPlayer/PlayerScreen).
+/// Hero tag shared by the mini bar that opened the player and the full player's
+/// cover. Hero tags are matched per route, so the tag has to identify the bar
+/// that was tapped: with one global tag every MiniPlayer in the stack matched
+/// every full player, and pushing a screen that mounts a MiniPlayer (an artist
+/// page) flew the big cover down into the 42 px thumb.
+String playerHeroTag = 'player_cover';
+
+/// Full-player route motion: the page cross-fades while the artwork flies
+/// between the mini thumb and the big cover via a [Hero] (see MiniPlayer /
+/// PlayerScreen). Nothing else moves — growing and collapsing a surface
+/// around the content dragged the header and the transport row up and down
+/// with the cover.
 ///
-/// Closing is a single full-height slide of the opaque page, like a sheet.
-/// It is deliberately one transform only: fade/scale layers over a full-screen
-/// page cost frames on device (the drifting background and glass surfaces have
-/// to be recomposited every frame) and they left a visible dark veil over the
-/// page underneath plus an empty cover slot. A slide is one composited layer
-/// and stays smooth.
-///
-/// [AppMotion.emphasized] is shared with the Hero's rect tween
-/// ([PlayerRectTween]) so the cover and the page can not drift apart mid-flight.
-/// Respects reduce-motion.
+/// [AppMotion.player] is shared with the Hero's rect tween ([PlayerRectTween])
+/// so the cover and the page fade stay in step. Respects reduce-motion.
 Widget buildPlayerTransition(
   BuildContext context,
   Animation<double> animation,
@@ -340,32 +415,9 @@ Widget buildPlayerTransition(
   Widget child,
 ) {
   if (AppMotion.reduced(context)) return child;
-  final curved = CurvedAnimation(
-    parent: animation,
-    curve: AppMotion.emphasized,
-  );
-  if (animation.status == AnimationStatus.reverse) {
-    // A pop runs the animation 1 -> 0, so the page is in place at 1 and ends a
-    // full screen down at 0. Begin/end follow that exactly: getting them the
-    // other way round starts the page off-screen below and slides it back up,
-    // which is the "player flashes back after closing" report.
-    return SlideTransition(
-      position: Tween<Offset>(
-        begin: const Offset(0, 1),
-        end: Offset.zero,
-      ).animate(curved),
-      child: child,
-    );
-  }
   return FadeTransition(
-    opacity: curved,
-    child: SlideTransition(
-      position: Tween<Offset>(
-        begin: const Offset(0, 0.06),
-        end: Offset.zero,
-      ).animate(curved),
-      child: child,
-    ),
+    opacity: CurvedAnimation(parent: animation, curve: AppMotion.player),
+    child: child,
   );
 }
 

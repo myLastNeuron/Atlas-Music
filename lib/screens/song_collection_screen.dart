@@ -88,11 +88,11 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: AppColors.ink),
+            icon: Icon(Icons.arrow_back, color: AppColors.ink),
             onPressed: () => Navigator.pop(context),
           ),
           title: Text(widget.title,
-              style: const TextStyle(
+              style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 17,
                   color: AppColors.ink)),
@@ -126,14 +126,14 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
                                       size: 44, color: AppColors.mute),
                                   const SizedBox(height: 12),
                                   Text(widget.emptyTitle,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           fontSize: 15,
                                           fontWeight: FontWeight.w600,
                                           color: AppColors.ink)),
                                   const SizedBox(height: 6),
                                   Text(widget.emptyHint,
                                       textAlign: TextAlign.center,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           fontSize: 13,
                                           color: AppColors.inkSoft)),
                                 ],
@@ -160,14 +160,14 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
                                   title: Text(s.title,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w500,
                                           color: AppColors.ink)),
                                   subtitle: Text(s.artist,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           color: AppColors.inkSoft,
                                           fontSize: 12)),
                                   trailing: songTrailing(s,

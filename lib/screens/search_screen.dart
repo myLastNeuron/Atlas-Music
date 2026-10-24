@@ -132,13 +132,12 @@ class _SearchScreenState extends State<SearchScreen> {
               child: GlassPanel(
                 radius: 18,
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                opacity: 0.09,
                 child: TextField(
                   controller: _ctrl,
                   decoration: InputDecoration(
                     hintText: 'Search songs, artists...',
-                    hintStyle: const TextStyle(color: AppColors.mute),
-                    prefixIcon: const Icon(Icons.search, color: AppColors.mute),
+                    hintStyle: TextStyle(color: AppColors.mute),
+                    prefixIcon: Icon(Icons.search, color: AppColors.mute),
                     suffixIcon: ValueListenableBuilder<TextEditingValue>(
                       valueListenable: _ctrl,
                       builder: (_, value, __) {
@@ -146,10 +145,14 @@ class _SearchScreenState extends State<SearchScreen> {
                         return IconButton(
                           icon: const Icon(Icons.clear, size: 20),
                           onPressed: () {
+                            // Kill the in-flight search too: it would otherwise
+                            // publish results for the query just erased.
+                            _searchGen++;
                             _ctrl.clear();
                             setState(() {
                               _results = [];
                               _searched = false;
+                              _loading = false;
                             });
                           },
                         );
@@ -180,16 +183,16 @@ class _SearchScreenState extends State<SearchScreen> {
                       )
                     : _results.isEmpty
                         ? _searched
-                            ? const Center(
-                                key: ValueKey('search-empty'),
+                            ? Center(
+                                key: const ValueKey('search-empty'),
                                 child: Text(
                                   'No results found',
                                   style: TextStyle(color: AppColors.inkSoft),
                                 ),
                               )
                             : _history.isEmpty
-                                ? const Center(
-                                    key: ValueKey('search-idle'),
+                                ? Center(
+                                    key: const ValueKey('search-idle'),
                                     child: Text(
                                       'Search for your favorite music',
                                       style:
@@ -203,8 +206,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                     itemCount: _history.length + 1,
                                     itemBuilder: (_, i) {
                                       if (i == 0) {
-                                        return const Padding(
-                                          padding: EdgeInsets.only(bottom: 8),
+                                        return Padding(
+                                          padding: const EdgeInsets.only(bottom: 8),
                                           child: Text('Recent searches',
                                               style: TextStyle(
                                                   fontSize: 14,
@@ -216,7 +219,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                         child: ListTile(
                                           dense: true,
                                           contentPadding: EdgeInsets.zero,
-                                          leading: const Icon(Icons.history,
+                                          leading: Icon(Icons.history,
                                               size: 18,
                                               color: AppColors.inkSoft),
                                           title: Text(q,
@@ -281,7 +284,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                   subtitle: Text(s.artist,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                           color: AppColors.inkSoft,
                                           fontSize: 12)),
                                   trailing: songTrailing(s, [

@@ -62,7 +62,6 @@ class _OnboardingContentState extends State<OnboardingContent>
             child: GlassPanel(
               radius: 28,
               padding: const EdgeInsets.fromLTRB(28, 40, 28, 36),
-              opacity: 0.09,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -72,22 +71,18 @@ class _OnboardingContentState extends State<OnboardingContent>
                     child: Container(
                       width: 64,
                       height: 64,
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [Colors.white, Color(0xFFD4D4D8)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
+                        color: AppColors.action,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.white24,
+                            color: AppColors.shadow,
                             blurRadius: 28,
-                            offset: Offset(0, 8),
+                            offset: const Offset(0, 8),
                           ),
                         ],
                       ),
-                      child: const Icon(Icons.music_note_rounded,
+                      child: Icon(Icons.music_note_rounded,
                           color: AppColors.charcoal, size: 32),
                     ),
                   ),
@@ -134,12 +129,12 @@ class _OnboardingContentState extends State<OnboardingContent>
                         controller: _ctrl,
                         focusNode: _focus,
                         textCapitalization: TextCapitalization.words,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
                           color: AppColors.ink,
                         ),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           hintText: 'Enter your name',
                           hintStyle: TextStyle(
                             color: AppColors.mute,
@@ -152,7 +147,7 @@ class _OnboardingContentState extends State<OnboardingContent>
                             color: AppColors.mute,
                           ),
                           border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
+                          contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 16),
                         ),
                         onSubmitted: (_) => _go(),
@@ -170,14 +165,12 @@ class _OnboardingContentState extends State<OnboardingContent>
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
-                          gradient: const LinearGradient(
-                            colors: [Colors.white, Color(0xFFE4E4E7)],
-                          ),
-                          boxShadow: const [
+                          color: AppColors.action,
+                          boxShadow: [
                             BoxShadow(
-                              color: Colors.white24,
+                              color: AppColors.shadow,
                               blurRadius: 20,
-                              offset: Offset(0, 8),
+                              offset: const Offset(0, 8),
                             ),
                           ],
                         ),
@@ -191,7 +184,7 @@ class _OnboardingContentState extends State<OnboardingContent>
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
-                          child: const Text(
+                          child: Text(
                             'Continue',
                             style: TextStyle(
                               fontSize: 16,

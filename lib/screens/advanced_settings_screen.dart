@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
 
 import '../services/glass_settings.dart';
 import '../services/system_permissions.dart';
 import '../services/terms.dart';
+import '../services/theme_settings.dart';
 import '../services/user_prefs.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/liquid_background.dart';
 
-/// Advanced settings: the app's transparency ("glass") level, background
-/// playback, the profile name and the about text.
+/// Advanced settings: light mode, artwork colour in the full player, the
+/// app's transparency ("glass") level, background playback, the profile name
+/// and the about text.
 ///
 /// The level lives in the theme, so moving the slider restyles every glass
 /// surface in the app at once — the preview below is the real panel widget
@@ -109,7 +112,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'A free, open-source music player for Android. Your music, your '
                 'library, your rules — built with Flutter.',
                 style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
@@ -139,7 +142,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
               ),
               Text(
                 'Version ${_version.isEmpty ? '…' : _version} · Developed by myLastNeuron · Apache 2.0 license',
-                style: const TextStyle(fontSize: 12, color: AppColors.inkSoft),
+                style: TextStyle(fontSize: 12, color: AppColors.inkSoft),
               ),
             ],
           ),
@@ -160,7 +163,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
       context: context,
       builder: (_) => AlertDialog(
         title: const Text(kTermsTitle),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Text(kTermsBody,
               style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
         ),
@@ -185,7 +188,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                   const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           const SizedBox(height: 3),
           Text(body,
-              style: const TextStyle(fontSize: 12.5, color: AppColors.inkSoft)),
+              style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft)),
         ],
       ),
     );
@@ -202,10 +205,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: AppColors.ink),
+            icon: Icon(Icons.arrow_back, color: AppColors.ink),
             onPressed: () => Navigator.pop(context),
           ),
-          title: const Text('Advanced settings',
+          title: Text('Advanced settings',
               style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 17,
@@ -215,13 +218,49 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
         body: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
           children: [
-            const Text('Transparency',
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              shape: kRowPressShape,
+              value: context.watch<ThemeSettings>().isLight,
+              onChanged: (v) => context.read<ThemeSettings>().setLight(v),
+              secondary: Icon(
+                AppColors.isLight ? Icons.light_mode : Icons.dark_mode,
+                size: 20,
+                color: AppColors.inkSoft,
+              ),
+              title: const Text('Light mode',
+                  style:
+                      TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                'Paper background with dark text. Off is the dark glass look.',
+                style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
+              ),
+            ),
+            Divider(height: 1, color: AppColors.line),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              shape: kRowPressShape,
+              value: context.watch<ThemeSettings>().artworkColor,
+              onChanged: (v) => context.read<ThemeSettings>().setArtworkColor(v),
+              secondary: Icon(Icons.palette_outlined,
+                  size: 20, color: AppColors.inkSoft),
+              title: const Text('Artwork colour in player',
+                  style:
+                      TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                'The full player takes its colour from the current song’s '
+                'artwork. Nothing else changes.',
+                style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
+              ),
+            ),
+            Divider(height: 24, color: AppColors.line),
+            Text('Transparency',
                 style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
                     color: AppColors.ink)),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'How much of the background shows through the app surfaces: the '
               'mini player, the sheets and the panels.',
               style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
@@ -236,7 +275,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
               label: '${(level * 100).round()}%',
               onChanged: (v) => settings?.setLevel(v),
             ),
-            const Row(
+            Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Transparent',
@@ -254,7 +293,6 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
             GlassPanel(
               radius: 20,
               padding: EdgeInsets.zero,
-              opacity: 0.07,
               child: Column(
                 children: [
                   MotionPress(
@@ -273,7 +311,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                           _batteryExempt
                               ? 'Optimized — battery unrestricted'
                               : 'Tap to allow unrestricted background',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
                       trailing: Icon(
                         _batteryExempt
@@ -290,31 +328,31 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                       },
                     ),
                   ),
-                  const Divider(height: 1, color: AppColors.line),
+                  Divider(height: 1, color: AppColors.line),
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
                       leading: const Icon(Icons.refresh, size: 20),
                       title: const Text('Reset name',
                           style: TextStyle(fontSize: 14)),
-                      trailing: const Icon(Icons.chevron_right,
+                      trailing: Icon(Icons.chevron_right,
                           color: AppColors.mute),
                       onTap: _reset,
                     ),
                   ),
-                  const Divider(height: 1, color: AppColors.line),
+                  Divider(height: 1, color: AppColors.line),
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
                       leading: const Icon(Icons.description_outlined, size: 20),
                       title: const Text('Terms and Conditions',
                           style: TextStyle(fontSize: 14)),
-                      trailing: const Icon(Icons.chevron_right,
+                      trailing: Icon(Icons.chevron_right,
                           color: AppColors.mute),
                       onTap: _showTerms,
                     ),
                   ),
-                  const Divider(height: 1, color: AppColors.line),
+                  Divider(height: 1, color: AppColors.line),
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
@@ -322,9 +360,9 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                       title:
                           const Text('About', style: TextStyle(fontSize: 14)),
                       subtitle: Text(_version.isEmpty ? '' : 'v$_version',
-                          style: const TextStyle(
+                          style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: const Icon(Icons.chevron_right,
+                      trailing: Icon(Icons.chevron_right,
                           color: AppColors.mute),
                       onTap: _showAbout,
                     ),
@@ -394,7 +432,7 @@ class GlassPreview extends StatelessWidget {
                               size: 24, color: Colors.white),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -405,7 +443,7 @@ class GlassPreview extends StatelessWidget {
                                       fontSize: 14,
                                       fontWeight: FontWeight.w700,
                                       color: AppColors.ink)),
-                              SizedBox(height: 2),
+                              const SizedBox(height: 2),
                               Text('Atlas Radio · Now playing',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -418,11 +456,11 @@ class GlassPreview extends StatelessWidget {
                         Container(
                           width: 36,
                           height: 36,
-                          decoration: const BoxDecoration(
+                          decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Colors.white,
+                            color: AppColors.action,
                           ),
-                          child: const Icon(Icons.pause,
+                          child: Icon(Icons.pause,
                               size: 20, color: AppColors.charcoal),
                         ),
                       ],
@@ -430,11 +468,12 @@ class GlassPreview extends StatelessWidget {
                     const SizedBox(height: 10),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(2),
-                      child: const LinearProgressIndicator(
+                      child: LinearProgressIndicator(
                         value: 0.42,
                         minHeight: 3,
-                        backgroundColor: Color(0x24FFFFFF),
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        backgroundColor: AppColors.ink.withValues(alpha: 0.16),
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(AppColors.ink),
                       ),
                     ),
                   ],

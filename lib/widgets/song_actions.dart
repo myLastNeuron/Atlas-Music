@@ -131,7 +131,7 @@ Widget songLength(Song song) => song.duration.inSeconds > 0
     ? Padding(
         padding: const EdgeInsets.only(right: 4),
         child: Text(formatClock(song.duration),
-            style: const TextStyle(color: AppColors.mute, fontSize: 12)),
+            style: TextStyle(color: AppColors.mute, fontSize: 12)),
       )
     : const SizedBox.shrink();
 
@@ -149,7 +149,7 @@ Widget songArtistLine(Song song) => Row(
           child: Text(song.artist,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.inkSoft, fontSize: 11)),
+              style: TextStyle(color: AppColors.inkSoft, fontSize: 11)),
         ),
         songLength(song),
       ],
@@ -391,7 +391,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
                         Text(widget.song.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                                 color: AppColors.ink,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600)),
@@ -402,7 +402,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
                 ],
               ),
             ),
-            const Divider(color: AppColors.line, height: 1),
+            Divider(color: AppColors.line, height: 1),
             const SizedBox(height: 4),
             _tile(Icons.play_arrow_rounded, 'Play now', _playNow),
             _tile(Icons.queue_play_next, 'Play next', _playNext),
@@ -451,7 +451,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
             Icon(icon, size: 20, color: AppColors.inkSoft),
             const SizedBox(width: 14),
             Text(label,
-                style: const TextStyle(color: AppColors.ink, fontSize: 14)),
+                style: TextStyle(color: AppColors.ink, fontSize: 14)),
           ],
         ),
       ),
@@ -481,7 +481,7 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
                 onPressed: () => Navigator.pop(ctx, p.id),
                 child: Row(
                   children: [
-                    const Icon(Icons.queue_music,
+                    Icon(Icons.queue_music,
                         size: 20, color: AppColors.inkSoft),
                     const SizedBox(width: 12),
                     Expanded(
@@ -492,7 +492,7 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
                               style:
                                   const TextStyle(fontWeight: FontWeight.w500)),
                           Text('${p.songs.length} songs',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 12, color: AppColors.inkSoft)),
                         ],
                       ),
@@ -604,7 +604,7 @@ class SelectionBar extends StatelessWidget {
         children: [
           Expanded(
             child: Text('$count selected',
-                style: const TextStyle(
+                style: TextStyle(
                     color: AppColors.ink,
                     fontSize: 14,
                     fontWeight: FontWeight.w600)),

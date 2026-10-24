@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import 'screens/auto_finds_screen.dart';
 import 'screens/welcome_flow.dart';
 import 'services/auto_listen.dart';
 import 'services/identify_bridge.dart';
 import 'services/terms.dart';
+import 'services/theme_settings.dart';
 import 'services/user_prefs.dart';
 import 'widgets/app_transitions.dart';
 import 'widgets/identify_sheet.dart';
@@ -54,7 +56,7 @@ class _AtlasMusicAppState extends State<AtlasMusicApp> {
         canPop: false,
         child: AlertDialog(
           title: const Text(kTermsTitle),
-          content: const SingleChildScrollView(
+          content: SingleChildScrollView(
             child: Text(kTermsBody,
                 style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
           ),
@@ -126,15 +128,15 @@ class _AtlasMusicAppState extends State<AtlasMusicApp> {
 
   @override
   Widget build(BuildContext context) {
-    // The theme is built once. The frost level lives in [GlassSettings] and
-    // is read by the glass surfaces themselves, so changing the setting
-    // rebuilds those surfaces and nothing else — no app-wide restyle, no
-    // theme animation, no lag.
+    // Watching the mode rebuilds this app from the root, which is what lets
+    // the palette change reach every screen. The frost level is *not* watched
+    // here: the glass surfaces read it themselves.
+    context.watch<ThemeSettings>();
     return MaterialApp(
       title: 'Atlas Music',
       debugShowCheckedModeBanner: false,
       navigatorKey: _navigatorKey,
-      theme: AppTheme.light(),
+      theme: AppTheme.build(),
       home: const WelcomeScreen(),
     );
   }
