@@ -388,6 +388,17 @@ class AudioPlayerService extends ChangeNotifier {
   Duration get position => _position;
   Song? get currentSong => _currentSong;
 
+  /// HLS master URL for [song]'s video, or null when it is unavailable.
+  /// Keeps providers out of the UI layer.
+  Future<String?> videoUrl(Song song) =>
+      _youTube.resolveVideo(song).then((s) => s?.url);
+
+  /// Headers the video player must send: the UA the resolver's probe proved.
+  Map<String, String> get videoHeaders => YouTubeProvider.videoHeaders;
+
+  /// True when the device can actually reach the internet (DNS-proved).
+  Future<bool> get hasInternet => _hasConnectivity();
+
   /// How many tracks the up-next list always shows. The queue is topped up to
   /// this depth after every song starts, and the list never shows more, so the
   /// sheet is always the same length no matter how long the queue is.

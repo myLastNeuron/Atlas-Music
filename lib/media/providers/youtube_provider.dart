@@ -69,6 +69,10 @@ class YouTubeProvider extends MediaResolver {
   final Map<String, _CachedManifest> _manifests = {};
   static const _manifestTtl = Duration(minutes: 20);
 
+  /// Resolved video sources by videoId, same TTL as the manifests: opening
+  /// the video twice in one session must not cost a second player call.
+  final Map<String, MediaSource> _videoCache = {};
+
   /// Converts an exception to a [FailureScope].
   /// Network/DNS/timeout errors -> provider scope (affects all songs).
   /// Other errors -> song scope (isolated to this video).
@@ -337,6 +341,95 @@ class YouTubeProvider extends MediaResolver {
   @override
   Duration get resolveBudget => const Duration(seconds: 60);
 
+  static const String videoUserAgent =
+      'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
+
+  /// Headers the player must send: the same UA the HEAD probe proved.
+  static const Map<String, String> videoHeaders = {
+    'User-Agent': videoUserAgent,
+    'Referer': 'https://www.youtube.com/',
+    'Origin': 'https://www.youtube.com',
+  };
+
+  /// Muxed video for [song] as a probed HLS master URL, or null. Never throws:
+  /// the Video toggle degrades to a message.
+  ///
+  /// shortcut: the master is adaptive bitrate, not pinned 360p — the platform
+  /// player picks the variant. Pin a rendition only if the cap ever matters.
+  Future<MediaSource?> resolveVideo(Song song) async {
+    final videoId = song.videoId ?? song.id;
+    final hit = _videoCache[videoId];
+    if (hit != null &&
+        DateTime.now().difference(hit.resolvedAt) < _manifestTtl) {
+      return hit;
+    }
+    final url = await _hlsMasterUrl(videoId);
+    if (url == null) return null;
+    final source = MediaSource(
+      provider: provider,
+      url: url,
+      mimeType: 'application/x-mpegURL',
+      container: 'm3u8',
+      mediaId: videoId,
+      resolvedAt: DateTime.now(),
+    );
+    _videoCache[videoId] = source;
+    if (_videoCache.length > 20) {
+      _videoCache.remove(_videoCache.keys.first);
+    }
+    return source;
+  }
+
+  /// Two attempts under one 25s deadline. Never throws.
+  Future<String?> _hlsMasterUrl(String videoId) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 25));
+    for (var attempt = 0; attempt < 2; attempt++) {
+      // Attempt 1 always starts from a fresh token: a bot-gated token makes
+      // VISIONOS answer LOGIN_REQUIRED instead of an HLS master.
+      if (attempt == 0) {
+        _visitorData = null;
+        await Future.delayed(const Duration(seconds: 2));
+      }
+      final remaining = deadline.difference(DateTime.now());
+      if (remaining <= Duration.zero) break;
+      const perAttempt = Duration(seconds: 15);
+      final budget = remaining < perAttempt ? remaining : perAttempt;
+      try {
+        final client =
+            withVisitorData(_visionosClient, await _visitorDataOrNull());
+        final resp = await _http
+            .post(
+              Uri.parse(client.apiUrl),
+              headers: const {'Content-Type': 'application/json'},
+              body: jsonEncode({...client.payload, 'videoId': videoId}),
+            )
+            .timeout(budget);
+        if (resp.statusCode != 200) continue;
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        if ((json['playabilityStatus'] as Map?)?['status'] != 'OK') continue;
+        final master = hlsMasterFromPlayerJson(json);
+        // Playable but no HLS master is permanent: a retry cannot conjure it.
+        if (master == null) return null;
+        await _head(master);
+        return master;
+      } catch (_) {
+        // Next attempt; the last one falls through to null.
+      }
+    }
+    return null;
+  }
+
+  /// `hlsManifestUrl` of a player response, or null when the video is not
+  /// playable or the response has no HLS master. Pure for the test.
+  @visibleForTesting
+  static String? hlsMasterFromPlayerJson(Map<String, dynamic> json) {
+    if ((json['playabilityStatus'] as Map?)?['status'] != 'OK') return null;
+    final master = (json['streamingData'] as Map?)?['hlsManifestUrl'];
+    if (master is! String || master.isEmpty) return null;
+    return master;
+  }
+
   @override
   Future<MediaSource> resolve(Song song) async {
     final videoId = song.videoId ?? song.id;
@@ -478,8 +571,7 @@ class YouTubeProvider extends MediaResolver {
   }
 
   static const _headHeaders = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+    'User-Agent': videoUserAgent,
     'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
     'Origin': 'https://www.youtube.com',
@@ -716,6 +808,7 @@ class YouTubeProvider extends MediaResolver {
 
   void dispose() {
     _manifests.clear();
+    _videoCache.clear();
     _http.close();
     _yt.close();
   }

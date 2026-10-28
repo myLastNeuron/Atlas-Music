@@ -14,6 +14,7 @@ import '../widgets/lyrics_sheet.dart';
 import '../widgets/play_next_badge.dart';
 import '../widgets/song_actions.dart';
 import '../widgets/video_stats_bar.dart';
+import '../widgets/video_surface.dart';
 import '../widgets/whats_next_sheet.dart';
 import 'artist_screen.dart';
 
@@ -30,6 +31,8 @@ class _PlayerScreenState extends State<PlayerScreen>
   final StorageService _storageService = StorageService();
   bool _isLiked = false;
   String? _likedForId;
+  bool _videoMode = false;
+  String? _videoModeForId;
   AudioPlayerService? _audio;
   VoidCallback? _audioListener;
 
@@ -71,6 +74,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _syncLiked();
       _syncBreath();
       _syncUpcoming();
+      _syncVideoMode();
     };
     audio.addListener(_audioListener!);
     _storageService.addListener(_onStorageChanged);
@@ -117,6 +121,15 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (key == _upcomingKey) return;
     _upcomingKey = key;
     if (mounted) setState(() {});
+  }
+
+  /// Drops back to Song view when the track changes: the video belongs to the
+  /// song it was opened on, and the surface is keyed by that song's id.
+  void _syncVideoMode() {
+    final id = _audio?.currentSong?.id;
+    if (id == _videoModeForId) return;
+    _videoModeForId = id;
+    if (_videoMode && mounted) setState(() => _videoMode = false);
   }
 
   Future<void> _syncLiked({bool force = false}) async {
@@ -304,13 +317,33 @@ class _PlayerScreenState extends State<PlayerScreen>
                   // shortcut: an extremely short viewport (landscape) can
                   // still clip the bottom row; add a scroll fallback if the
                   // player has to work in landscape.
+                  Center(
+                    child: _ModeToggle(
+                      video: _videoMode,
+                      onChanged: (v) => setState(() => _videoMode = v),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Flexible(
                     child: LayoutBuilder(
                       builder: (context, box) {
                         final side = box.maxWidth < box.maxHeight
                             ? box.maxWidth
                             : box.maxHeight;
-                        return Center(child: _cover(song, artPath, side));
+                        return Center(
+                          child: _videoMode
+                              ? VideoSurface(
+                                  key: ValueKey('video_${song.id}'),
+                                  song: song,
+                                  size: side,
+                                  onExitToSong: () {
+                                    if (mounted) {
+                                      setState(() => _videoMode = false);
+                                    }
+                                  },
+                                )
+                              : _cover(song, artPath, side),
+                        );
                       },
                     ),
                   ),
@@ -853,6 +886,62 @@ class _UpNextSkeletonState extends State<_UpNextSkeleton>
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Two-option Song/Video pill above the cover: the only entry point to video.
+class _ModeToggle extends StatelessWidget {
+  const _ModeToggle({required this.video, required this.onChanged});
+
+  final bool video;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    // Tapping the half that is already selected is a no-op (onTap null),
+    // so the pill never thrashes its own animation for nothing.
+    Widget half(String label, bool selected, Key key) => MotionPress(
+          scale: 0.94,
+          child: InkWell(
+            key: key,
+            borderRadius: BorderRadius.circular(14),
+            onTap: selected ? null : () => onChanged(!selected),
+            child: AnimatedContainer(
+              duration: AppMotion.dur(context, AppMotion.micro),
+              curve: AppMotion.curve,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
+              decoration: BoxDecoration(
+                color: selected ? AppColors.action : Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  letterSpacing: 0.4,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? AppColors.charcoal : AppColors.mute,
+                ),
+              ),
+            ),
+          ),
+        );
+
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: AppColors.ink.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          half('Song', !video, const ValueKey('player_mode_song')),
+          half('Video', video, const ValueKey('player_mode_video')),
         ],
       ),
     );
