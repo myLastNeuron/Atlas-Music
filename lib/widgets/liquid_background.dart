@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import '../services/glass_settings.dart';
 import '../theme/app_theme.dart';
@@ -35,13 +37,20 @@ double glassOpacity(double level) =>
     kGlassMinOpacity +
     (kGlassMaxOpacity - kGlassMinOpacity) * level.clamp(0.0, 1.0);
 
-/// Transparent glass surface: a flat see-through tint, a soft rim and a drop
-/// shadow. [level] is the setting: 0 = transparent, 1 = translucent.
+/// Frost strength of every glass surface. One fixed value: the transparency
+/// setting moves the tint, so the filter stays the same small pass everywhere.
+/// Above ~16 the blur starts to cost real frames on a mid-range phone.
+/// Frost strength of a glass surface. Small on purpose: the tint does most of
+/// the work, and every point of sigma is paid on every frame the surface sits
+/// over something that moves (a scrolling list, a playing video).
+const double kGlassBlurSigma = 10;
+
+/// Transparent glass surface: a soft rim, a drop shadow, and — for the
+/// surfaces that float over moving content — a real frost. [level] is the
+/// setting: 0 = transparent, 1 = translucent.
 ///
-/// ponytail: no white sheen, no backdrop blur. The sheen was a white wash
-/// blooming over every panel, and a blur re-renders the whole area behind each
-/// surface on every frame — that is what made the app crawl. A flat tint costs
-/// nothing and is what the slider actually controls.
+/// ponytail: the tint stays flat (no white sheen — it bloomed over every
+/// panel).
 BoxDecoration liquidGlassDecoration(
   BorderRadius borderRadius, {
   double level = 0.5,
@@ -69,14 +78,22 @@ BoxDecoration liquidGlassDecoration(
 /// this, so the setting reaches all of them.
 ///
 /// The surface reads the level itself, so changing the setting rebuilds this
-/// widget only — never the app. [strength] is the sheen, [shadow] the deep
-/// drop shadow of the floating panels, [border] a custom rim.
+/// widget only — never the app. [shadow] is the deep drop shadow of the
+/// floating panels, [border] a custom rim, [width] a fixed or infinite width
+/// for a panel that must fill its slot.
+///
+/// [blur] is off by default: a panel inside the page has only the flat backdrop
+/// behind it, so a filter there costs a full repaint per frame and shows
+/// nothing. The floating chrome — nav bar, mini player, sheets, menus — opts in,
+/// because that is where album art and lists actually scroll underneath.
 class GlassSurface extends StatelessWidget {
   final Widget child;
   final BorderRadius borderRadius;
   final EdgeInsetsGeometry? padding;
   final bool shadow;
   final Border? border;
+  final double? width;
+  final bool blur;
 
   const GlassSurface({
     super.key,
@@ -85,32 +102,43 @@ class GlassSurface extends StatelessWidget {
     this.padding,
     this.shadow = true,
     this.border,
+    this.width,
+    this.blur = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final panel = Container(
+      width: width,
+      decoration: liquidGlassDecoration(
+        borderRadius,
+        level: glassLevel(context),
+        border: border,
+        shadow: shadow,
+      ),
+      // Transparent Material with the surface's own shape. Ink (press
+      // highlight + ripple) is painted by the nearest Material and clipped
+      // to its shape, so a held row lights up as a rounded rect that
+      // follows the surface instead of a sharp rectangle.
+      child: Material(
+        type: MaterialType.transparency,
+        shape: RoundedRectangleBorder(borderRadius: borderRadius),
+        clipBehavior: Clip.antiAlias,
+        child:
+            padding == null ? child : Padding(padding: padding!, child: child),
+      ),
+    );
     return ClipRRect(
       borderRadius: borderRadius,
-      child: Container(
-        decoration: liquidGlassDecoration(
-          borderRadius,
-          level: glassLevel(context),
-          border: border,
-          shadow: shadow,
-        ),
-        // Transparent Material with the surface's own shape. Ink (press
-        // highlight + ripple) is painted by the nearest Material and clipped
-        // to its shape, so a held row lights up as a rounded rect that
-        // follows the surface instead of a sharp rectangle.
-        child: Material(
-          type: MaterialType.transparency,
-          shape: RoundedRectangleBorder(borderRadius: borderRadius),
-          clipBehavior: Clip.antiAlias,
-          child: padding == null
-              ? child
-              : Padding(padding: padding!, child: child),
-        ),
-      ),
+      child: blur
+          ? BackdropFilter(
+              filter: ImageFilter.blur(
+                sigmaX: kGlassBlurSigma,
+                sigmaY: kGlassBlurSigma,
+              ),
+              child: panel,
+            )
+          : panel,
     );
   }
 }

@@ -313,7 +313,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         : FileImage(File(_avatarUrl!))
                                             as ImageProvider)
                                     : null,
-                                onBackgroundImageError: (_, __) {
+                                onBackgroundImageError: _avatarUrl == null
+                                    ? null
+                                    : (_, __) {
                                   if (mounted && !_avatarError) {
                                     setState(() => _avatarError = true);
                                   }

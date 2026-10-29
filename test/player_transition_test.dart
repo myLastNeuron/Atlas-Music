@@ -5,6 +5,13 @@ import 'package:atlas_music/widgets/artwork.dart';
 import 'package:atlas_music/theme/app_theme.dart';
 
 void main() {
+  // The full player is an in-and-out gesture, not a destination: both
+  // directions have to be over before the user wonders if the tap landed.
+  test('player transitions stay snappy', () {
+    expect(AppMotion.playerOpen.inMilliseconds, lessThanOrEqualTo(600));
+    expect(AppMotion.playerClose.inMilliseconds, lessThanOrEqualTo(500));
+  });
+
   test('hero rect tween runs on the player route curve', () {
     const begin = Rect.fromLTWH(10, 20, 40, 40);
     const end = Rect.fromLTWH(100, 400, 300, 300);

@@ -36,6 +36,8 @@ class FloatingGlassNav extends StatelessWidget {
         borderRadius: BorderRadius.circular(28),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         shadow: false,
+        // Frosted: the page scrolls right underneath it.
+        blur: true,
         child: Stack(
           alignment: Alignment.center,
           children: [

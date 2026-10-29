@@ -25,4 +25,15 @@ void main() {
     await prefs.acceptTerms();
     expect(await prefs.hasAcceptedTerms(), isTrue);
   });
+
+  test('the Song/Video choice is a saved preference', () async {
+    // Video is a choice, not a per-song state: it has to survive the mini
+    // player, a restart and every following track.
+    final prefs = UserPrefs();
+    expect(await prefs.getVideoMode(), isFalse);
+    await prefs.setVideoMode(true);
+    expect(await UserPrefs().getVideoMode(), isTrue);
+    await prefs.setVideoMode(false);
+    expect(await UserPrefs().getVideoMode(), isFalse);
+  });
 }

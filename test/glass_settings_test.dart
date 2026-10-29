@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -69,12 +71,20 @@ void main() {
         reason: 'a fully clear surface would leave white text on album art');
   });
 
-  testWidgets('no surface blurs its backdrop', (tester) async {
-    // A backdrop filter re-renders the area behind every surface on every
-    // frame; that cost is exactly what must not come back.
+  testWidgets('the frost is opt-in, so lists do not pay for a filter',
+      (tester) async {
+    // A panel inside the page has only the flat backdrop behind it: blurring it
+    // costs a full repaint per frame and shows nothing.
     await tester.pumpWidget(app(1.0, const GlassSurface(child: Text('Row'))));
     await tester.pumpAndSettle();
     expect(find.byType(BackdropFilter), findsNothing);
+
+    await tester.pumpWidget(app(
+        1.0, const GlassSurface(blur: true, child: Text('Row'))));
+    await tester.pumpAndSettle();
+    final blur = tester.widget<BackdropFilter>(find.byType(BackdropFilter));
+    expect(blur.filter,
+        ImageFilter.blur(sigmaX: kGlassBlurSigma, sigmaY: kGlassBlurSigma));
   });
 
   testWidgets('changing the level rebuilds the surface only', (tester) async {

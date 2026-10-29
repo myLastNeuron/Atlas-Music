@@ -107,13 +107,11 @@ class AppMotion {
   /// Shared by the reveal window, the Hero rect and the cover radius.
   static const player = Curves.fastOutSlowIn;
   static const page = Duration(milliseconds: 240);
-  // Full player: long enough for the surface to grow out of the mini bar and
-  // the cover to travel without feeling rushed (a short morph snapped and
-  // read as a cut). These also set the Hero flight.
-  static const playerOpen = Duration(milliseconds: 780);
-  // Same length both ways: the Hero flight is driven by the route animation,
-  // so a shorter close flew the cover back visibly faster than it opened.
-  static const playerClose = playerOpen;
+  // Full player, both directions: the cover flight is driven by the route
+  // animation, so these two also set how long it travels. Opening gets a touch
+  // more than closing, which is the "get out of the way" direction.
+  static const playerOpen = Duration(milliseconds: 560);
+  static const playerClose = Duration(milliseconds: 450);
 
   static const modal = Duration(milliseconds: 220);
   static const micro = Duration(milliseconds: 180);
@@ -415,9 +413,16 @@ Widget buildPlayerTransition(
   Widget child,
 ) {
   if (AppMotion.reduced(context)) return child;
+  // drive() instead of a CurvedAnimation: the latter registers a status
+  // listener on the route controller and is never disposed when built here,
+  // so every frame of every player transition leaked one.
+  final curved = animation.drive(CurveTween(curve: AppMotion.player));
   return FadeTransition(
-    opacity: CurvedAnimation(parent: animation, curve: AppMotion.player),
-    child: child,
+    opacity: curved,
+    // Cache the page raster for the fade. Without this the full-screen
+    // opacity layer re-rasterises the whole player (cover shadow, glass,
+    // gradient) every frame, which is what made the close stutter.
+    child: RepaintBoundary(child: child),
   );
 }
 

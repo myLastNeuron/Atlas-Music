@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:atlas_music/models/song.dart';
 import 'package:atlas_music/services/ytmusic_search.dart';
 
 /// A search row: title, artist, video id and an optional length in the
@@ -122,6 +123,54 @@ Map<String, dynamic> rowWithFixedColumnsLength(String title, String length) {
     }
   ];
   return r;
+}
+
+/// A Videos-filter row: the id and YouTube's classification sit in the
+/// thumbnail overlay's play endpoint, as in the live response.
+Map<String, dynamic> videoRow(
+    String title, String artist, String videoId, String type) {
+  return {
+    'musicResponsiveListItemRenderer': {
+      'flexColumns': [
+        {
+          'musicResponsiveListItemFlexColumnRenderer': {
+            'text': {
+              'runs': [
+                {'text': title}
+              ]
+            }
+          }
+        },
+        {
+          'musicResponsiveListItemFlexColumnRenderer': {
+            'text': {
+              'runs': [
+                {'text': artist},
+                {'text': ' • '},
+                {'text': '4M views'},
+              ]
+            }
+          }
+        },
+      ],
+      'overlay': {
+        'musicItemThumbnailOverlayRenderer': {
+          'content': {
+            'musicPlayButtonRenderer': {
+              'playNavigationEndpoint': {
+                'watchEndpoint': {
+                  'videoId': videoId,
+                  'watchEndpointMusicSupportedConfigs': {
+                    'watchEndpointMusicConfig': {'musicVideoType': type}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+    }
+  };
 }
 
 http.Response jsonResponse(Object body) => http.Response(json.encode(body), 200,
@@ -300,5 +349,263 @@ void main() {
     expect(songs.first.artist, 'Artist One');
     expect(songs.first.duration, const Duration(minutes: 3, seconds: 45));
     expect(songs.first.thumbnailUrl, contains('hq.jpg'));
+  });
+
+  test('searchVideos sends the videos filter and keeps each row type',
+      () async {
+    late Map<String, dynamic> body;
+    final client = MockClient((request) async {
+      body = json.decode(request.body) as Map<String, dynamic>;
+      return jsonResponse(tabbed([
+        videoRow('Blinding Lights (Official Video)', 'The Weeknd', 'omv',
+            'MUSIC_VIDEO_TYPE_OMV'),
+        videoRow('Blinding Lights (Bass Boosted)', 'Van Royals', 'ugc',
+            'MUSIC_VIDEO_TYPE_UGC'),
+        // No overlay block: YouTube left the row unclassified. It must be
+        // kept (lowest rank) rather than disabling the whole fallback.
+        row('Blinding Lights', 'The Weeknd', 'untyped'),
+      ]));
+    });
+
+    final videos =
+        await YouTubeMusicSearch(client: client).searchVideos('Blinding');
+
+    expect(body['params'], 'EgWKAQIQAWoMEA4QChADEAQQCRAF');
+    expect(videos.map((v) => v.videoId), ['omv', 'ugc', 'untyped']);
+    expect(videos.map((v) => v.musicVideoType),
+        ['MUSIC_VIDEO_TYPE_OMV', 'MUSIC_VIDEO_TYPE_UGC', '']);
+    expect(videos.first.artist, 'The Weeknd');
+  });
+
+  group('bestMusicVideo', () {
+    VideoCandidate c(String id, String type, String title,
+            [String artist = '']) =>
+        VideoCandidate(
+            videoId: id, musicVideoType: type, title: title, artist: artist);
+
+    test('an official video beats a better-titled upload', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('ugc', 'MUSIC_VIDEO_TYPE_UGC', 'Blinding Lights', 'The Weeknd'),
+            c('omv', 'MUSIC_VIDEO_TYPE_OMV', 'Blinding Lights (Official Video)',
+                'The Weeknd'),
+          ],
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          excludeId: 'atv',
+        ),
+        'omv',
+      );
+    });
+
+    test('the artist name breaks the OMV tie', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('cover', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Cover)', 'Raag Band'),
+            c('real', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh'),
+          ],
+          title: 'Kesariya (From "Brahmastra")',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'real',
+      );
+    });
+
+    test('the art track itself and videos of other songs are skipped', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('atv', 'MUSIC_VIDEO_TYPE_ATV', 'Kesariya'),
+            c('other', 'MUSIC_VIDEO_TYPE_OMV', 'Perfect', 'Ed Sheeran'),
+            c('cast', 'MUSIC_VIDEO_TYPE_PODCAST_EPISODE', 'Kesariya'),
+          ],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
+
+    test('no title match returns null instead of an unrelated video', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [c('other', 'MUSIC_VIDEO_TYPE_OMV', 'Apna Bana Le', 'Arijit Singh')],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
+
+    test('a non-Latin title still matches its video', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [c('mv', 'MUSIC_VIDEO_TYPE_OMV', '夜に駆ける', 'YOASOBI')],
+          title: '夜に駆ける',
+          artist: 'YOASOBI',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+    });
+
+    test('a fully bracketed title falls back to the original title', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [c('mv', 'MUSIC_VIDEO_TYPE_OMV', '(Intro)', 'Arijit Singh')],
+          title: '(Intro)',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+    });
+
+    test('an unclassified row is kept but ranks below UGC and OMV', () {
+      final untyped = c('untyped', '', 'Kesariya', 'Arijit Singh');
+      final ugc =
+          c('ugc', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Arijit Singh');
+      final omv =
+          c('omv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh');
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [untyped, ugc],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'ugc',
+      );
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [untyped, omv],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'omv',
+      );
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [untyped],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'untyped',
+      );
+    });
+
+    test("the song's own id is skipped even when it arrives unclassified", () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('atv', '', 'Kesariya', 'Arijit Singh'),
+            c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh'),
+          ],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+      // An unclassified echo of the song itself must not pass as its video.
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [c('atv', '', 'Kesariya', 'Arijit Singh')],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
+
+    test('officialOnly skips a UGC upload', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('lofi', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Chillouts'),
+            c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh'),
+          ],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+          officialOnly: true,
+        ),
+        'mv',
+      );
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [c('lofi', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Chillouts')],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+          officialOnly: true,
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('bestPlainVideo', () {
+    Song v(String id, String title, String channel) => Song(
+          id: id,
+          title: title,
+          artist: channel,
+          thumbnailUrl: '',
+          duration: const Duration(minutes: 4),
+          videoId: id,
+          channel: channel,
+        );
+
+    test('prefers the artist-matched upload over a cover', () {
+      expect(
+        YouTubeMusicSearch.bestPlainVideo(
+          [
+            v('cover', 'Kesariya (Cover)', 'Raag Band'),
+            v('official', 'Kesariya - Brahmastra | Arijit Singh',
+                'Sony Music India'),
+          ],
+          title: 'Kesariya (From "Brahmastra")',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'official',
+      );
+    });
+
+    test('skips Topic art tracks and the song itself', () {
+      expect(
+        YouTubeMusicSearch.bestPlainVideo(
+          [
+            v('atv', 'Kesariya', 'Arijit Singh - Topic'),
+            v('self', 'Kesariya', 'Arijit Singh'),
+            v('mv', 'Kesariya', 'Sony Music India'),
+          ],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'self',
+        ),
+        'mv',
+      );
+    });
+
+    test('no title match returns null', () {
+      expect(
+        YouTubeMusicSearch.bestPlainVideo(
+          [v('other', 'Apna Bana Le', 'Sony Music India')],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
   });
 }

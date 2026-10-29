@@ -4,8 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// How much of the background shows through the app's glass surfaces:
 /// 0 = transparent (see-through), 1 = translucent (milky).
 ///
-/// This is a plain opacity change, so it costs nothing to draw — no backdrop
-/// filters, no per-frame blur passes. Persisted, and applied live: the
+/// This only moves the tint: the frost behind it is one fixed blur pass, so
+/// dragging the slider costs nothing to draw. Persisted, and applied live: the
 /// surfaces read it themselves, so changing it rebuilds only the surfaces.
 class GlassSettings extends ChangeNotifier {
   static const _key = 'glass_translucency';

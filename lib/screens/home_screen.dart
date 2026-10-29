@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../models/playlist.dart';
 import '../services/audio_service.dart';
-import '../services/glass_settings.dart';
 import '../services/storage_service.dart';
 import 'dart:io';
 import '../services/user_prefs.dart';
@@ -752,10 +751,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return MotionPress(
       child: GestureDetector(
         onTap: _createPlaylistDialog,
-        child: Container(
+        child: GlassSurface(
+          borderRadius: const BorderRadius.all(Radius.circular(20)),
           padding: const EdgeInsets.all(14),
-          decoration: liquidGlassDecoration(BorderRadius.circular(20),
-              level: glassLevel(context)),
           child: Row(
             children: [
               Stack(
@@ -813,11 +811,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return MotionPress(
         child: GestureDetector(
           onTap: _createPlaylistDialog,
-          child: Container(
+          child: GlassSurface(
             width: double.infinity,
+            borderRadius: const BorderRadius.all(Radius.circular(16)),
             padding: const EdgeInsets.symmetric(vertical: 22),
-            decoration: liquidGlassDecoration(BorderRadius.circular(16),
-                level: glassLevel(context)),
             child: Column(
               children: [
                 Icon(Icons.queue_music, size: 32, color: AppColors.mute),
@@ -864,11 +861,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   });
                 }
               },
-              child: Container(
+              child: GlassSurface(
                 width: 220,
+                borderRadius: const BorderRadius.all(Radius.circular(16)),
                 padding: const EdgeInsets.all(10),
-                decoration: liquidGlassDecoration(BorderRadius.circular(16),
-                    level: glassLevel(context)),
                 child: Row(
                   children: [
                     art.isEmpty
@@ -915,11 +911,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _recentlyPlayedSection() {
     if (_recent.isEmpty) {
-      return Container(
+      return GlassSurface(
         width: double.infinity,
+        borderRadius: const BorderRadius.all(Radius.circular(16)),
         padding: const EdgeInsets.symmetric(vertical: 24),
-        decoration: liquidGlassDecoration(BorderRadius.circular(16),
-            level: glassLevel(context)),
         child: Column(
           children: [
             Icon(Icons.history, size: 32, color: AppColors.mute),
@@ -1162,7 +1157,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             (_avatarError || _avatarProvider == null)
                                 ? null
                                 : _avatarProvider,
-                        onBackgroundImageError: (_, __) {
+                        onBackgroundImageError: (_avatarError ||
+                                _avatarProvider == null)
+                            ? null
+                            : (_, __) {
                           // Dead file / offline URL: fall back to the icon
                           // instead of a blank circle that would mismatch
                           // the other header.

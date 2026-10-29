@@ -67,6 +67,7 @@ class _IdentifyMenuSheetState extends State<_IdentifyMenuSheet> {
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       border: Border(top: BorderSide(color: AppColors.line)),
       shadow: false,
+      blur: true,
       padding: EdgeInsets.fromLTRB(
           16, 12, 16, 20 + MediaQuery.of(context).padding.bottom),
       child: Column(
@@ -213,6 +214,7 @@ class _IdentifySheetState extends State<_IdentifySheet> {
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       border: Border(top: BorderSide(color: AppColors.line)),
       shadow: false,
+      blur: true,
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, 20 + MediaQuery.of(context).padding.bottom),
       child: Column(

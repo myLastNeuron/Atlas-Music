@@ -6,6 +6,23 @@ import '../media/resolve_failure.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 
+/// A "Videos" search row: the id to play plus YouTube's classification, so a
+/// caller can tell an official music video (MUSIC_VIDEO_TYPE_OMV) from an
+/// upload (MUSIC_VIDEO_TYPE_UGC) or an art track (_ATV).
+class VideoCandidate {
+  final String videoId;
+  final String musicVideoType;
+  final String title;
+  final String artist;
+
+  const VideoCandidate({
+    required this.videoId,
+    required this.musicVideoType,
+    required this.title,
+    required this.artist,
+  });
+}
+
 /// Searches the YouTube Music catalogue directly (InnerTube `WEB_REMIX`
 /// client) instead of plain youtube.com search.
 ///
@@ -44,6 +61,11 @@ class YouTubeMusicSearch {
   /// `get_search_params(filter="songs")` = "EgWKAQ" + "II" + "AWoMEA…".
   static const String _songsParams = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
 
+  /// `get_search_params(filter="videos")`. Verified live (2026-10): returns
+  /// MUSIC_VIDEO_TYPE_OMV / _UGC / _PODCAST_EPISODE rows, while
+  /// [_songsParams] returns only MUSIC_VIDEO_TYPE_ATV art tracks.
+  static const String _videosParams = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
+
   final http.Client _client;
 
   /// Songs only (no music videos). Returns an empty list when the query has
@@ -55,6 +77,112 @@ class YouTubeMusicSearch {
     // The same query without the song filter still carries those rows in its
     // other tabs, so read them before falling back to plain YouTube.
     return _search(query, '', limit: limit);
+  }
+
+  /// Real music videos (and uploads) for [query] with YouTube's own
+  /// classification, one page only: this feeds the Video toggle's fallback
+  /// for songs whose catalogue entry is a still art track, and must answer
+  /// fast. Ranked by [bestMusicVideo].
+  Future<List<VideoCandidate>> searchVideos(
+    String query, {
+    int limit = 20,
+  }) async {
+    final data = await _post(_searchUrl, {
+      'query': query,
+      'params': _videosParams,
+    });
+    final out = <VideoCandidate>[];
+    final seen = <String>{};
+    for (final item in _songItems(data)) {
+      if (out.length >= limit) break;
+      final song = _toSong(item);
+      if (song == null) continue;
+      final videoId = song.videoId ?? song.id;
+      if (!seen.add(videoId)) continue;
+      // A missing config block only means YouTube did not classify the row;
+      // dropping it used to disable the whole fallback on such responses.
+      final type = _videoType(item) ?? '';
+      out.add(VideoCandidate(
+        videoId: videoId,
+        musicVideoType: type,
+        title: song.title,
+        artist: song.artist,
+      ));
+    }
+    return out;
+  }
+
+  /// Best real music video among [candidates], or null when none is usable.
+  /// Official videos (OMV) beat uploads (UGC), which beat rows YouTube left
+  /// unclassified; a row whose title is the song is the only kind considered
+  /// (a video for a different song is worse than the still art track); the
+  /// artist name breaks the type tie. Rows of the song's own art track
+  /// [excludeId] are skipped. Pure for the test.
+  static String? bestMusicVideo(
+    List<VideoCandidate> candidates, {
+    required String title,
+    required String artist,
+    required String excludeId,
+    bool officialOnly = false,
+  }) {
+    final wantTitle = _matchKey(_baseTitle(title));
+    final wantArtist = _matchKey(artist);
+    String? best;
+    var bestScore = 0;
+    for (final c in candidates) {
+      if (c.videoId == excludeId) continue;
+      final omv = c.musicVideoType == 'MUSIC_VIDEO_TYPE_OMV';
+      final ugc = c.musicVideoType == 'MUSIC_VIDEO_TYPE_UGC';
+      // Known non-music classifications (ATV / podcast) are never a match;
+      // an empty type is a row YouTube did not classify, so keep it low.
+      if (!omv && !ugc && c.musicVideoType.isNotEmpty) continue;
+      if (officialOnly && !omv) continue;
+      final have = _matchKey('${c.title} ${c.artist}');
+      if (wantTitle.isEmpty || !have.contains(wantTitle)) continue;
+      final score = (omv ? 4 : (ugc ? 2 : 1)) +
+          (wantArtist.isNotEmpty && have.contains(wantArtist) ? 1 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = c.videoId;
+      }
+    }
+    return best;
+  }
+
+  /// Best plain-YouTube upload among [rows] (already in YouTube's own
+  /// relevance order), or null. Used when the YT Music Videos filter has no
+  /// official video: label channels publish there, not in the catalogue.
+  /// Skips Topic art-track channels and the song's own id; prefers a row
+  /// whose title/channel names the artist.
+  static String? bestPlainVideo(
+    List<Song> rows, {
+    required String title,
+    required String artist,
+    required String excludeId,
+  }) {
+    final wantTitle = _matchKey(_baseTitle(title));
+    final wantArtist = _matchKey(artist);
+    if (wantTitle.isEmpty) return null;
+    String? fallback;
+    for (final row in rows) {
+      final id = row.videoId ?? row.id;
+      if (id == excludeId) continue;
+      if (row.channel.trim().toLowerCase().endsWith(' - topic')) continue;
+      final have = _matchKey('${row.title} ${row.channel}');
+      if (!have.contains(wantTitle)) continue;
+      if (wantArtist.isNotEmpty && have.contains(wantArtist)) return id;
+      fallback ??= id;
+    }
+    return fallback;
+  }
+
+  /// Song title without its "(From "…")"/"[Remastered]" suffixes: catalogue
+  /// rows write the release name there, real video titles do not. A title that
+  /// is entirely bracketed keeps its original form instead of becoming empty.
+  static String _baseTitle(String title) {
+    final stripped =
+        title.replaceAll(RegExp(r'[\(\[][^\)\]]*[\)\]]'), ' ').trim();
+    return stripped.isEmpty ? title.trim() : stripped;
   }
 
   Future<List<Song>> _search(
@@ -644,6 +772,20 @@ class YouTubeMusicSearch {
     return _string(_map(endpoint, 'watchEndpoint'), 'videoId');
   }
 
+  /// YouTube's video classification of a search row (OMV / UGC / ATV / …).
+  /// It sits in the same overlay watchEndpoint [_overlayId] reads, one level
+  /// deeper under `watchEndpointMusicSupportedConfigs`.
+  static String? _videoType(Map item) {
+    final overlay = _map(item['overlay'], 'musicItemThumbnailOverlayRenderer');
+    final content = _map(overlay, 'content');
+    final play = _map(content, 'musicPlayButtonRenderer');
+    final endpoint = _map(play, 'playNavigationEndpoint');
+    final watch = _map(endpoint, 'watchEndpoint');
+    final configs = _map(watch, 'watchEndpointMusicSupportedConfigs');
+    return _string(
+        _map(configs, 'watchEndpointMusicConfig'), 'musicVideoType');
+  }
+
   /// Artist(s) = subtitle runs up to the first "•" separator. The subtitle is
   /// "Artists • Album • Duration" (videos add a views segment).
   static String _artistFrom(List<Map> runs) {
@@ -830,6 +972,12 @@ class YouTubeMusicSearch {
 
   static String _normalize(String value) =>
       value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  /// Unicode-aware match key for [bestMusicVideo]: ASCII-only [_normalize]
+  /// erases Japanese/Korean/Cyrillic titles and rejects every candidate.
+  static String _matchKey(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
 
   /// Every map value stored under [key], at any depth.
   static Iterable<Map> _findAll(dynamic node, String key) sync* {

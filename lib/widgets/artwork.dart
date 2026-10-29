@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+import '../services/video_handoff.dart';
 import '../theme/app_theme.dart';
 
 /// Single cached artwork path. Memory + disk cache, bounded decode size,
@@ -110,7 +112,10 @@ class Artwork extends StatelessWidget {
   }) {
     return CachedNetworkImage(
       imageUrl: url,
-      cacheKey: '$url-$px',
+      // One disk entry per artwork, not per decode size: a size-tagged key made
+      // every new rendering (the full player's cover) download the same image
+      // again, so the cover flight had nothing to land on.
+      cacheKey: url,
       width: w,
       height: h,
       fit: fit,
@@ -131,16 +136,36 @@ class Artwork extends StatelessWidget {
       );
 }
 
-/// Artwork size the mini player renders at. The mini → full player hero
-/// flight paints this same decode under the big cover, so both the thumb and
-/// [CoverFlightShuttle] read it from here: change one and the flight re-decodes
-/// from scratch, flashing blank where the thumb should be.
+/// Artwork size the mini player renders at.
 const double kMiniArtworkSize = 42;
 
 /// Logical size of the full player cover on this device. Shared by
 /// PlayerScreen and the hero flight landing on it so both decode one bitmap.
 double coverLogicalSize(BuildContext context) =>
     (MediaQuery.sizeOf(context).width - 48).clamp(160.0, 512.0);
+
+/// The bitmap behind the full player's cover.
+///
+/// One provider for the player's [Artwork], the cover flight and the mini
+/// player's pre-cache, so a flight that starts on a decoded image stays crisp:
+/// scaling the 42 px thumb up to the flight rect painted a blurred ghost of the
+/// artwork for the first half of the morph.
+ImageProvider playerCoverProvider(
+  BuildContext context,
+  String url, {
+  String? filePath,
+}) {
+  final px = (coverLogicalSize(context) *
+          MediaQuery.devicePixelRatioOf(context))
+      .round()
+      .clamp(96, 1024);
+  final local = filePath;
+  if (local != null && local.isNotEmpty) {
+    return ResizeImage.resizeIfNeeded(px, null, FileImage(File(local)));
+  }
+  return ResizeImage.resizeIfNeeded(
+      px, null, CachedNetworkImageProvider(url, cacheKey: url));
+}
 
 /// Hero rect tween for the full-player cover. Heroes are animated by the raw
 /// route animation, skipping the curve [buildPlayerTransition] applies, so
@@ -158,15 +183,19 @@ class PlayerRectTween extends MaterialRectArcTween {
 /// into the large cover without [Artwork]'s fixed-size layout clipping or
 /// overflowing.
 ///
-/// Two stacked decodes keep the morph free of pops. Underneath sits the mini
-/// player's thumb — same provider the thumb on screen uses, so it is a cache
-/// hit and the first flight frame is already the artwork instead of a blank
-/// card. The player's larger decode fades in over it once ready. The corner
-/// radius rides the flight too, instead of snapping 10 → 20 on landing.
+/// One image, always the player's cover bitmap. The square is an opaque card
+/// from the first frame, so nothing of the page behind it can show through and
+/// nothing is scaled up from the thumb. The corner radius rides the flight too,
+/// instead of snapping 10 → 20 on landing.
 class CoverFlightShuttle extends StatelessWidget {
   final String url;
   final String? filePath;
   final Animation<double> animation;
+
+  /// The song whose video may be the thing that should fly. When Video mode has
+  /// a live video for it, the flight carries the running video instead of the
+  /// cover, and it keeps running through the flight.
+  final String? songId;
 
   /// Radius at the thumb end and the full player end of the flight.
   final double beginRadius;
@@ -176,44 +205,32 @@ class CoverFlightShuttle extends StatelessWidget {
     this.url, {
     super.key,
     this.filePath,
+    this.songId,
     required this.animation,
     this.beginRadius = 10,
     this.endRadius = 22,
   });
 
-  /// The player's cover decode, transparent until it is ready so the thumb
-  /// underneath keeps showing in the meantime.
+  /// The player's cover at flight resolution, over the shuttle's own card.
+  ///
+  /// A plain [Image] on purpose: the cached-image widget dissolves its frame
+  /// over a placeholder, which paints the artwork at partial opacity while the
+  /// flight is mid-air.
   Widget? _cover(BuildContext context) {
-    final px =
-        (coverLogicalSize(context) * MediaQuery.devicePixelRatioOf(context))
-            .round();
-    final local = filePath;
-    if (local != null && local.isNotEmpty) {
-      return Image.file(
-        File(local),
-        fit: BoxFit.cover,
-        cacheWidth: px.clamp(96, 1024),
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-      );
-    }
-    if (url.isEmpty) return null;
-    // Same cacheKey/decode as the player's [Artwork] so the flight shares its
-    // loaded bitmap instead of fetching a second copy.
-    return CachedNetworkImage(
-      imageUrl: url,
-      cacheKey: '$url-$px',
+    if (url.isEmpty && (filePath == null || filePath!.isEmpty)) return null;
+    const card = SizedBox.expand();
+    return Image(
+      image: playerCoverProvider(context, url, filePath: filePath),
       fit: BoxFit.cover,
-      memCacheWidth: px.clamp(96, 1024),
-      fadeInDuration: const Duration(milliseconds: 140),
-      fadeOutDuration: Duration.zero,
-      placeholder: (_, __) => const SizedBox.shrink(),
-      errorWidget: (_, __, ___) => const SizedBox.shrink(),
+      width: double.infinity,
+      height: double.infinity,
+      frameBuilder: (_, child, frame, ___) => frame == null ? card : child,
+      errorBuilder: (_, __, ___) => card,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final cover = _cover(context);
     return AnimatedBuilder(
       animation: animation,
       builder: (context, child) => ClipRRect(
@@ -222,12 +239,49 @@ class CoverFlightShuttle extends StatelessWidget {
                 AppMotion.player.transform(animation.value)),
         child: child,
       ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Artwork(url, size: kMiniArtworkSize, radius: 0),
-          if (cover != null) cover,
-        ],
+      // Listens, so a video that is dropped mid-flight (the audio took over)
+      // falls back to the cover instead of drawing a disposed controller.
+      child: ListenableBuilder(
+        listenable: videoHandoff,
+        builder: (context, _) {
+          final video =
+              videoHandoff.isLiveFor(songId) ? videoHandoff.controller : null;
+          if (video != null) return VideoFrame(controller: video);
+          // Opaque card under the cover: the flight is never see-through.
+          return ColoredBox(
+            color: AppColors.mist,
+            child: _cover(context) ?? const SizedBox.expand(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// The video's frames filling whatever box it is given, letterboxed on black.
+/// Two places can render the same controller at once (mini player and full
+/// player): this is a view, never an owner.
+class VideoFrame extends StatelessWidget {
+  final VideoPlayerController controller;
+
+  const VideoFrame({super.key, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: controller,
+          builder: (context, value, child) => AspectRatio(
+            // Letterbox: never crop or stretch the frame.
+            aspectRatio: value.size.isEmpty
+                ? 16 / 9
+                : value.size.width / value.size.height,
+            child: child,
+          ),
+          child: VideoPlayer(controller),
+        ),
       ),
     );
   }

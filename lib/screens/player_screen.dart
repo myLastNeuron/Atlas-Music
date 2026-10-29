@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 import '../models/song.dart';
 import '../services/artwork_color.dart';
 import '../services/audio_service.dart';
 import '../services/storage_service.dart';
+import '../services/user_prefs.dart';
 import '../services/theme_settings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
@@ -32,7 +34,15 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _isLiked = false;
   String? _likedForId;
   bool _videoMode = false;
-  String? _videoModeForId;
+
+  /// The user already picked a mode on this page: a late read of the stored
+  /// choice must not undo their tap.
+  bool _modeChosen = false;
+
+  /// The video controller while video mode is open (null otherwise). Transport
+  /// and slider read it so they drive the video instead of the paused audio.
+  final ValueNotifier<VideoPlayerController?> _videoController =
+      ValueNotifier(null);
   AudioPlayerService? _audio;
   VoidCallback? _audioListener;
 
@@ -67,6 +77,11 @@ class _PlayerScreenState extends State<PlayerScreen>
     super.initState();
     final audio = context.read<AudioPlayerService>();
     _audio = audio;
+    // The Song/Video choice is the user's, not the page's: it comes back on
+    // every open, including the one after a restart.
+    UserPrefs().getVideoMode().then((on) {
+      if (on && mounted && !_modeChosen) setState(() => _videoMode = true);
+    });
     // Re-check on song change (auto-advance) and on any like toggled
     // elsewhere (Liked page / playlist rows) so the heart never goes stale.
     // The same tick keeps the cover breath in sync with play/pause.
@@ -74,7 +89,6 @@ class _PlayerScreenState extends State<PlayerScreen>
       _syncLiked();
       _syncBreath();
       _syncUpcoming();
-      _syncVideoMode();
     };
     audio.addListener(_audioListener!);
     _storageService.addListener(_onStorageChanged);
@@ -84,6 +98,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   void dispose() {
     _audio?.removeListener(_audioListener!);
     _storageService.removeListener(_onStorageChanged);
+    // Not disposed: a surface may clear it one frame after the page is gone
+    // (a deferred write to a disposed notifier would throw). It dies with this
+    // state object anyway.
     _breath.dispose();
     super.dispose();
   }
@@ -123,13 +140,15 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (mounted) setState(() {});
   }
 
-  /// Drops back to Song view when the track changes: the video belongs to the
-  /// song it was opened on, and the surface is keyed by that song's id.
-  void _syncVideoMode() {
-    final id = _audio?.currentSong?.id;
-    if (id == _videoModeForId) return;
-    _videoModeForId = id;
-    if (_videoMode && mounted) setState(() => _videoMode = false);
+  /// Song/Video is a saved choice, so it also survives a track change: the
+  /// surface is keyed by song id, so the next song opens its own video.
+  void _setVideoMode(bool on) {
+    if (on == _videoMode) return;
+    setState(() {
+      _videoMode = on;
+      _modeChosen = true;
+    });
+    UserPrefs().setVideoMode(on);
   }
 
   Future<void> _syncLiked({bool force = false}) async {
@@ -320,7 +339,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                   Center(
                     child: _ModeToggle(
                       video: _videoMode,
-                      onChanged: (v) => setState(() => _videoMode = v),
+                      onChanged: _setVideoMode,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -331,16 +350,19 @@ class _PlayerScreenState extends State<PlayerScreen>
                             ? box.maxWidth
                             : box.maxHeight;
                         return Center(
-                          child: _videoMode
+                          child: _videoMode && !isLoading
+                              // The Hero is inside the surface: it must not wrap
+                              // an owning widget, or the flight would recreate
+                              // it and re-park the video mid-transition.
                               ? VideoSurface(
                                   key: ValueKey('video_${song.id}'),
                                   song: song,
                                   size: side,
-                                  onExitToSong: () {
-                                    if (mounted) {
-                                      setState(() => _videoMode = false);
-                                    }
-                                  },
+                                  // The page keeps Video as the saved mode: a
+                                  // close parks the video instead of handing
+                                  // playback back to the audio.
+                                  keepPlayingOnDetach: () => _videoMode,
+                                  controller: _videoController,
                                 )
                               : _cover(song, artPath, side),
                         );
@@ -350,10 +372,13 @@ class _PlayerScreenState extends State<PlayerScreen>
                   const SizedBox(height: 18),
                   _titleBlock(song, canOpenArtist),
                   const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: VideoStatsBar(videoId: song.videoId ?? song.id),
-                  ),
+                  // The video may be a different music video: these stats
+                  // belong to the song's own art-track id.
+                  if (!_videoMode)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: VideoStatsBar(videoId: song.videoId ?? song.id),
+                    ),
                   if (upcoming.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     _upNextBlock(upcoming),
@@ -366,7 +391,11 @@ class _PlayerScreenState extends State<PlayerScreen>
                     const _UpNextSkeleton(),
                     const SizedBox(height: 12),
                   ],
-                  _PlayerSlider(accent: accent),
+                  _PlayerSlider(
+                    accent: accent,
+                    videoMode: _videoMode,
+                    video: _videoController,
+                  ),
                   const SizedBox(height: 4),
                   _transport(
                       audioService, isPlaying, shuffle, loop, accent, isLoading),
@@ -665,58 +694,51 @@ class _PlayerScreenState extends State<PlayerScreen>
             onPressed: () => _skip(audioService.playPrevious),
           ),
         ),
-        Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: accent ?? AppColors.action,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
+        if (_videoMode)
+          // Video mode: the button toggles the video. Audio stays paused, so
+          // driving it here would bounce the page back to Song view.
+          ValueListenableBuilder<VideoPlayerController?>(
+            valueListenable: _videoController,
+            builder: (context, video, _) => video == null
+                ? _playButton(
+                    playing: false,
+                    loading: false,
+                    iconColor: iconColor,
+                    accent: accent,
+                    onPressed: null,
+                  )
+                : ValueListenableBuilder<VideoPlayerValue>(
+                    valueListenable: video,
+                    builder: (context, value, _) => _playButton(
+                      playing: value.isPlaying,
+                      loading: false,
+                      iconColor: iconColor,
+                      accent: accent,
+                      // A disposed controller can throw from an in-flight tap;
+                      // the page must not surface an unhandled future for it.
+                      onPressed: () => (value.isPlaying
+                              ? video.pause()
+                              : video.play())
+                          .catchError((_) {}),
+                    ),
+                  ),
+          )
+        else
+          _playButton(
+            playing: isPlaying,
+            loading: loading,
+            iconColor: iconColor,
+            accent: accent,
+            onPressed: loading
+                ? null
+                : () {
+                    if (isPlaying) {
+                      audioService.pause();
+                    } else {
+                      audioService.resume();
+                    }
+                  },
           ),
-          child: MotionPress(
-            scale: 0.9,
-            child: SizedBox(
-              width: 60,
-              height: 60,
-              child: IconButton(
-                icon: AnimatedSwitcher(
-                  duration: AppMotion.dur(context, AppMotion.micro),
-                  switchInCurve: AppMotion.curve,
-                  child: loading
-                      // Resume/pause is answered by a load, not instantly:
-                      // a spinner is the honest state, and the service would
-                      // ignore a second press anyway.
-                      ? SizedBox(
-                          key: const ValueKey('player_loading'),
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2.4, color: iconColor),
-                        )
-                      : PlayPauseIcon(
-                          key: const ValueKey('player_play_pause'),
-                          playing: isPlaying,
-                          size: 30,
-                          color: iconColor,
-                        ),
-                ),
-                onPressed: loading
-                    ? null
-                    : () {
-                        if (isPlaying) {
-                          audioService.pause();
-                        } else {
-                          audioService.resume();
-                        }
-                      },
-              ),
-            ),
-          ),
-        ),
         MotionPress(
           scale: 0.9,
           child: IconButton(
@@ -741,6 +763,60 @@ class _PlayerScreenState extends State<PlayerScreen>
           ),
         ),
       ],
+    );
+  }
+
+  /// The heavy centre button, shared by Song (audio) and Video (video).
+  Widget _playButton({
+    required bool playing,
+    required bool loading,
+    required Color iconColor,
+    required Color? accent,
+    required VoidCallback? onPressed,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: accent ?? AppColors.action,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: MotionPress(
+        scale: 0.9,
+        child: SizedBox(
+          width: 60,
+          height: 60,
+          child: IconButton(
+            icon: AnimatedSwitcher(
+              duration: AppMotion.dur(context, AppMotion.micro),
+              switchInCurve: AppMotion.curve,
+              child: loading
+                  // Resume/pause is answered by a load, not instantly:
+                  // a spinner is the honest state, and the service would
+                  // ignore a second press anyway.
+                  ? SizedBox(
+                      key: const ValueKey('player_loading'),
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.4, color: iconColor),
+                    )
+                  : PlayPauseIcon(
+                      key: const ValueKey('player_play_pause'),
+                      playing: playing,
+                      size: 30,
+                      color: iconColor,
+                    ),
+            ),
+            onPressed: onPressed,
+          ),
+        ),
+      ),
     );
   }
 
@@ -901,14 +977,14 @@ class _ModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Tapping the half that is already selected is a no-op (onTap null),
-    // so the pill never thrashes its own animation for nothing.
-    Widget half(String label, bool selected, Key key) => MotionPress(
+    // Each half sets its own target: deriving it from `selected` inverted the
+    // Song half, so tapping Song while in Video re-selected Video.
+    Widget half(String label, bool selected, bool value, Key key) => MotionPress(
           scale: 0.94,
           child: InkWell(
             key: key,
             borderRadius: BorderRadius.circular(14),
-            onTap: selected ? null : () => onChanged(!selected),
+            onTap: selected ? null : () => onChanged(value),
             child: AnimatedContainer(
               duration: AppMotion.dur(context, AppMotion.micro),
               curve: AppMotion.curve,
@@ -940,8 +1016,8 @@ class _ModeToggle extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          half('Song', !video, const ValueKey('player_mode_song')),
-          half('Video', video, const ValueKey('player_mode_video')),
+          half('Song', !video, false, const ValueKey('player_mode_song')),
+          half('Video', video, true, const ValueKey('player_mode_video')),
         ],
       ),
     );
@@ -950,10 +1026,20 @@ class _ModeToggle extends StatelessWidget {
 
 /// Slider + time labels isolated: only this row rebuilds per second.
 class _PlayerSlider extends StatefulWidget {
-  const _PlayerSlider({this.accent});
+  const _PlayerSlider({
+    this.accent,
+    this.videoMode = false,
+    this.video,
+  });
 
   /// Artwork colour when the option is on; null keeps the app palette.
   final Color? accent;
+
+  /// Drives the video position/duration instead of the audio's.
+  final bool videoMode;
+
+  /// Live video controller while [videoMode] is open; null until it loads.
+  final ValueNotifier<VideoPlayerController?>? video;
 
   @override
   State<_PlayerSlider> createState() => _PlayerSliderState();
@@ -970,7 +1056,33 @@ class _PlayerSliderState extends State<_PlayerSlider> {
   }
 
   @override
+  void didUpdateWidget(_PlayerSlider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The two players are separate clocks; an unfinished drag cannot carry
+    // across a mode switch.
+    if (oldWidget.videoMode != widget.videoMode) _dragValue = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (widget.videoMode) {
+      final video = widget.video;
+      if (video == null) return _slider(0, 0, null);
+      return ValueListenableBuilder<VideoPlayerController?>(
+        valueListenable: video,
+        builder: (context, c, _) {
+          if (c == null) return _slider(0, 0, null);
+          return ValueListenableBuilder<VideoPlayerValue>(
+            valueListenable: c,
+            builder: (context, value, _) => _slider(
+              value.position.inSeconds,
+              value.duration.inSeconds,
+              (at) => c.seekTo(at).catchError((_) {}),
+            ),
+          );
+        },
+      );
+    }
     final posSec =
         context.select<AudioPlayerService, int>((s) => s.position.inSeconds);
     final durSec =
@@ -983,6 +1095,12 @@ class _PlayerSliderState extends State<_PlayerSlider> {
       _dragValue = null;
     }
     final audio = context.read<AudioPlayerService>();
+    return _slider(posSec, durSec, audio.seek);
+  }
+
+  /// Shared row; [seek] null means no player is ready yet (slider disabled).
+  Widget _slider(
+      int posSec, int durSec, Future<void> Function(Duration)? seek) {
     final max = durSec > 0 ? durSec.toDouble() : 1.0;
     final value = (_dragValue ?? posSec.toDouble()).clamp(0.0, max);
     final shownSec = _dragValue?.round() ?? posSec;
@@ -1000,11 +1118,14 @@ class _PlayerSliderState extends State<_PlayerSlider> {
           child: Slider(
             value: value,
             max: max,
-            onChanged: (v) => setState(() => _dragValue = v),
-            onChangeEnd: (v) {
-              audio.seek(Duration(seconds: v.toInt()));
-              setState(() => _dragValue = null);
-            },
+            onChanged:
+                seek == null ? null : (v) => setState(() => _dragValue = v),
+            onChangeEnd: seek == null
+                ? null
+                : (v) {
+                    seek(Duration(seconds: v.toInt()));
+                    setState(() => _dragValue = null);
+                  },
           ),
         ),
         Padding(

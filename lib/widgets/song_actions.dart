@@ -375,6 +375,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
       width: 250,
       child: GlassSurface(
         borderRadius: BorderRadius.circular(18),
+        blur: true,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -599,6 +600,7 @@ class SelectionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassSurface(
       borderRadius: BorderRadius.circular(18),
+      blur: true,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
       child: Row(
         children: [

@@ -41,8 +41,10 @@ void main() {
     await tester.pump();
 
     var sawFade = false;
+    var elapsed = 0;
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 60));
+      elapsed += 60;
       if (page.evaluate().isEmpty) break;
       expect(tester.getRect(page), before,
           reason: 'page content moved while closing');
@@ -52,6 +54,10 @@ void main() {
     }
 
     expect(sawFade, isTrue, reason: 'close must fade the page at all');
+    // The mini bar has to be back under the thumb quickly; the old 780 ms
+    // dissolve read as a lag before the player went away.
+    expect(elapsed, lessThanOrEqualTo(480),
+        reason: 'close must be fast');
     await tester.pumpAndSettle();
     expect(find.text('PLAYER'), findsNothing);
   });

@@ -20,6 +20,7 @@ import 'storage_service.dart';
 import 'song_filter.dart';
 import 'user_prefs.dart';
 import 'youtube_service.dart';
+import 'ytmusic_search.dart';
 import 'lyrics_service.dart';
 import 'quick_picks.dart';
 
@@ -35,6 +36,8 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// Metadata only (related/search for autoplay). Streams come from providers.
   final YouTubeService _youtubeService = YouTubeService();
+  /// Catalogue lookups for the Video toggle's music-video fallback.
+  final YouTubeMusicSearch _ytMusic = YouTubeMusicSearch();
   final CacheService _cache = CacheService();
   final StorageService _storage = StorageService();
   final YouTubeProvider _youTube = YouTubeProvider();
@@ -388,10 +391,55 @@ class AudioPlayerService extends ChangeNotifier {
   Duration get position => _position;
   Song? get currentSong => _currentSong;
 
-  /// HLS master URL for [song]'s video, or null when it is unavailable.
-  /// Keeps providers out of the UI layer.
-  Future<String?> videoUrl(Song song) =>
-      _youTube.resolveVideo(song).then((s) => s?.url);
+  /// Video for [song]: the song's own video when it is a real video (same
+  /// media as the audio, so it may seek to the audio position), otherwise a
+  /// music video found through the catalogue (different media, starts at 0).
+  /// Keeps providers out of the UI layer. Null when nothing is usable.
+  /// [refresh] ignores the cached answer so Retry can get a fresh URL.
+  Future<VideoSource?> videoSource(Song song, {bool refresh = false}) =>
+      _youTube.videoSource(
+        song,
+        refresh: refresh,
+        findMusicVideo: (s) async {
+          // Every stage is best-effort: one dead catalogue call must not
+          // cancel the plain-search fallback or leak out to the UI.
+          List<VideoCandidate> rows = const [];
+          try {
+            rows = await _ytMusic.searchVideos('${s.title} ${s.artist}');
+          } catch (_) {}
+          // An official catalogue video is the best answer.
+          final official = YouTubeMusicSearch.bestMusicVideo(
+            rows,
+            title: s.title,
+            artist: s.artist,
+            excludeId: s.videoId ?? s.id,
+            officialOnly: true,
+          );
+          if (official != null) return official;
+          // Otherwise label uploads that the catalogue omits (Sony Music
+          // India's Kesariya) are ranked first by plain youtube.com search.
+          List<Song> plain = const [];
+          try {
+            plain = await _youtubeService
+                .searchVideos('${s.title} ${s.artist}', limit: 10);
+          } catch (_) {}
+          final fromPlain = YouTubeMusicSearch.bestPlainVideo(
+            plain,
+            title: s.title,
+            artist: s.artist,
+            excludeId: s.videoId ?? s.id,
+          );
+          if (fromPlain != null) return fromPlain;
+          // Last resort: a catalogue upload (lyric/cover) is still a real
+          // moving picture, unlike the art track this fallback exists for.
+          return YouTubeMusicSearch.bestMusicVideo(
+            rows,
+            title: s.title,
+            artist: s.artist,
+            excludeId: s.videoId ?? s.id,
+          );
+        },
+      );
 
   /// Headers the video player must send: the UA the resolver's probe proved.
   Map<String, String> get videoHeaders => YouTubeProvider.videoHeaders;
@@ -3856,6 +3904,7 @@ class AudioPlayerService extends ChangeNotifier {
     _subs.clear();
     _player.dispose();
     _youtubeService.dispose();
+    _ytMusic.dispose();
     _youTube.dispose();
     super.dispose();
   }

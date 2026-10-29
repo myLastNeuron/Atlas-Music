@@ -55,6 +55,20 @@ class UserPrefs {
   static const _artistsKey = 'music_artists';
   static const _doneKey = 'onboarding_done';
   static const _termsKey = 'terms_accepted';
+  static const _videoModeKey = 'player_video_mode';
+
+  /// The player's saved Song/Video choice. Once the user picks Video, every
+  /// later track, mini-player round trip and app restart opens in Video until
+  /// they pick Song again.
+  Future<bool> getVideoMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_videoModeKey) ?? false;
+  }
+
+  Future<void> setVideoMode(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_videoModeKey, value);
+  }
 
   Future<String?> getName() async {
     final prefs = await SharedPreferences.getInstance();

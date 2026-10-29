@@ -132,6 +132,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       border: Border(top: BorderSide(color: AppColors.line)),
       shadow: false,
+      blur: true,
       padding: EdgeInsets.fromLTRB(
           20, 12, 20, 24 + MediaQuery.of(context).padding.bottom),
       child: Column(

@@ -7,6 +7,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [Unreleased]
 
 ### Added
+- **Real frosted glass, without the stutter**: the nav bar, mini player and
+  sheets blur what is behind them. Panels inside the page keep the flat tint,
+  because the page colour is all that is behind them — the filter there cost a
+  repaint every frame and showed nothing.
 - **Share a playlist as a QR code** (playlist menu → *Share Playlist*): the
   code carries the playlist name and every track, and a *Share QR Code* button
   shares it as an image through any app (WhatsApp, chat, email). Playlists too
@@ -18,6 +22,46 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   ordinary editable playlist.
 
 ### Fixed
+- **The cover no longer ghosts on the way to the full player**: the flight used
+  to stretch the 42 px mini thumbnail over the whole morph, so the artwork
+  arrived as a blurred, washed-out copy and only sharpened on landing. It now
+  carries the player's own cover bitmap, pre-warmed before the route opens, with
+  no fade over a placeholder — crisp and fully opaque from the first frame, both
+  directions.
+- **Leaving Video for Song gives the album art back**: switching to Song
+  disposed the video without telling the handoff, so the mini player kept
+  painting the dead video's last frame instead of the song's artwork.
+- **The white/grey video box is gone**: closing and reopening the player in
+  Video mode used to throw (a notifier written while the widget tree was locked,
+  and a cover flight that recreated the video widget and then disposed the
+  controller the mini player was still drawing). The video now survives the
+  trip in both directions — same controller, no restart, no disposed frames.
+- **The mini player is the video in Video mode**: its square shows the live
+  video, and the cover flight now carries that running video up into the player
+  and back down on close — the same controller, so nothing restarts, pauses or
+  doubles up during the transition.
+- **Switching modes never changes the play state**: a paused song opens its
+  video paused (first frame on screen), and a playing one keeps playing.
+- **No more artwork ghosting on the open transition**: the mini player's thumb
+  is hidden while the cover flies (it is still mounted, so it lands decoded),
+  instead of showing as a second image behind the flying cover.
+- **Paused stays paused across the mini player**: opening or closing the player
+  no longer starts playback by itself — a paused video comes back paused, and a
+  paused video hands back to a paused song.
+- **The video keeps playing when you close the player**: going back to the
+  mini player no longer hands playback back to the audio stream. The video
+  keeps running (sound included), the mini player's play/pause and progress bar
+  drive it, and reopening the player picks the same video up where it is.
+- **The Song/Video choice is remembered**: pick Video once and it stays for the
+  next track, for the trip through the mini player, and after a restart. The
+  next song keeps playing in Video instead of flipping back to Song, and when a
+  video ends the queue advances into the next song's video.
+- **Song → Video keeps the timeline too**: the video now opens at the song's
+  position instead of restarting at 0:00, so the switch no longer looks like it
+  lost the position and no longer pushes the song to its end on the way back.
+- **Video → Song keeps the timeline**: the song now continues from its position
+  plus the time watched in the video, including songs whose video is a separate
+  music video, instead of dropping that watch time.
 - **Playlist delete no longer lies**: a playlist that still holds downloads is
   protected, and the screen now says so instead of closing as if it were gone.
 - **Changing a playlist cover shows the new image** immediately (the decoded

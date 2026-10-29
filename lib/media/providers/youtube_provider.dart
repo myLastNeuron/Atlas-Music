@@ -9,6 +9,12 @@ import '../media_source.dart';
 import '../media_resolver.dart';
 import '../resolve_failure.dart';
 
+/// A playable video URL plus whether it is the same media as the playing
+/// audio. `matchAudioPosition` is true only for the song's own video; a found
+/// music video is a different edit, but the player still opens both at the
+/// song's position so the switch cannot look like it lost the timeline.
+typedef VideoSource = ({String url, bool matchAudioPosition});
+
 /// Sole owner of `youtube_explode_dart` (3.1.0, pinned) and of all
 /// googlevideo range semantics. If YouTube changes InnerTube tomorrow,
 /// only this file changes.
@@ -71,7 +77,9 @@ class YouTubeProvider extends MediaResolver {
 
   /// Resolved video sources by videoId, same TTL as the manifests: opening
   /// the video twice in one session must not cost a second player call.
-  final Map<String, MediaSource> _videoCache = {};
+  /// Keyed by the *song's* video id, so a found music video answers the next
+  /// open of the same song.
+  final Map<String, _CachedVideo> _videoCache = {};
 
   /// Converts an exception to a [FailureScope].
   /// Network/DNS/timeout errors -> provider scope (affects all songs).
@@ -352,29 +360,82 @@ class YouTubeProvider extends MediaResolver {
     'Origin': 'https://www.youtube.com',
   };
 
-  /// Muxed video for [song] as a probed HLS master URL, or null. Never throws:
-  /// the Video toggle degrades to a message.
+  /// The video for [song], or null when nothing usable is found. Never
+  /// throws: the Video toggle degrades to a message.
+  ///
+  /// YT Music's Songs filter only lists auto-generated art tracks (channel
+  /// "<Artist> - Topic"), whose HLS stream is the still album art. For those
+  /// (or when the song's own player call fails) [findMusicVideo] is asked for
+  /// the id of a real music video, which is different media and starts at 0.
+  /// Without a finder the art track itself is returned — unchanged behaviour.
+  ///
+  /// [refresh] busts the cached result so a Retry can retry a URL that has
+  /// gone stale in the player; the fresh answer is cached as usual.
   ///
   /// shortcut: the master is adaptive bitrate, not pinned 360p — the platform
   /// player picks the variant. Pin a rendition only if the cap ever matters.
-  Future<MediaSource?> resolveVideo(Song song) async {
+  Future<VideoSource?> videoSource(
+    Song song, {
+    Future<String?> Function(Song song)? findMusicVideo,
+    bool refresh = false,
+  }) async {
     final videoId = song.videoId ?? song.id;
-    final hit = _videoCache[videoId];
-    if (hit != null &&
-        DateTime.now().difference(hit.resolvedAt) < _manifestTtl) {
-      return hit;
+    if (!refresh) {
+      final hit = _videoCache[videoId];
+      if (hit != null && DateTime.now().difference(hit.at) < _manifestTtl) {
+        return hit.source;
+      }
     }
-    final url = await _hlsMasterUrl(videoId);
-    if (url == null) return null;
-    final source = MediaSource(
-      provider: provider,
-      url: url,
-      mimeType: 'application/x-mpegURL',
-      container: 'm3u8',
-      mediaId: videoId,
-      resolvedAt: DateTime.now(),
+    final own = await _hlsMasterUrl(videoId);
+    // A flaky/absent own stream must not veto a findable music video.
+    final found = (own == null || own.artTrack) && findMusicVideo != null
+        ? await _musicVideoSource(videoId, () => findMusicVideo(song))
+            // The whole extra lookup is bounded: one search plus one player
+            // call may not hold the player on "Finding video…" forever.
+            .timeout(const Duration(seconds: 15), onTimeout: () => null)
+        : null;
+    final pick = chooseVideoSource(
+      own: own,
+      found: found,
+      hasFinder: findMusicVideo != null,
     );
-    _videoCache[videoId] = source;
+    if (pick == null) return null;
+    return pick.cache ? _cacheVideo(videoId, pick.source) : pick.source;
+  }
+
+  /// Picks what [videoSource] returns: the song's own stream when it is a real
+  /// video, else a found music video, else — only without a finder — the art
+  /// track itself. The art-track fallback is not cached: a later open may find
+  /// the real video. Pure for the test.
+  @visibleForTesting
+  static ({VideoSource source, bool cache})? chooseVideoSource({
+    required ({String url, bool artTrack})? own,
+    required VideoSource? found,
+    required bool hasFinder,
+  }) {
+    if (own != null && !own.artTrack) {
+      return (source: (url: own.url, matchAudioPosition: true), cache: true);
+    }
+    if (found != null) return (source: found, cache: true);
+    if (own != null && !hasFinder) {
+      return (source: (url: own.url, matchAudioPosition: true), cache: false);
+    }
+    return null;
+  }
+
+  /// HLS of the music video [find] names, or null. The song's own id is
+  /// rejected so a finder that echoes it cannot produce the art track again.
+  Future<VideoSource?> _musicVideoSource(
+      String ownId, Future<String?> Function() find) async {
+    final id = await find();
+    if (id == null || id.isEmpty || id == ownId) return null;
+    final master = await _hlsMasterUrl(id);
+    if (master == null) return null;
+    return (url: master.url, matchAudioPosition: false);
+  }
+
+  VideoSource _cacheVideo(String videoId, VideoSource source) {
+    _videoCache[videoId] = _CachedVideo(source, DateTime.now());
     if (_videoCache.length > 20) {
       _videoCache.remove(_videoCache.keys.first);
     }
@@ -382,15 +443,12 @@ class YouTubeProvider extends MediaResolver {
   }
 
   /// Two attempts under one 25s deadline. Never throws.
-  Future<String?> _hlsMasterUrl(String videoId) async {
+  Future<({String url, bool artTrack})?> _hlsMasterUrl(String videoId) async {
     final deadline = DateTime.now().add(const Duration(seconds: 25));
     for (var attempt = 0; attempt < 2; attempt++) {
-      // Attempt 1 always starts from a fresh token: a bot-gated token makes
+      // A retry always starts from a fresh token: a bot-gated token makes
       // VISIONOS answer LOGIN_REQUIRED instead of an HLS master.
-      if (attempt == 0) {
-        _visitorData = null;
-        await Future.delayed(const Duration(seconds: 2));
-      }
+      if (attempt > 0) _visitorData = null;
       final remaining = deadline.difference(DateTime.now());
       if (remaining <= Duration.zero) break;
       const perAttempt = Duration(seconds: 15);
@@ -411,13 +469,30 @@ class YouTubeProvider extends MediaResolver {
         final master = hlsMasterFromPlayerJson(json);
         // Playable but no HLS master is permanent: a retry cannot conjure it.
         if (master == null) return null;
-        await _head(master);
-        return master;
+        // No HEAD probe here: on this path a 10s probe can outlive the UI's
+        // patience and reject a master ExoPlayer would play.
+        return (url: master, artTrack: isArtTrackPlayerJson(json));
       } catch (_) {
         // Next attempt; the last one falls through to null.
       }
     }
     return null;
+  }
+
+  /// True when a player response is an auto-generated art track: a still
+  /// album image on a "<Artist> - Topic" channel.
+  ///
+  /// Verified live (2026-10) with the VISIONOS client used here: every
+  /// MUSIC_VIDEO_TYPE_ATV row answered `videoDetails.author` = "<Artist> -
+  /// Topic", while real music videos named their channel ("Ed Sheeran",
+  /// "TheWeekndVEVO"). VISIONOS responses carry neither `microformat` nor
+  /// `musicVideoType`, so `author` is the only field that can decide.
+  @visibleForTesting
+  static bool isArtTrackPlayerJson(Map<String, dynamic> json) {
+    final details = json['videoDetails'];
+    final author = details is Map ? details['author'] : null;
+    if (author is! String) return false;
+    return author.trim().toLowerCase().endsWith(' - topic');
   }
 
   /// `hlsManifestUrl` of a player response, or null when the video is not
@@ -840,4 +915,11 @@ class _CachedManifest {
   final StreamManifest manifest;
   final DateTime at;
   _CachedManifest(this.manifest, this.at);
+}
+
+/// In-memory video answer, same reuse rule as [_CachedManifest].
+class _CachedVideo {
+  final VideoSource source;
+  final DateTime at;
+  _CachedVideo(this.source, this.at);
 }

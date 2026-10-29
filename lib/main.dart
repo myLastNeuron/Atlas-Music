@@ -18,14 +18,16 @@ void main() async {
   // the process and remove the media notification, and SystemUI then shows its
   // "No media playing" placeholder even while audio is audible. The
   // notification is still removed on a real stop (playback state goes idle).
+  // androidNotificationOngoing is therefore left false: the plugin asserts it
+  // can only be true alongside stopForegroundOnPause, and it is a no-op when
+  // the service stays in the foreground anyway.
   final audioHandler = AtlasAudioHandler();
   await AudioService.init(
     builder: () => audioHandler,
-    config: AudioServiceConfig(
+    config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.atlas.music.atlas_music.channel.audio',
       androidNotificationChannelName: 'Audio playback',
       androidNotificationChannelDescription: 'Media playback controls and info',
-      androidNotificationOngoing: true,
       androidStopForegroundOnPause: false,
       androidNotificationIcon: 'drawable/ic_stat_music',
       androidShowNotificationBadge: false,

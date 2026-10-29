@@ -159,6 +159,12 @@ class YouTubeService {
   /// Track list for one album/single browseId returned by [artistByName].
   Future<List<Song>> albumSongs(String browseId) => _ytm.browseAlbum(browseId);
 
+  /// Plain youtube.com video search. Only the Video toggle's fallback uses
+  /// this: YT Music's "Videos" filter omits some label uploads (Sony Music
+  /// India's Kesariya, for one), while plain search ranks them first.
+  Future<List<Song>> searchVideos(String query, {int limit = 10}) =>
+      _legacySearch(query, limit: limit);
+
   Future<List<Song>> _legacySearch(String query, {int limit = 20}) async {
     // Uses searchContent (raw SearchResult union) instead of search():
     // search() eagerly maps every item to Video and throws the whole

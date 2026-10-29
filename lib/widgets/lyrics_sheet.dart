@@ -100,6 +100,7 @@ class _LyricsSheetState extends State<LyricsSheet> {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         border: Border(top: BorderSide(color: AppColors.line)),
         shadow: false,
+        blur: true,
         child: Column(
         children: [
           const SizedBox(height: 10),

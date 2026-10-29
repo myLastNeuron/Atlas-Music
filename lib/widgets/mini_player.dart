@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
+import '../services/video_handoff.dart';
 import '../theme/app_theme.dart';
 import 'app_transitions.dart';
 import 'artwork.dart';
@@ -15,12 +19,20 @@ import 'song_actions.dart';
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
-  void _openPlayer(BuildContext context, String heroTag) {
+  void _openPlayer(
+      BuildContext context, String heroTag, Song song, String? artPath) {
     final cur = ModalRoute.of(context)?.settings.name;
     if (cur == PlayerScreen.routeName) return;
     // The player's cover shares this bar's per-route Hero tag, so only the bar
     // that was tapped flies it.
     playerHeroTag = heroTag;
+    // Warm the exact bitmap the flight and the player's cover use: decoded
+    // before the route builds, the shuttle's first frame is the artwork.
+    unawaited(precacheImage(
+      playerCoverProvider(context, song.thumbnailUrl, filePath: artPath),
+      context,
+      onError: (_, __) {},
+    ));
     pushAppPage(
       context,
       const PlayerScreen(),
@@ -53,6 +65,8 @@ class MiniPlayer extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
         shadow: false,
+        // Frosted: album art and the list scroll underneath it.
+        blur: true,
         child: child,
       ),
     );
@@ -139,19 +153,30 @@ class MiniPlayer extends StatelessWidget {
                   child: InkWell(
                     key: const ValueKey('mini_nav_area'),
                     borderRadius: BorderRadius.circular(14),
-                    onTap: () => _openPlayer(context, heroTag),
+                    onTap: () => _openPlayer(context, heroTag, song, artPath),
                     child: Row(
                       children: [
                         Hero(
                           tag: heroTag,
                           createRectTween: (begin, end) =>
                               PlayerRectTween(begin: begin, end: end),
-                          // The cover morphs thumb -> big cover on open and
-                          // back onto the thumb on close; nothing else moves.
+                          // The square morphs thumb -> big cover (or the live
+                          // video, in Video mode) on open and back on close;
+                          // nothing else moves.
                           flightShuttleBuilder: (ctx, anim, dir, from, to) =>
                               CoverFlightShuttle(song.thumbnailUrl,
-                                  filePath: artPath, animation: anim),
-                          placeholderBuilder: (context, size, child) => child,
+                                  filePath: artPath,
+                                  songId: song.id,
+                                  animation: anim),
+                          // Hidden, but still mounted so it is decoded when the
+                          // shuttle lands. The player page fades in over this
+                          // bar, so a thumb left painting here would show as a
+                          // second artwork behind the flying cover.
+                          placeholderBuilder: (context, size, child) => SizedBox(
+                            width: size.width,
+                            height: size.height,
+                            child: Offstage(child: child),
+                          ),
                           child: AnimatedSwitcher(
                             duration: AppMotion.dur(context, AppMotion.micro),
                             switchInCurve: AppMotion.curve,
@@ -162,11 +187,33 @@ class MiniPlayer extends StatelessWidget {
                               child: ScaleTransition(
                                   scale: animation, child: child),
                             ),
-                            child: Artwork(
-                              song.thumbnailUrl,
-                              key: ValueKey(song.id),
-                              size: kMiniArtworkSize,
-                              radius: 10,
+                            child: ListenableBuilder(
+                              // Video mode: the square is the live video, so the
+                              // flight and the mini bar show what is really
+                              // playing.
+                              listenable: videoHandoff,
+                              builder: (context, _) {
+                                final video = videoHandoff.isLiveFor(song.id)
+                                    ? videoHandoff.controller
+                                    : null;
+                                if (video != null) {
+                                  return ClipRRect(
+                                    key: ValueKey('mini_video_${song.id}'),
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: SizedBox(
+                                      width: kMiniArtworkSize,
+                                      height: kMiniArtworkSize,
+                                      child: VideoFrame(controller: video),
+                                    ),
+                                  );
+                                }
+                                return Artwork(
+                                  song.thumbnailUrl,
+                                  key: ValueKey(song.id),
+                                  size: kMiniArtworkSize,
+                                  radius: 10,
+                                );
+                              },
                             ),
                           ),
                         ),
@@ -230,20 +277,37 @@ class MiniPlayer extends StatelessWidget {
                   ),
                   child: MotionPress(
                     scale: 0.9,
-                    child: IconButton(
-                      key: const ValueKey('mini_play_pause'),
-                      visualDensity: VisualDensity.compact,
-                      icon: PlayPauseIcon(
-                        playing: playing,
-                        size: 26,
-                        color: AppColors.charcoal,
-                      ),
-                      onPressed: () {
-                        if (playing) {
-                          audio.pause();
-                        } else {
-                          audio.resume();
-                        }
+                    child: ListenableBuilder(
+                      listenable: videoHandoff,
+                      builder: (context, _) {
+                        // A video parked by the closed player is the playback:
+                        // the button toggles it, not the paused audio.
+                        final video = videoHandoff.controller;
+                        final live = videoHandoff.isLiveFor(song.id);
+                        return IconButton(
+                          key: const ValueKey('mini_play_pause'),
+                          visualDensity: VisualDensity.compact,
+                          icon: PlayPauseIcon(
+                            playing:
+                                live ? video!.value.isPlaying : playing,
+                            size: 26,
+                            color: AppColors.charcoal,
+                          ),
+                          onPressed: () {
+                            if (live) {
+                              unawaited((video!.value.isPlaying
+                                      ? video.pause()
+                                      : video.play())
+                                  .catchError((_) {}));
+                              return;
+                            }
+                            if (playing) {
+                              audio.pause();
+                            } else {
+                              audio.resume();
+                            }
+                          },
+                        );
                       },
                     ),
                   ),
@@ -264,7 +328,7 @@ class MiniPlayer extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        const _MiniProgress(),
+        _MiniProgress(song: song),
       ],
     ));
   }
@@ -272,26 +336,60 @@ class MiniPlayer extends StatelessWidget {
 
 /// Progress tick isolated: only this 2px bar rebuilds per second.
 class _MiniProgress extends StatelessWidget {
-  const _MiniProgress();
+  const _MiniProgress({required this.song});
+
+  final Song song;
 
   static AlwaysStoppedAnimation<Color> get _fill =>
       AlwaysStoppedAnimation<Color>(AppColors.ink);
 
-  @override
-  Widget build(BuildContext context) {
-    final int posSec =
-        context.select<AudioPlayerService, int>((s) => s.position.inSeconds);
-    final int durSec =
-        context.select<AudioPlayerService, int>((s) => s.duration.inSeconds);
-    final max = durSec > 0 ? durSec.toDouble() : 1.0;
+  Widget _bar(double pos, double dur) {
+    final max = dur > 0 ? dur : 1.0;
     return ClipRRect(
       borderRadius: BorderRadius.circular(2),
       child: LinearProgressIndicator(
-        value: (posSec.toDouble() / max).clamp(0.0, 1.0),
+        value: (pos / max).clamp(0.0, 1.0),
         minHeight: 2,
         backgroundColor: AppColors.ink.withValues(alpha: 0.14),
         valueColor: _fill,
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final audio = context.read<AudioPlayerService>();
+    // Listens to the handoff so the bar swaps clocks the moment a video is
+    // parked by the closed player, or handed back to the audio.
+    return ListenableBuilder(
+      listenable: videoHandoff,
+      builder: (context, _) {
+        final video = videoHandoff.controller;
+        if (video != null && videoHandoff.isLiveFor(song.id)) {
+          // The parked video is the clock: map its position onto the song's, so
+          // the bar keeps meaning what the player screen showed.
+          final end = audio.duration > Duration.zero
+              ? audio.duration
+              : song.duration;
+          return ValueListenableBuilder<VideoPlayerValue>(
+            valueListenable: video,
+            builder: (context, value, _) => _bar(
+              mappedSongPosition(
+                songStart: videoHandoff.songStart,
+                videoStart: videoHandoff.videoStart,
+                videoPosition: value.position,
+                songDuration: end,
+              ).inSeconds.toDouble(),
+              end.inSeconds.toDouble(),
+            ),
+          );
+        }
+        final int posSec = context
+            .select<AudioPlayerService, int>((s) => s.position.inSeconds);
+        final int durSec = context
+            .select<AudioPlayerService, int>((s) => s.duration.inSeconds);
+        return _bar(posSec.toDouble(), durSec.toDouble());
+      },
     );
   }
 }
