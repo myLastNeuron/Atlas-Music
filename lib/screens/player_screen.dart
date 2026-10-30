@@ -8,6 +8,7 @@ import '../services/audio_service.dart';
 import '../services/storage_service.dart';
 import '../services/user_prefs.dart';
 import '../services/theme_settings.dart';
+import '../services/video_handoff.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/artwork.dart';
@@ -34,10 +35,6 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _isLiked = false;
   String? _likedForId;
   bool _videoMode = false;
-
-  /// The user already picked a mode on this page: a late read of the stored
-  /// choice must not undo their tap.
-  bool _modeChosen = false;
 
   /// The video controller while video mode is open (null otherwise). Transport
   /// and slider read it so they drive the video instead of the paused audio.
@@ -77,11 +74,13 @@ class _PlayerScreenState extends State<PlayerScreen>
     super.initState();
     final audio = context.read<AudioPlayerService>();
     _audio = audio;
-    // The Song/Video choice is the user's, not the page's: it comes back on
-    // every open, including the one after a restart.
-    UserPrefs().getVideoMode().then((on) {
-      if (on && mounted && !_modeChosen) setState(() => _videoMode = true);
-    });
+    // Decided before the first frame, never a frame or two into the open:
+    // switching the surface mid-flight replaces the destination Hero, and a
+    // replaced Hero fades the flying frame out into a ghost over the page. A
+    // live video (the mini player was showing it) means Video, whatever the
+    // stored choice says.
+    _videoMode = videoHandoff.isLiveFor(audio.currentSong?.id) ||
+        UserPrefs.videoMode;
     // Re-check on song change (auto-advance) and on any like toggled
     // elsewhere (Liked page / playlist rows) so the heart never goes stale.
     // The same tick keeps the cover breath in sync with play/pause.
@@ -146,7 +145,6 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (on == _videoMode) return;
     setState(() {
       _videoMode = on;
-      _modeChosen = true;
     });
     UserPrefs().setVideoMode(on);
   }
@@ -350,21 +348,33 @@ class _PlayerScreenState extends State<PlayerScreen>
                             ? box.maxWidth
                             : box.maxHeight;
                         return Center(
-                          child: _videoMode && !isLoading
-                              // The Hero is inside the surface: it must not wrap
-                              // an owning widget, or the flight would recreate
-                              // it and re-park the video mid-transition.
-                              ? VideoSurface(
-                                  key: ValueKey('video_${song.id}'),
-                                  song: song,
-                                  size: side,
-                                  // The page keeps Video as the saved mode: a
-                                  // close parks the video instead of handing
-                                  // playback back to the audio.
-                                  keepPlayingOnDetach: () => _videoMode,
-                                  controller: _videoController,
-                                )
-                              : _cover(song, artPath, side),
+                          child: ListenableBuilder(
+                            listenable: videoHandoff,
+                            builder: (context, _) => HeroMode(
+                              // In Video mode the thing that travels is the
+                              // video. Until one is live there is nothing to
+                              // carry, and flying the still cover is what made
+                              // the open read as an artwork transition.
+                              enabled: !_videoMode ||
+                                  videoHandoff.isLiveFor(song.id),
+                              child: _videoMode && !isLoading
+                                  // The Hero is inside the surface: it must not
+                                  // wrap an owning widget, or the flight would
+                                  // recreate it and re-park the video
+                                  // mid-transition.
+                                  ? VideoSurface(
+                                      key: ValueKey('video_${song.id}'),
+                                      song: song,
+                                      size: side,
+                                      // The page keeps Video as the saved mode: a
+                                      // close parks the video instead of
+                                      // handing playback back to the audio.
+                                      keepPlayingOnDetach: () => _videoMode,
+                                      controller: _videoController,
+                                    )
+                                  : _cover(song, artPath, side),
+                            ),
+                          ),
                         );
                       },
                     ),
@@ -457,7 +467,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             // thumb on close.
             flightShuttleBuilder: (ctx, anim, dir, from, to) =>
                 CoverFlightShuttle(song.thumbnailUrl,
-                    filePath: artPath, animation: anim),
+                    filePath: artPath, songId: song.id, animation: anim),
             // The landing spot stays empty while the shuttle flies. It is
             // still mounted (Offstage) so it is already decoded when the
             // shuttle lands instead of blinking in. Hiding it on close too

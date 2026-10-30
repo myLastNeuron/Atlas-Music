@@ -6,6 +6,7 @@ import 'services/atlas_audio_handler.dart';
 import 'services/audio_service.dart';
 import 'services/glass_settings.dart';
 import 'services/theme_settings.dart';
+import 'services/user_prefs.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +40,10 @@ void main() async {
   await theme.load();
   final glass = GlassSettings();
   await glass.load();
+  // Same reason: the player picks Song or Video from this before its first
+  // frame, so a stored Video choice must not arrive after the open started —
+  // swapping the surface mid-flight ghosts the flying cover.
+  await UserPrefs().getVideoMode();
   runApp(
     MultiProvider(
       providers: [

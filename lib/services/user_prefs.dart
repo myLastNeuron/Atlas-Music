@@ -57,15 +57,23 @@ class UserPrefs {
   static const _termsKey = 'terms_accepted';
   static const _videoModeKey = 'player_video_mode';
 
+  /// The Song/Video choice as last read or written, so the player reaches a
+  /// decision before its first frame instead of a frame or two into the open
+  /// flight. [main] warms it before runApp; Song until then.
+  static bool _videoMode = false;
+  static bool get videoMode => _videoMode;
+
   /// The player's saved Song/Video choice. Once the user picks Video, every
   /// later track, mini-player round trip and app restart opens in Video until
   /// they pick Song again.
   Future<bool> getVideoMode() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_videoModeKey) ?? false;
+    _videoMode = prefs.getBool(_videoModeKey) ?? false;
+    return _videoMode;
   }
 
   Future<void> setVideoMode(bool value) async {
+    _videoMode = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_videoModeKey, value);
   }

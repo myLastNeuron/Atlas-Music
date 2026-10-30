@@ -1054,6 +1054,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final items = _recommended;
     return ListView.separated(
       shrinkWrap: true,
+      // A ScrollView with no padding of its own pads itself with
+      // MediaQuery.padding — and inside the shell that is the floating mini
+      // player + nav height, which this page's SafeArea(bottom: false) leaves
+      // in place. Without this the list grew a second 173px band under its last
+      // row. The page's own bottom padding is the one that clears the bars.
+      padding: EdgeInsets.zero,
       physics: const NeverScrollableScrollPhysics(),
       itemCount:
           items.length > _recommendedTarget ? _recommendedTarget : items.length,
