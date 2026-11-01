@@ -54,10 +54,10 @@ void main() {
     }
 
     expect(sawFade, isTrue, reason: 'close must fade the page at all');
-    // The mini bar has to be back under the thumb quickly; the old 780 ms
-    // dissolve read as a lag before the player went away.
-    expect(elapsed, lessThanOrEqualTo(480),
-        reason: 'close must be fast');
+    // Close shares the slow symmetric glide with open, so it may take the
+    // full route duration; it must still finish instead of lingering.
+    expect(elapsed, lessThanOrEqualTo(800),
+        reason: 'close must finish');
     await tester.pumpAndSettle();
     expect(find.text('PLAYER'), findsNothing);
   });

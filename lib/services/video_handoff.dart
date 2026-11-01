@@ -41,6 +41,10 @@ class VideoHandoff extends ChangeNotifier {
   Duration _songStart = Duration.zero;
   Duration _videoStart = Duration.zero;
 
+  /// Set while the full player is resolving/initializing a video: nothing to
+  /// render yet, but the cover flight should carry the loading screen instead.
+  String? _loadingSongId;
+
   /// Set only while parked: the service whose playback ends the handoff, and
   /// the owner of the controller.
   AudioPlayerService? _audio;
@@ -60,6 +64,23 @@ class VideoHandoff extends ChangeNotifier {
   Duration get videoStart => _videoStart;
 
   bool isLiveFor(String? id) => _controller != null && _songId == id;
+
+  /// [id]'s video is loading, not playing: surfaces show the spinner.
+  bool isLoadingFor(String? id) => id != null && _loadingSongId == id;
+
+  /// The full player started resolving/initializing [songId]'s video.
+  void loading(String songId) {
+    if (_loadingSongId == songId) return;
+    _loadingSongId = songId;
+    _notify();
+  }
+
+  /// The attempt for [songId] ended (played, failed or was closed).
+  void loaded(String songId) {
+    if (_loadingSongId != songId) return;
+    _loadingSongId = null;
+    _notify();
+  }
 
   /// Announces the video the player just opened. Ownership stays with the
   /// caller; this only lets other surfaces render the same frames.

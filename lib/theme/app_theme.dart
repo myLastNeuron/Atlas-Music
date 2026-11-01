@@ -108,10 +108,10 @@ class AppMotion {
   static const player = Curves.fastOutSlowIn;
   static const page = Duration(milliseconds: 240);
   // Full player, both directions: the cover flight is driven by the route
-  // animation, so these two also set how long it travels. Opening gets a touch
-  // more than closing, which is the "get out of the way" direction.
-  static const playerOpen = Duration(milliseconds: 560);
-  static const playerClose = Duration(milliseconds: 450);
+  // animation, so these two also set how long it travels. Kept equal so open
+  // and close feel the same; kept slow so the cover morph reads as one glide.
+  static const playerOpen = Duration(milliseconds: 700);
+  static const playerClose = Duration(milliseconds: 700);
 
   static const modal = Duration(milliseconds: 220);
   static const micro = Duration(milliseconds: 180);

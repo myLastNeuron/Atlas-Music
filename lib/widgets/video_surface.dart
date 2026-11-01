@@ -104,6 +104,9 @@ class _VideoSurfaceState extends State<VideoSurface>
       _adopt(parked.controller, parked.songStart, parked.videoStart);
       return;
     }
+    // Marked before the first post-frame open so the cover flight that is
+    // already under way carries the spinner instead of the artwork.
+    videoHandoff.loading(widget.song.id);
     // Deferred: the failure path calls setState and must not run mid-initState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _open();
@@ -113,7 +116,8 @@ class _VideoSurfaceState extends State<VideoSurface>
   /// Takes a parked controller back from [videoHandoff] as if it had just
   /// started: same position mapping, same ownership of playback. Its play
   /// state is left exactly as the mini player left it.
-  void _adopt(VideoPlayerController c, Duration songStart, Duration videoStart) {
+  void _adopt(
+      VideoPlayerController c, Duration songStart, Duration videoStart) {
     _controller = c;
     _audioStart = songStart;
     _videoStart = videoStart;
@@ -132,6 +136,9 @@ class _VideoSurfaceState extends State<VideoSurface>
   @override
   void dispose() {
     _closed = true;
+    // A load that never reached a frame ends with the surface: the mini bar
+    // must fall back to the artwork instead of spinning forever.
+    videoHandoff.loaded(widget.song.id);
     _audio?.removeListener(_onAudio);
     WidgetsBinding.instance.removeObserver(this);
     final c = _controller;
@@ -261,6 +268,8 @@ class _VideoSurfaceState extends State<VideoSurface>
         songStart: _audioStart,
         videoStart: _videoStart,
       );
+      // There is a frame to carry now: stop advertising the spinner.
+      videoHandoff.loaded(widget.song.id);
       // In Video the video is the playback: its end is the song's end, so the
       // queue advances into the next song's video instead of stopping dead.
       c.addListener(_onVideoEnd);
@@ -299,6 +308,8 @@ class _VideoSurfaceState extends State<VideoSurface>
     // Audio may be playing again (a failure resumed it); while we resolve the
     // new attempt it must not count as a takeover.
     _audioSettled = false;
+    // A retry is a fresh load: the flight must carry the spinner again.
+    videoHandoff.loading(widget.song.id);
     // A Retry exists because the URL may be dead: skip the cached answer.
     unawaited(_open(refresh: true));
   }
@@ -382,6 +393,8 @@ class _VideoSurfaceState extends State<VideoSurface>
 
   void _fail(String message) {
     if (!mounted) return;
+    // No frame is coming: the spinner must not outlive the failed attempt.
+    videoHandoff.loaded(widget.song.id);
     // Cleared before setState: a failed video never resumes audio twice.
     final resume = _pausedAudio;
     _pausedAudio = false;
@@ -507,29 +520,7 @@ class _VideoSurfaceState extends State<VideoSurface>
   }
 
   Widget _content(VideoPlayerController? c) => switch (_phase) {
-        _VideoPhase.loading => Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                ),
-                if (_message.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    _message,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white, fontSize: 12.5),
-                  ),
-                ],
-              ],
-            ),
-          ),
+        _VideoPhase.loading => VideoLoadingFrame(message: _message),
         _VideoPhase.failed => Center(
             child: Padding(
               padding: const EdgeInsets.all(20),

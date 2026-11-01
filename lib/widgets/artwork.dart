@@ -155,10 +155,10 @@ ImageProvider playerCoverProvider(
   String url, {
   String? filePath,
 }) {
-  final px = (coverLogicalSize(context) *
-          MediaQuery.devicePixelRatioOf(context))
-      .round()
-      .clamp(96, 1024);
+  final px =
+      (coverLogicalSize(context) * MediaQuery.devicePixelRatioOf(context))
+          .round()
+          .clamp(96, 1024);
   final local = filePath;
   if (local != null && local.isNotEmpty) {
     return ResizeImage.resizeIfNeeded(px, null, FileImage(File(local)));
@@ -247,12 +247,58 @@ class CoverFlightShuttle extends StatelessWidget {
           final video =
               videoHandoff.isLiveFor(songId) ? videoHandoff.controller : null;
           if (video != null) return VideoFrame(controller: video);
+          // Loading mid-flight (or the player closed before the first frame):
+          // carry the spinner, not a still cover that the landing page is not
+          // showing any more.
+          if (videoHandoff.isLoadingFor(songId)) {
+            return const VideoLoadingFrame();
+          }
           // Opaque card under the cover: the flight is never see-through.
           return ColoredBox(
             color: AppColors.mist,
             child: _cover(context) ?? const SizedBox.expand(),
           );
         },
+      ),
+    );
+  }
+}
+
+/// The black square shown while a video is being resolved/initialized, with
+/// the same spinner the full player uses. Shared by the full player, the mini
+/// square and the cover flight so a load that spans the transition looks like
+/// one continuous surface.
+class VideoLoadingFrame extends StatelessWidget {
+  final String message;
+
+  const VideoLoadingFrame({super.key, this.message = ''});
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+            if (message.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 12.5),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
@@ -34,6 +37,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   final StorageService _storageService = StorageService();
   bool _isLiked = false;
   String? _likedForId;
+
+  /// Double-tap burst generation; 0 hides the thumbs-up overlay.
+  int _likeBurst = 0;
   bool _videoMode = false;
 
   /// The video controller while video mode is open (null otherwise). Transport
@@ -79,8 +85,8 @@ class _PlayerScreenState extends State<PlayerScreen>
     // replaced Hero fades the flying frame out into a ghost over the page. A
     // live video (the mini player was showing it) means Video, whatever the
     // stored choice says.
-    _videoMode = videoHandoff.isLiveFor(audio.currentSong?.id) ||
-        UserPrefs.videoMode;
+    _videoMode =
+        videoHandoff.isLiveFor(audio.currentSong?.id) || UserPrefs.videoMode;
     // Re-check on song change (auto-advance) and on any like toggled
     // elsewhere (Liked page / playlist rows) so the heart never goes stale.
     // The same tick keeps the cover breath in sync with play/pause.
@@ -169,6 +175,19 @@ class _PlayerScreenState extends State<PlayerScreen>
       _likedForId = null;
       _syncLiked();
     }
+  }
+
+  /// Double-tap on the cover: always ends liked (never unlikes), then pops
+  /// a thumbs-up. Skips the burst under reduce motion; the like still lands.
+  void _doubleTapLike() {
+    if (!_isLiked) unawaited(_toggleLike());
+    HapticFeedback.lightImpact();
+    if (AppMotion.reduced(context)) return;
+    setState(() => _likeBurst++);
+    final id = _likeBurst;
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted && _likeBurst == id) setState(() => _likeBurst = 0);
+    });
   }
 
   Future<void> _skip(Future<bool> Function() action) async {
@@ -272,8 +291,8 @@ class _PlayerScreenState extends State<PlayerScreen>
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-            icon: Icon(Icons.keyboard_arrow_down,
-                size: 30, color: AppColors.ink),
+            icon:
+                Icon(Icons.keyboard_arrow_down, size: 30, color: AppColors.ink),
             onPressed: () => Navigator.pop(context),
           ),
           // An eyebrow, not a title: the song owns the typographic weight.
@@ -320,8 +339,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                           : hasSong && degraded
                               ? 'Stopped: some tracks need internet'
                               : 'Stopped: $lastFailure',
-                      style:
-                          TextStyle(color: AppColors.mute, fontSize: 12),
+                      style: TextStyle(color: AppColors.mute, fontSize: 12),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -348,33 +366,26 @@ class _PlayerScreenState extends State<PlayerScreen>
                             ? box.maxWidth
                             : box.maxHeight;
                         return Center(
-                          child: ListenableBuilder(
-                            listenable: videoHandoff,
-                            builder: (context, _) => HeroMode(
-                              // In Video mode the thing that travels is the
-                              // video. Until one is live there is nothing to
-                              // carry, and flying the still cover is what made
-                              // the open read as an artwork transition.
-                              enabled: !_videoMode ||
-                                  videoHandoff.isLiveFor(song.id),
-                              child: _videoMode && !isLoading
-                                  // The Hero is inside the surface: it must not
-                                  // wrap an owning widget, or the flight would
-                                  // recreate it and re-park the video
-                                  // mid-transition.
-                                  ? VideoSurface(
-                                      key: ValueKey('video_${song.id}'),
-                                      song: song,
-                                      size: side,
-                                      // The page keeps Video as the saved mode: a
-                                      // close parks the video instead of
-                                      // handing playback back to the audio.
-                                      keepPlayingOnDetach: () => _videoMode,
-                                      controller: _videoController,
-                                    )
-                                  : _cover(song, artPath, side),
-                            ),
-                          ),
+                          // No HeroMode gate: in Video mode the Hero is kept
+                          // even before a controller exists, so opening or
+                          // closing mid-load still flies — the shuttle carries
+                          // VideoSurface's loading screen instead of a cover.
+                          child: _videoMode && !isLoading
+                              // The Hero is inside the surface: it must not
+                              // wrap an owning widget, or the flight would
+                              // recreate it and re-park the video
+                              // mid-transition.
+                              ? VideoSurface(
+                                  key: ValueKey('video_${song.id}'),
+                                  song: song,
+                                  size: side,
+                                  // The page keeps Video as the saved mode: a
+                                  // close parks the video instead of handing
+                                  // playback back to the audio.
+                                  keepPlayingOnDetach: () => _videoMode,
+                                  controller: _videoController,
+                                )
+                              : _cover(song, artPath, side),
                         );
                       },
                     ),
@@ -407,8 +418,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                     video: _videoController,
                   ),
                   const SizedBox(height: 4),
-                  _transport(
-                      audioService, isPlaying, shuffle, loop, accent, isLoading),
+                  _transport(audioService, isPlaying, shuffle, loop, accent,
+                      isLoading),
                   const SizedBox(height: 16),
                   _actionRow(song, audioService),
                 ] else ...[
@@ -440,9 +451,8 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   /// Ink that stays readable on a filled [color].
-  static Color _onColor(Color color) => color.computeLuminance() > 0.55
-      ? const Color(0xFF13131A)
-      : Colors.white;
+  static Color _onColor(Color color) =>
+      color.computeLuminance() > 0.55 ? const Color(0xFF13131A) : Colors.white;
 
   /// Artwork alone, no frame: a soft drop shadow and a glass rim. A panel
   /// around the cover read as a card inside a card, and made the breathing
@@ -457,60 +467,78 @@ class _PlayerScreenState extends State<PlayerScreen>
         child: SizedBox(
           width: size,
           height: size,
-          child: Hero(
-            // Same per-route tag the tapping mini bar stored: the cover only
-            // flies when that exact bar is the source.
-            tag: playerHeroTag,
-            createRectTween: (begin, end) =>
-                PlayerRectTween(begin: begin, end: end),
-            // The cover morphs into the big cover on open and back onto the
-            // thumb on close.
-            flightShuttleBuilder: (ctx, anim, dir, from, to) =>
-                CoverFlightShuttle(song.thumbnailUrl,
-                    filePath: artPath, songId: song.id, animation: anim),
-            // The landing spot stays empty while the shuttle flies. It is
-            // still mounted (Offstage) so it is already decoded when the
-            // shuttle lands instead of blinking in. Hiding it on close too
-            // keeps a second copy from sitting under the shrinking page.
-            placeholderBuilder: (context, size, child) => SizedBox(
-              width: size.width,
-              height: size.height,
-              child: Offstage(child: child),
-            ),
-            // Shadow and rim live inside the Hero, so nothing of the cover is
-            // left behind at the landing spot during the flight.
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: radius,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    blurRadius: 40,
-                    spreadRadius: -6,
-                    offset: const Offset(0, 22),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              GestureDetector(
+                // Double-tap likes without stealing single taps: no onTap
+                // here, so transport, slider and video gestures keep theirs.
+                onDoubleTap: _doubleTapLike,
+                child: Hero(
+                  // Same per-route tag the tapping mini bar stored: the cover only
+                  // flies when that exact bar is the source.
+                  tag: playerHeroTag,
+                  createRectTween: (begin, end) =>
+                      PlayerRectTween(begin: begin, end: end),
+                  // The cover morphs into the big cover on open and back onto the
+                  // thumb on close.
+                  flightShuttleBuilder: (ctx, anim, dir, from, to) =>
+                      CoverFlightShuttle(song.thumbnailUrl,
+                          filePath: artPath, songId: song.id, animation: anim),
+                  // The landing spot stays empty while the shuttle flies. It is
+                  // still mounted (Offstage) so it is already decoded when the
+                  // shuttle lands instead of blinking in. Hiding it on close too
+                  // keeps a second copy from sitting under the shrinking page.
+                  placeholderBuilder: (context, size, child) => SizedBox(
+                    width: size.width,
+                    height: size.height,
+                    child: Offstage(child: child),
                   ),
-                ],
-              ),
-              foregroundDecoration: BoxDecoration(
-                borderRadius: radius,
-                border: Border.all(color: AppColors.glassBorder),
-              ),
-              child: AnimatedSwitcher(
-                duration: AppMotion.dur(context, AppMotion.micro),
-                switchInCurve: AppMotion.curve,
-                switchOutCurve: AppMotion.curve,
-                transitionBuilder: (child, animation) =>
-                    FadeTransition(opacity: animation, child: child),
-                child: Artwork(
-                  song.thumbnailUrl,
-                  key: ValueKey(song.id),
-                  filePath: artPath,
-                  size: size,
-                  radius: 22,
-                  fit: BoxFit.cover,
+                  // Shadow and rim live inside the Hero, so nothing of the cover is
+                  // left behind at the landing spot during the flight.
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: radius,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          blurRadius: 40,
+                          spreadRadius: -6,
+                          offset: const Offset(0, 22),
+                        ),
+                      ],
+                    ),
+                    foregroundDecoration: BoxDecoration(
+                      borderRadius: radius,
+                      border: Border.all(color: AppColors.glassBorder),
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: AppMotion.dur(context, AppMotion.micro),
+                      switchInCurve: AppMotion.curve,
+                      switchOutCurve: AppMotion.curve,
+                      transitionBuilder: (child, animation) =>
+                          FadeTransition(opacity: animation, child: child),
+                      child: Artwork(
+                        song.thumbnailUrl,
+                        key: ValueKey(song.id),
+                        filePath: artPath,
+                        size: size,
+                        radius: 22,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+              // One-shot thumbs-up pop; dropped when its run ends, so no
+              // controller to own or dispose.
+              if (_likeBurst > 0)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: _LikeBurst(key: ValueKey(_likeBurst)),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -574,8 +602,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                     )
                   : Text(
                       song.artist,
-                      style: TextStyle(
-                          fontSize: 14, color: AppColors.inkSoft),
+                      style: TextStyle(fontSize: 14, color: AppColors.inkSoft),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -656,8 +683,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                         Text(next.artist,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                fontSize: 11, color: AppColors.mute)),
+                            style:
+                                TextStyle(fontSize: 11, color: AppColors.mute)),
                       ],
                     ),
                   ),
@@ -672,7 +699,6 @@ class _PlayerScreenState extends State<PlayerScreen>
       ],
     );
   }
-
 
   /// One row, no pill: play is the only heavy element, shuffle and repeat
   /// are demoted to quiet glyphs at the edges.
@@ -699,8 +725,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           scale: 0.9,
           child: IconButton(
             key: const ValueKey('player_prev'),
-            icon:
-                Icon(Icons.skip_previous, size: 34, color: AppColors.ink),
+            icon: Icon(Icons.skip_previous, size: 34, color: AppColors.ink),
             onPressed: () => _skip(audioService.playPrevious),
           ),
         ),
@@ -726,10 +751,9 @@ class _PlayerScreenState extends State<PlayerScreen>
                       accent: accent,
                       // A disposed controller can throw from an in-flight tap;
                       // the page must not surface an unhandled future for it.
-                      onPressed: () => (value.isPlaying
-                              ? video.pause()
-                              : video.play())
-                          .catchError((_) {}),
+                      onPressed: () =>
+                          (value.isPlaying ? video.pause() : video.play())
+                              .catchError((_) {}),
                     ),
                   ),
           )
@@ -886,6 +910,53 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 }
 
+/// Thumbs-up pop for a double-tap like. One TweenAnimationBuilder run: it
+/// springs in over the first third, holds, then dissolves. No controller to
+/// own or dispose; the parent drops it when the run ends.
+class _LikeBurst extends StatelessWidget {
+  const _LikeBurst({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 800),
+      builder: (context, t, _) {
+        final pop = Curves.easeOutBack.transform((t / 0.35).clamp(0.0, 1.0));
+        final fade = t < 0.12
+            ? t / 0.12
+            : 1.0 -
+                Curves.easeIn.transform(((t - 0.55) / 0.45).clamp(0.0, 1.0));
+        return Opacity(
+          opacity: fade.clamp(0.0, 1.0),
+          child: Transform.scale(
+            scale: 0.5 + 0.5 * pop,
+            child: Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                // Dark scrim + white glyph reads on any artwork; the plain
+                // action fill vanished on bright covers like this one.
+                color: Colors.black.withValues(alpha: 0.55),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.thumb_up, size: 40, color: Colors.white),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Placeholder for the up-next peek while the next tracks are being resolved.
 /// Same geometry as a real row, so nothing jumps when the songs land.
 class _UpNextSkeleton extends StatefulWidget {
@@ -989,7 +1060,8 @@ class _ModeToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     // Each half sets its own target: deriving it from `selected` inverted the
     // Song half, so tapping Song while in Video re-selected Video.
-    Widget half(String label, bool selected, bool value, Key key) => MotionPress(
+    Widget half(String label, bool selected, bool value, Key key) =>
+        MotionPress(
           scale: 0.94,
           child: InkWell(
             key: key,
@@ -1145,11 +1217,9 @@ class _PlayerSliderState extends State<_PlayerSlider> {
             children: [
               // The clock follows the thumb while dragging, not the stream.
               Text(_fmt(Duration(seconds: shownSec)),
-                  style:
-                      TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+                  style: TextStyle(fontSize: 11, color: AppColors.inkSoft)),
               Text(_fmt(durSec > 0 ? Duration(seconds: durSec) : Duration.zero),
-                  style:
-                      TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+                  style: TextStyle(fontSize: 11, color: AppColors.inkSoft)),
             ],
           ),
         ),

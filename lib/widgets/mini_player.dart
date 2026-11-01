@@ -111,8 +111,8 @@ class MiniPlayer extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(
-              strokeWidth: 2, color: AppColors.ink),
+          child:
+              CircularProgressIndicator(strokeWidth: 2, color: AppColors.ink),
         ),
       ));
     }
@@ -121,8 +121,7 @@ class MiniPlayer extends StatelessWidget {
     // Route-scoped Hero tag: only a bar on the route this player is pushed from
     // can be the flight source. One global tag let any other MiniPlayer in the
     // stack (an artist page) grab the full-size cover.
-    final heroTag =
-        'player_cover_${identityHashCode(ModalRoute.of(context))}';
+    final heroTag = 'player_cover_${identityHashCode(ModalRoute.of(context))}';
 
     if (pausedOffline) {
       // Queue paused for offline: swap the transport row for the reason.
@@ -172,7 +171,8 @@ class MiniPlayer extends StatelessWidget {
                           // shuttle lands. The player page fades in over this
                           // bar, so a thumb left painting here would show as a
                           // second artwork behind the flying cover.
-                          placeholderBuilder: (context, size, child) => SizedBox(
+                          placeholderBuilder: (context, size, child) =>
+                              SizedBox(
                             width: size.width,
                             height: size.height,
                             child: Offstage(child: child),
@@ -204,6 +204,21 @@ class MiniPlayer extends StatelessWidget {
                                       width: kMiniArtworkSize,
                                       height: kMiniArtworkSize,
                                       child: VideoFrame(controller: video),
+                                    ),
+                                  );
+                                }
+                                // Loading during a transition: land on the
+                                // same spinner the flight is carrying, not on
+                                // artwork the full player has already left.
+                                if (videoHandoff.isLoadingFor(song.id)) {
+                                  return ClipRRect(
+                                    key: ValueKey(
+                                        'mini_video_loading_${song.id}'),
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: const SizedBox(
+                                      width: kMiniArtworkSize,
+                                      height: kMiniArtworkSize,
+                                      child: VideoLoadingFrame(),
                                     ),
                                   );
                                 }
@@ -288,8 +303,7 @@ class MiniPlayer extends StatelessWidget {
                           key: const ValueKey('mini_play_pause'),
                           visualDensity: VisualDensity.compact,
                           icon: PlayPauseIcon(
-                            playing:
-                                live ? video!.value.isPlaying : playing,
+                            playing: live ? video!.value.isPlaying : playing,
                             size: 26,
                             color: AppColors.charcoal,
                           ),
@@ -368,9 +382,8 @@ class _MiniProgress extends StatelessWidget {
         if (video != null && videoHandoff.isLiveFor(song.id)) {
           // The parked video is the clock: map its position onto the song's, so
           // the bar keeps meaning what the player screen showed.
-          final end = audio.duration > Duration.zero
-              ? audio.duration
-              : song.duration;
+          final end =
+              audio.duration > Duration.zero ? audio.duration : song.duration;
           return ValueListenableBuilder<VideoPlayerValue>(
             valueListenable: video,
             builder: (context, value, _) => _bar(
