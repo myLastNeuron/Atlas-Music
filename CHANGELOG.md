@@ -9,6 +9,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ## [2.3.0] - 2026-11-03
 
 ### Added
+- **Video, inside the player**: every song has a **Song / Video** toggle. Video
+  streams the track's real video over HLS (adaptive quality, master playlist),
+  with fullscreen, and the choice is remembered per track — pick Video once and
+  the next song stays in Video. The mini player's square shows the live video and
+  the cover flight carries that same running video into the player and back, so
+  closing the player keeps the video playing with sound. The timeline survives the
+  switch in both directions (Video opens at the song's position; Song continues
+  from it plus the time watched).
 - **Real frosted glass, without the stutter**: the nav bar, mini player and
   sheets blur what is behind them. Panels inside the page keep the flat tint,
   because the page colour is all that is behind them — the filter there cost a
