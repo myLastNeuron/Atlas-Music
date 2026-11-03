@@ -15,6 +15,7 @@ import '../screens/profile_screen.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/floating_glass_nav.dart';
 import '../services/audio_service.dart';
+import '../services/video_handoff.dart';
 
 /// Owns first-run + future-launch name flight:
 /// center name → top-right header, home fades in underneath.
@@ -188,10 +189,15 @@ class _MainNavigationState extends State<MainNavigation>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // One listener for the whole shell: in Video mode the next track's video
+    // loads while only the mini player is visible, instead of waiting for the
+    // full player to be opened.
+    MiniVideo.instance.attach(context.read<AudioPlayerService>());
   }
 
   @override
   void dispose() {
+    MiniVideo.instance.detach();
     WidgetsBinding.instance.removeObserver(this);
     _tabTransition.dispose();
     super.dispose();

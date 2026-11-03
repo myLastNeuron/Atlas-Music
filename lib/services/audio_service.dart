@@ -36,6 +36,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// Metadata only (related/search for autoplay). Streams come from providers.
   final YouTubeService _youtubeService = YouTubeService();
+
   /// Catalogue lookups for the Video toggle's music-video fallback.
   final YouTubeMusicSearch _ytMusic = YouTubeMusicSearch();
   final CacheService _cache = CacheService();
@@ -120,6 +121,9 @@ class AudioPlayerService extends ChangeNotifier {
   Timer? _stallTimer;
   DateTime? _lastSkipAt;
   DateTime? _songPlayStart;
+  // The song _songPlayStart belongs to (it is not always _currentSong: a load
+  // publishes the incoming song first and commits later).
+  Song? _trackingSong;
   bool _handlingCompletion = false;
   String? _lastRetrySongId;
   int _retryCount = 0;
@@ -244,6 +248,12 @@ class AudioPlayerService extends ChangeNotifier {
   // chain never replays or duplicates. Capped to bound memory.
   Set<String> _playedIds = <String>{};
 
+  // Ids + videoIds "Rethink" already handed out for the current track. A
+  // replaced batch leaves the queue, so without this the third press ranked
+  // the same pool again and handed back the first press's songs. Cleared
+  // when the track changes.
+  final Set<String> _rethinkOffered = <String>{};
+
   /// Short human-readable reason for the most recent load failure,
   /// surfaced in toasts so failures are diagnosable, not generic.
   String? _lastFailure;
@@ -332,8 +342,11 @@ class AudioPlayerService extends ChangeNotifier {
       gen == _playGen && songId != null && songId == _currentSong?.id;
 
   /// Record listen stats for the song that just finished or was skipped.
+  /// [_trackingSong], not [_currentSong]: a new load publishes itself as
+  /// current before it commits, so the incoming song must not be credited
+  /// with the outgoing song's listening time (and its skip).
   void _recordPreviousListen({required bool skipped}) {
-    final prev = _currentSong;
+    final prev = _trackingSong;
     final start = _songPlayStart;
     if (prev == null || start == null) return;
     final listenedMs = DateTime.now().difference(start).inMilliseconds;
@@ -346,6 +359,7 @@ class AudioPlayerService extends ChangeNotifier {
   void _startTracking(Song song) {
     _recordPreviousListen(skipped: true);
     _currentSong = song;
+    _trackingSong = song;
     _songPlayStart = DateTime.now();
   }
 
@@ -364,6 +378,7 @@ class AudioPlayerService extends ChangeNotifier {
     // Clear start so the next _startTracking doesn't double-record the
     // just-completed track as skipped.
     _songPlayStart = null;
+    _trackingSong = null;
   }
 
   /// Double-fire guard: Bluetooth double-events, double taps, and pocket
@@ -386,6 +401,10 @@ class AudioPlayerService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get shuffleEnabled => _shuffle;
   LoopMode get loopMode => _loopMode;
+
+  /// Repeat-one is enforced by the audio player, which is paused in Video
+  /// mode: the video surfaces repeat the video themselves on this.
+  bool get repeatOne => _loopMode == LoopMode.one;
   ProcessingState get processingState => _processingState;
   Duration get duration => _duration;
   Duration get position => _position;
@@ -420,8 +439,8 @@ class AudioPlayerService extends ChangeNotifier {
           // India's Kesariya) are ranked first by plain youtube.com search.
           List<Song> plain = const [];
           try {
-            plain = await _youtubeService
-                .searchVideos('${s.title} ${s.artist}', limit: 10);
+            plain = await _youtubeService.searchVideos('${s.title} ${s.artist}',
+                limit: 10);
           } catch (_) {}
           final fromPlain = YouTubeMusicSearch.bestPlainVideo(
             plain,
@@ -885,8 +904,18 @@ class AudioPlayerService extends ChangeNotifier {
       var at = filtered.indexWhere((s) => s.id == song.id);
       if (at < 0) {
         final fallback = List<Song>.from(filtered);
+        // The tapped song was dropped by the filter. Its RAW index counts the
+        // dropped songs too, so it would land the playhead past the songs that
+        // were kept before it (and skip them). Insert it after exactly those
+        // kept ones instead.
         final rawAt = queue.indexWhere((s) => s.id == song.id);
-        at = (rawAt < 0 ? fallback.length : rawAt).clamp(0, fallback.length);
+        final keptBefore = rawAt < 0
+            ? fallback.length
+            : queue
+                .take(rawAt)
+                .where((s) => fallback.any((f) => f.id == s.id))
+                .length;
+        at = keptBefore.clamp(0, fallback.length);
         fallback.insert(at, song);
         filtered = fallback;
       }
@@ -1684,7 +1713,8 @@ class AudioPlayerService extends ChangeNotifier {
   /// [QuickPicksEngine] from listening stats, likes, top artists and
   /// dismissals. Excludes everything already played in this queue.
   /// Never throws.
-  Future<List<QuickPick>> _buildContinuation({int count = 10}) async {
+  Future<List<QuickPick>> _buildContinuation(
+      {int count = 10, Set<String> exclude = const {}}) async {
     try {
       final cur = _currentSong;
       if (cur == null) return const [];
@@ -1733,7 +1763,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (seedId.isNotEmpty) {
         try {
           final radio = await _youtubeService
-              .getRadioSongs(seedId, limit: 30)
+              .getRadioSongs(seedId, limit: radioDepth(30, exclude.length))
               .timeout(const Duration(seconds: 10));
           if (contGen != _playGen) return const [];
           addAll(
@@ -1761,7 +1791,7 @@ class AudioPlayerService extends ChangeNotifier {
         if (second != null && vid != null && vid.isNotEmpty) {
           try {
             final radio = await _youtubeService
-                .getRadioSongs(vid, limit: 20)
+                .getRadioSongs(vid, limit: radioDepth(20, exclude.length))
                 .timeout(const Duration(seconds: 8));
             if (contGen != _playGen) return const [];
             addAll(radio, rankTop: 0.8);
@@ -1796,10 +1826,15 @@ class AudioPlayerService extends ChangeNotifier {
         addQuery(query);
       }
 
-      final results = await Future.wait(queries.take(5).map((q) async {
+      // Deeper rails as more songs are already excluded (Rethink presses):
+      // same sources, more of them and longer pages, so a full batch of new
+      // songs still exists to rank.
+      final railLimit = min(12 + exclude.length, 25);
+      final rails = queries.take(5 + exclude.length ~/ 10);
+      final results = await Future.wait(rails.map((q) async {
         try {
           return await _youtubeService
-              .search(q, limit: 12)
+              .search(q, limit: railLimit)
               .timeout(const Duration(seconds: 8));
         } catch (_) {
           return const <Song>[];
@@ -1815,24 +1850,38 @@ class AudioPlayerService extends ChangeNotifier {
         ..._queue.map((s) => s.id),
         ..._queue.map((s) => s.videoId ?? s.id),
         ..._playedIds,
+        ...exclude,
       };
       final sessionRecent = [
         cur,
         ...recent.where((s) => s.id != cur.id).take(4),
       ];
-      final picks = QuickPicksEngine.rank(
-        recent: sessionRecent,
-        candidates: pool,
-        stats: stats,
-        notInterested: notInterested,
-        sourceScores: sourceScores,
-        topArtists: topArtists,
-        likedIds: liked.map((s) => s.id).toSet(),
-        queueIds: playedIds,
-        userLanguage: lang,
-        selectedArtists: selArtists.toList(),
-        count: count,
-      );
+      final likedIds = liked.map((s) => s.id).toSet();
+      List<QuickPick> rankFor(int perArtist) => QuickPicksEngine.rank(
+            recent: sessionRecent,
+            candidates: pool,
+            stats: stats,
+            notInterested: notInterested,
+            sourceScores: sourceScores,
+            topArtists: topArtists,
+            likedIds: likedIds,
+            queueIds: playedIds,
+            userLanguage: lang,
+            selectedArtists: selArtists.toList(),
+            count: count,
+            maxPerArtist: perArtist,
+          );
+      var picks = rankFor(QuickPicksEngine.defaultMaxPerArtist);
+      if (picks.length < count) {
+        // Thin pool (Rethink already used the top of it): relax the
+        // per-artist cap, the way Quick Picks fills its rail, instead of
+        // handing back a shorter batch.
+        final seen = picks.map((p) => p.song.id).toSet();
+        picks = [
+          ...picks,
+          ...rankFor(4).where((p) => seen.add(p.song.id)),
+        ].take(count).toList();
+      }
       _rememberPicks(picks);
       return picks;
     } catch (_) {
@@ -1895,9 +1944,14 @@ class AudioPlayerService extends ChangeNotifier {
     final cur = _currentSong;
     if (cur == null) return const [];
     final gen = _playGen;
-    final picks = await _buildContinuation(count: count);
+    // Everything an earlier press handed out is off the table: a rethink is
+    // a new batch, never the previous ones coming back around.
+    final picks =
+        await _buildContinuation(count: count, exclude: _rethinkOffered);
     if (gen != _playGen || _currentSong?.id != cur.id) return const [];
     if (picks.isEmpty) return const [];
+    _rethinkOffered
+        .addAll(picks.expand((p) => [p.song.id, p.song.videoId ?? p.song.id]));
     _resyncIndex();
     final base = _currentIndex < 0 ? 0 : _currentIndex + 1;
     _queue = [..._queue.take(base), ...picks.map((p) => p.song)];
@@ -1943,6 +1997,9 @@ class AudioPlayerService extends ChangeNotifier {
   /// and tracking starts. Until this runs, completion events still belong
   /// to the previous active song.
   void _commitSong(Song song, int gen) {
+    // A new track gets a fresh rethink memory: those songs were offered for
+    // the previous one.
+    if (_currentSong?.id != song.id) _rethinkOffered.clear();
     if (_pendingIndex != null) {
       _currentIndex = _pendingIndex!;
       _pendingIndex = null;
@@ -1951,6 +2008,9 @@ class AudioPlayerService extends ChangeNotifier {
     _activeSongId = song.id;
     _activeGen = gen;
     _activeSince = DateTime.now();
+    // The pending "Play next" song just started (a tap on its row, or the
+    // advance that consumed it): it must not play twice when it ends.
+    if (_playNextOverride?.id == song.id) _playNextOverride = null;
     _position = Duration.zero;
     _lastNotifiedSecond = -1;
     _handlingCompletion = false;
@@ -2627,9 +2687,8 @@ class AudioPlayerService extends ChangeNotifier {
       // Resolve the paused song by id: the queue may have changed shape while
       // the app was offline, and a stale index would resume a different track.
       final pausedId = _pausedForOfflineSongId;
-      final byId = pausedId == null
-          ? -1
-          : _queue.indexWhere((q) => q.id == pausedId);
+      final byId =
+          pausedId == null ? -1 : _queue.indexWhere((q) => q.id == pausedId);
       final inRange =
           idx != null && _queue.isNotEmpty && idx >= 0 && idx < _queue.length;
       final at = byId >= 0 ? byId : (inRange ? idx : null);
@@ -3350,6 +3409,7 @@ class AudioPlayerService extends ChangeNotifier {
     }
     return out;
   }
+
   final List<Song> _reserve = [];
 
   /// Candidates from the user's own library (liked + recently played, already
@@ -3474,8 +3534,8 @@ class AudioPlayerService extends ChangeNotifier {
         ..._reserve.map((s) => s.id),
         ..._reserve.map((s) => s.videoId ?? s.id),
       };
-      _reserve.addAll(takeNewSongs(fresh, seen,
-          limit: reserveTarget - _reserve.length));
+      _reserve.addAll(
+          takeNewSongs(fresh, seen, limit: reserveTarget - _reserve.length));
       _fillFromReserve();
       _upNextRetryAttempt = 0;
       _cancelUpNextRetry();
@@ -3776,6 +3836,7 @@ class AudioPlayerService extends ChangeNotifier {
       _globalAdvanceFailures = 0;
       _recordPreviousListen(skipped: true);
       _songPlayStart = null;
+      _trackingSong = null;
       try {
         await _player.stop().timeout(const Duration(seconds: 5));
       } catch (_) {
@@ -3948,3 +4009,10 @@ class TopUpCoalescer {
     return owed;
   }
 }
+
+/// Radio depth for a continuation batch.
+///
+/// A seed's YouTube radio queue holds about 50 tracks, so widening the request
+/// by what is already excluded is what keeps the third "Rethink" press fresh
+/// instead of thin. Pure, unit-tested in test/up_next_queue_test.dart.
+int radioDepth(int base, int excluded) => (base + excluded).clamp(base, 50);

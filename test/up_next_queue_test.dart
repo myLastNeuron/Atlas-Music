@@ -98,4 +98,17 @@ void main() {
       expect(gate.end(), isFalse);
     });
   });
+
+  group('rethink radio depth', () {
+    test('first press asks for the normal depth', () {
+      expect(radioDepth(30, 0), 30);
+      expect(radioDepth(20, 0), 20);
+    });
+
+    test('grows with what was already offered, capped at the radio queue', () {
+      expect(radioDepth(30, 10), 40);
+      expect(radioDepth(30, 20), 50);
+      expect(radioDepth(30, 90), 50, reason: 'YouTube hands out ~50 per seed');
+    });
+  });
 }

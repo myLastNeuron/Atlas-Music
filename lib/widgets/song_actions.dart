@@ -451,8 +451,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
           children: [
             Icon(icon, size: 20, color: AppColors.inkSoft),
             const SizedBox(width: 14),
-            Text(label,
-                style: TextStyle(color: AppColors.ink, fontSize: 14)),
+            Text(label, style: TextStyle(color: AppColors.ink, fontSize: 14)),
           ],
         ),
       ),
@@ -482,8 +481,7 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
                 onPressed: () => Navigator.pop(ctx, p.id),
                 child: Row(
                   children: [
-                    Icon(Icons.queue_music,
-                        size: 20, color: AppColors.inkSoft),
+                    Icon(Icons.queue_music, size: 20, color: AppColors.inkSoft),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -492,7 +490,10 @@ Future<void> addSongToPlaylistFlow(BuildContext context, Song song) async {
                           Text(p.name,
                               style:
                                   const TextStyle(fontWeight: FontWeight.w500)),
-                          Text('${p.songs.length} songs',
+                          Text(
+                              p.songs.length == 1
+                                  ? '1 song'
+                                  : '${p.songs.length} songs',
                               style: TextStyle(
                                   fontSize: 12, color: AppColors.inkSoft)),
                         ],

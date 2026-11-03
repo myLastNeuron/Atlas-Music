@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/dialog_helpers.dart';
 import 'dart:async';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
@@ -669,8 +670,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _play(Song song, List<Song> queue, int index,
       {String? queueOrigin}) async {
     bool matches(Song s) =>
-        (song.videoId != null && s.videoId == song.videoId) ||
-        s.id == song.id;
+        (song.videoId != null && s.videoId == song.videoId) || s.id == song.id;
     // Keep the tapped position when it still holds this song: queues keep
     // non-consecutive duplicates, so resolving by id alone started the wrong
     // row.
@@ -697,8 +697,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _createPlaylistDialog() async {
     final ctrl = TextEditingController();
-    final name = await showDialog<String>(
+    final name = await showDisposingDialog<String>(
       context: context,
+      controllers: [ctrl],
       builder: (_) => AlertDialog(
         title: const Text('New playlist'),
         content: TextField(
@@ -718,7 +719,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
-    ctrl.dispose();
     if (name == null || name.isEmpty) return;
     try {
       await _storage.savePlaylist(Playlist(
@@ -766,8 +766,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       shape: BoxShape.circle,
                       color: AppColors.mist,
                     ),
-                    child: Icon(Icons.album,
-                        size: 84, color: AppColors.mute),
+                    child: Icon(Icons.album, size: 84, color: AppColors.mute),
                   ),
                   Container(
                     width: 44,
@@ -776,8 +775,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       shape: BoxShape.circle,
                       color: AppColors.action,
                     ),
-                    child: Icon(Icons.add,
-                        size: 28, color: AppColors.charcoal),
+                    child: Icon(Icons.add, size: 28, color: AppColors.charcoal),
                   ),
                 ],
               ),
@@ -875,8 +873,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               color: AppColors.mist,
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Icon(Icons.queue_music,
-                                color: AppColors.mute),
+                            child:
+                                Icon(Icons.queue_music, color: AppColors.mute),
                           )
                         : Artwork(art, size: 64, radius: 12),
                     const SizedBox(width: 10),
@@ -1163,20 +1161,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             (_avatarError || _avatarProvider == null)
                                 ? null
                                 : _avatarProvider,
-                        onBackgroundImageError: (_avatarError ||
-                                _avatarProvider == null)
-                            ? null
-                            : (_, __) {
-                          // Dead file / offline URL: fall back to the icon
-                          // instead of a blank circle that would mismatch
-                          // the other header.
-                          if (mounted && !_avatarError) {
-                            setState(() {
-                              _avatarError = true;
-                              _avatarProvider = null;
-                            });
-                          }
-                        },
+                        onBackgroundImageError:
+                            (_avatarError || _avatarProvider == null)
+                                ? null
+                                : (_, __) {
+                                    // Dead file / offline URL: fall back to the icon
+                                    // instead of a blank circle that would mismatch
+                                    // the other header.
+                                    if (mounted && !_avatarError) {
+                                      setState(() {
+                                        _avatarError = true;
+                                        _avatarProvider = null;
+                                      });
+                                    }
+                                  },
                         child: (_avatarUrl == null || _avatarError)
                             ? Icon(Icons.person,
                                 size: 20, color: AppColors.inkSoft)
@@ -1234,8 +1232,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: AppColors.glassBorder),
                         ),
-                        child: Icon(Icons.bolt,
-                            size: 16, color: AppColors.ink),
+                        child: Icon(Icons.bolt, size: 16, color: AppColors.ink),
                       ),
                       const SizedBox(width: 10),
                       Expanded(

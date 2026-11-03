@@ -468,10 +468,8 @@ void main() {
 
     test('an unclassified row is kept but ranks below UGC and OMV', () {
       final untyped = c('untyped', '', 'Kesariya', 'Arijit Singh');
-      final ugc =
-          c('ugc', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Arijit Singh');
-      final omv =
-          c('omv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh');
+      final ugc = c('ugc', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Arijit Singh');
+      final omv = c('omv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh');
       expect(
         YouTubeMusicSearch.bestMusicVideo(
           [untyped, ugc],
@@ -549,6 +547,154 @@ void main() {
           officialOnly: true,
         ),
         isNull,
+      );
+    });
+  });
+
+  group('isSameSong', () {
+    test('a title that only contains the wanted one is another song', () {
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Stay With Me (Official Video)',
+          wantTitle: 'Stay',
+          artist: 'The Kid LAROI',
+        ),
+        isFalse,
+      );
+    });
+
+    test('release suffixes, artist and featured artists are allowed', () {
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'The Weeknd - Blinding Lights (Official Video) feat. Zara',
+          wantTitle: 'Blinding Lights',
+          artist: 'The Weeknd',
+        ),
+        isTrue,
+      );
+    });
+
+    test('slowed, lofi and remix uploads are rejected', () {
+      for (final suffix in [
+        '(Slowed + Reverb)',
+        '(Lofi Mix)',
+        '(Speed Up)',
+        '(Remix)',
+        '(Cover)',
+        '- S L O W E D',
+        '- R E V E R B',
+        '(Remixed by DJ X)',
+        '- Bass Boosted',
+        '- Female Version',
+        '- Chill Mix',
+        '(Synthwave)',
+      ]) {
+        expect(
+          YouTubeMusicSearch.isSameSong(
+            candidate: 'Kesariya $suffix',
+            wantTitle: 'Kesariya',
+            artist: 'Arijit Singh',
+          ),
+          isFalse,
+          reason: suffix,
+        );
+      }
+    });
+
+    test('a song whose own title holds a variant word still matches', () {
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Cover Me (Official Video)',
+          wantTitle: 'Cover Me',
+          artist: 'Bruce Springsteen',
+        ),
+        isTrue,
+      );
+    });
+
+    test('another creator version is rejected, the official one is not', () {
+      // Live data: the real video is "Often (NSFW) (Official Video)" by
+      // TheWeekndVEVO; the wrong one was "The Weeknd - Often (Ethan Swope
+      // Version)" on the fan's own channel.
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Often (NSFW) (Official Video)',
+          wantTitle: 'Often',
+          artist: 'The Weeknd',
+          channel: 'TheWeekndVEVO',
+          requireArtist: true,
+        ),
+        isTrue,
+      );
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'The Weeknd - Often (Ethan Swope Version)',
+          wantTitle: 'Often',
+          artist: 'The Weeknd',
+          channel: 'Ethan Swope',
+          requireArtist: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test('an upload that never names the artist is not the song video', () {
+      // Seen live: a fan upload titled only "Often" was a slowed remix.
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Often',
+          wantTitle: 'Often',
+          artist: 'The Weeknd',
+          channel: 'Chill Vibes',
+          requireArtist: true,
+        ),
+        isFalse,
+      );
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'The Weeknd - Often (Official Video)',
+          wantTitle: 'Often',
+          artist: 'The Weeknd',
+          channel: 'TheWeekndVEVO',
+          requireArtist: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a remix that names the original artist is still rejected', () {
+      // Seen live: YouTube classifies "Kesariya (Synthwave)" by
+      // "VDJ Fly & Arijit Singh" as an official music video.
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Kesariya (Synthwave)',
+          wantTitle: 'Kesariya (From "Brahmastra")',
+          artist: 'Arijit Singh',
+          channel: 'VDJ Fly & Arijit Singh',
+        ),
+        isFalse,
+      );
+    });
+
+    test('a release suffix on the song itself is not a version marker', () {
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Kesariya (From "Brahmastra")',
+          wantTitle: 'Kesariya (From "Brahmastra")',
+          artist: 'Arijit Singh',
+        ),
+        isTrue,
+      );
+    });
+
+    test('a non-Latin title matches its upload', () {
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: '夜に駆ける - YOASOBI (Official Video)',
+          wantTitle: '夜に駆ける',
+          artist: 'YOASOBI',
+        ),
+        isTrue,
       );
     });
   });

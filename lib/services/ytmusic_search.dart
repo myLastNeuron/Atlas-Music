@@ -125,7 +125,6 @@ class YouTubeMusicSearch {
     required String excludeId,
     bool officialOnly = false,
   }) {
-    final wantTitle = _matchKey(_baseTitle(title));
     final wantArtist = _matchKey(artist);
     String? best;
     var bestScore = 0;
@@ -137,8 +136,19 @@ class YouTubeMusicSearch {
       // an empty type is a row YouTube did not classify, so keep it low.
       if (!omv && !ugc && c.musicVideoType.isNotEmpty) continue;
       if (officialOnly && !omv) continue;
+      // The row must be THIS song: a title that merely contains the wanted
+      // one picked a different track ("Stay" → "Stay With Me"), and a slowed,
+      // lo-fi or remix upload is not the song the user is playing.
+      if (!isSameSong(
+        candidate: c.title,
+        wantTitle: title,
+        artist: artist,
+        channel: c.artist,
+        requireArtist: true,
+      )) {
+        continue;
+      }
       final have = _matchKey('${c.title} ${c.artist}');
-      if (wantTitle.isEmpty || !have.contains(wantTitle)) continue;
       final score = (omv ? 4 : (ugc ? 2 : 1)) +
           (wantArtist.isNotEmpty && have.contains(wantArtist) ? 1 : 0);
       if (score > bestScore) {
@@ -147,6 +157,186 @@ class YouTubeMusicSearch {
       }
     }
     return best;
+  }
+
+  /// Songs whose title needs no other words to be the same song; anything a
+  /// video title adds on top (release suffixes, channel noise) is ignored.
+  static const Set<String> _titleNoise = {
+    'official',
+    'video',
+    'music',
+    'audio',
+    'lyric',
+    'lyrics',
+    'visualizer',
+    'mv',
+    'm',
+    'v',
+    'hd',
+    'hq',
+    '4k',
+    '8k',
+    'remaster',
+    'remastered',
+    'explicit',
+    'version',
+    'from',
+    'the',
+    'a',
+    'an',
+    'feat',
+    'ft',
+    'with',
+    'and',
+    'x',
+    'by',
+    'prod',
+    'of',
+    'edit',
+    'ost',
+    'soundtrack',
+    'topic',
+    'vevo',
+    'records',
+    'latest',
+    'new',
+    'premiere',
+    'exclusive',
+    'out',
+    'now',
+    'movie',
+    'film',
+    'album',
+    'full',
+    'song',
+    'nsfw',
+    'uncensored',
+    'clean',
+    'stereo',
+    'mono',
+    'lyrical',
+    'visualiser',
+    'coverart',
+  };
+
+  /// Channels that release music themselves: release/movie context in the
+  /// title is normal there, while a personal channel with extra words is
+  /// another version of the song.
+  static final RegExp _labelChannel = RegExp(
+    r'(vevo|records|recordings|entertainment|tseries|sony|universal|warner|'
+    r'atlantic|interscope|republic|capitol|columbia|island|defjam|spinnin|'
+    r'ultra|saregama|zeemusic|tips|speedrecords|adityamusic|believe)',
+  );
+
+  static bool _isLabelChannel(String channel) =>
+      _labelChannel.hasMatch(channel.toLowerCase().replaceAll(
+            RegExp(r'[^a-z0-9]'),
+            '',
+          ));
+
+  /// Every "(...)"/"[...]" group of a video title.
+  static final RegExp _brackets = RegExp(r'[\(\[]([^\)\]]*)[\)\]]');
+
+  /// Uploads that are a *different recording* of the song: the video for a
+  /// track must be that track, and a slowed/lo-fi/remix version is not it.
+  static final RegExp _variant = RegExp(
+    r'\b(slow|slowed|slower|reverb|nightcore|sped\s*up|speed\s*up|spedup|'
+    r'lofi|lo-fi|remix|remixed|remixes|synthwave|night\s*mode|flip|medley|'
+    r'mashup|mega\s*mix|karaoke|instrumental|cover|acoustic|unplugged|'
+    r'piano|live|8d|bass\s*boost(?:ed)?|boosted|bootleg|remake|ringtone|'
+    r'parody|chill|chillout|loop|tiktok|reels|female|male|\d+\s*hours?)\b',
+    unicode: true,
+  );
+
+  /// The same words after the spaces are taken out, so "S L O W E D" and
+  /// "R E V E R B" (a common style on these uploads) are still caught.
+  static final RegExp _variantCompact = RegExp(
+    r'(slowed|reverb|nightcore|lofi|remix|cover|bassboost|spedup|speedup|'
+    r'karaoke|instrumental)',
+  );
+
+  /// True when [candidate] is [wantTitle] by [artist] (or [channel]): the
+  /// wanted words appear in it as a run, and every other word is release
+  /// noise, part of the artist name, or a featured artist. A title that only
+  /// *contains* the wanted one is a different song. Pure for the test.
+  static bool isSameSong({
+    required String candidate,
+    required String wantTitle,
+    required String artist,
+    String channel = '',
+    bool requireArtist = false,
+  }) {
+    final want = _words(_baseTitle(wantTitle));
+    if (want.isEmpty) return false;
+    final have = _words(candidate);
+    final at = _runIndex(have, want);
+    if (at < 0) return false;
+    final rest = [...have.sublist(0, at), ...have.sublist(at + want.length)];
+    // Words of the song's own title (brackets included) are never leftovers:
+    // a release suffix the song itself carries cannot make its video a remix.
+    final ownWords = _words(wantTitle).toSet();
+    rest.removeWhere(ownWords.contains);
+    // Only the song's artist, not the uploader's channel: a fan channel named
+    // after its own version must not launder that version into the song.
+    final artistWords = _words(artist);
+    // Only the words OUTSIDE the wanted title decide the variant: a slowed
+    // upload is rejected, a song actually called "Cover Me" is not.
+    if (_variant.hasMatch('${rest.join(' ')} $channel')) return false;
+    if (_variantCompact.hasMatch(rest.join(''))) return false;
+    // A bracketed segment names a version unless it is release noise:
+    // "Kesariya (Synthwave)" is a remix, "Blinding Lights (Official Video)"
+    // is not.
+    for (final m in _brackets.allMatches(candidate)) {
+      final words = _words(m.group(1) ?? '');
+      if (words.every((w) =>
+          _titleNoise.contains(w) ||
+          ownWords.contains(w) ||
+          artistWords.contains(w))) {
+        continue;
+      }
+      return false;
+    }
+    // Everything after a featured artist is that artist, not the title.
+    final content = <String>[];
+    for (final w in rest) {
+      if (w == 'feat' || w == 'ft') break;
+      if (artistWords.contains(w) || _titleNoise.contains(w)) continue;
+      content.add(w);
+    }
+    final artistKey = _matchKey(artist);
+    final named =
+        artistKey.isNotEmpty && _matchKey('$candidate $channel').contains(artistKey);
+    final label = _isLabelChannel(channel);
+    // A found video must show whose song it is: its own artist, or a label
+    // channel. Anything else is some upload that happens to share the title
+    // (seen: "Often" by a fan was a slowed remix, "Ethan Swope Version").
+    if (requireArtist && !named && !label) return false;
+    // Extra words are release/movie context on a label channel; on a personal
+    // channel they name another version.
+    if (!label) return content.isEmpty;
+    return true;
+  }
+
+  /// Lowercased words of [value]: unicode letters/digits, in order.
+  static List<String> _words(String value) => value
+      .toLowerCase()
+      .split(RegExp(r'[^\p{L}\p{N}]+', unicode: true))
+      .where((w) => w.isNotEmpty)
+      .toList();
+
+  /// Index where [want] appears in [have] as consecutive words, or -1.
+  static int _runIndex(List<String> have, List<String> want) {
+    for (var i = 0; i + want.length <= have.length; i++) {
+      var hit = true;
+      for (var j = 0; j < want.length; j++) {
+        if (have[i + j] != want[j]) {
+          hit = false;
+          break;
+        }
+      }
+      if (hit) return i;
+    }
+    return -1;
   }
 
   /// Best plain-YouTube upload among [rows] (already in YouTube's own
@@ -160,20 +350,24 @@ class YouTubeMusicSearch {
     required String artist,
     required String excludeId,
   }) {
-    final wantTitle = _matchKey(_baseTitle(title));
-    final wantArtist = _matchKey(artist);
-    if (wantTitle.isEmpty) return null;
-    String? fallback;
+    if (_matchKey(_baseTitle(title)).isEmpty) return null;
     for (final row in rows) {
       final id = row.videoId ?? row.id;
       if (id == excludeId) continue;
       if (row.channel.trim().toLowerCase().endsWith(' - topic')) continue;
-      final have = _matchKey('${row.title} ${row.channel}');
-      if (!have.contains(wantTitle)) continue;
-      if (wantArtist.isNotEmpty && have.contains(wantArtist)) return id;
-      fallback ??= id;
+      // Only an upload that is this song *by this artist*: a random channel
+      // reposting a clean-titled slowed remix is the failure this guards.
+      if (isSameSong(
+        candidate: row.title,
+        wantTitle: title,
+        artist: artist,
+        channel: row.channel,
+        requireArtist: true,
+      )) {
+        return id;
+      }
     }
-    return fallback;
+    return null;
   }
 
   /// Song title without its "(From "…")"/"[Remastered]" suffixes: catalogue
@@ -693,10 +887,9 @@ class YouTubeMusicSearch {
 
   static Duration _fixedColumnDuration(Object? column) {
     if (column is! Map) return Duration.zero;
-    final inner =
-        _map(column, 'musicResponsiveListItemFixedColumnRenderer') ??
-            _map(column, 'musicFixedColumnsRenderer') ??
-            column;
+    final inner = _map(column, 'musicResponsiveListItemFixedColumnRenderer') ??
+        _map(column, 'musicFixedColumnsRenderer') ??
+        column;
     final text = _map(_map(inner, 'fixedColumn') ?? inner, 'text');
     if (text is! Map) return Duration.zero;
     String? raw = text['simpleText'] as String?;
@@ -782,8 +975,7 @@ class YouTubeMusicSearch {
     final endpoint = _map(play, 'playNavigationEndpoint');
     final watch = _map(endpoint, 'watchEndpoint');
     final configs = _map(watch, 'watchEndpointMusicSupportedConfigs');
-    return _string(
-        _map(configs, 'watchEndpointMusicConfig'), 'musicVideoType');
+    return _string(_map(configs, 'watchEndpointMusicConfig'), 'musicVideoType');
   }
 
   /// Artist(s) = subtitle runs up to the first "•" separator. The subtitle is

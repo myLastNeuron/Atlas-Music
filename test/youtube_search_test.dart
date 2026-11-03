@@ -84,6 +84,20 @@ void main() {
       expect(out.map((s) => s.id), ['a1', 'b1']);
     });
 
+    test('keeps every non-Latin track instead of collapsing them', () {
+      // Their normalized keys used to be "" for all of them (ASCII-only
+      // strip), so the merge kept a single row.
+      final out = YouTubeService.mergeResults(
+        const [],
+        [
+          song('Кино', 'Виктор Цой', 'b1'),
+          song('米津玄師', 'Lemon', 'b2'),
+          song('अरिजीत सिंह', 'केशरिया', 'b3'),
+        ],
+      );
+      expect(out.length, 3);
+    });
+
     test('respects the cap', () {
       final out = YouTubeService.mergeResults(
         [for (var i = 0; i < 5; i++) song('T$i', 'A', 'i$i')],

@@ -26,6 +26,15 @@ import 'artist_screen.dart';
 
 class PlayerScreen extends StatefulWidget {
   static const routeName = '/player';
+
+  /// Players currently mounted. The mini player lives on routes that stay
+  /// below the player, so it cannot tell from its own route name whether a
+  /// player is already open — this is the guard that stops a second one from
+  /// stacking (and playing a second video).
+  static int openCount = 0;
+
+  static bool get isOpen => openCount > 0;
+
   const PlayerScreen({super.key});
 
   @override
@@ -78,8 +87,12 @@ class _PlayerScreenState extends State<PlayerScreen>
   @override
   void initState() {
     super.initState();
+    PlayerScreen.openCount++;
     final audio = context.read<AudioPlayerService>();
     _audio = audio;
+    // The full player owns the video while it is open; abandon an in-flight
+    // mini auto-load so the two never resolve the same song at once.
+    MiniVideo.instance.playerOpen = true;
     // Decided before the first frame, never a frame or two into the open:
     // switching the surface mid-flight replaces the destination Hero, and a
     // replaced Hero fades the flying frame out into a ghost over the page. A
@@ -101,8 +114,12 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   @override
   void dispose() {
+    if (PlayerScreen.openCount > 0) PlayerScreen.openCount--;
     _audio?.removeListener(_audioListener!);
     _storageService.removeListener(_onStorageChanged);
+    // The mini player may load the current song's video again the next time a
+    // track starts while this page is closed.
+    MiniVideo.instance.playerOpen = false;
     // Not disposed: a surface may clear it one frame after the page is gone
     // (a deferred write to a disposed notifier would throw). It dies with this
     // state object anyway.
@@ -370,7 +387,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                           // even before a controller exists, so opening or
                           // closing mid-load still flies — the shuttle carries
                           // VideoSurface's loading screen instead of a cover.
-                          child: _videoMode && !isLoading
+                          child: _videoMode
                               // The Hero is inside the surface: it must not
                               // wrap an owning widget, or the flight would
                               // recreate it and re-park the video
@@ -730,17 +747,27 @@ class _PlayerScreenState extends State<PlayerScreen>
           ),
         ),
         if (_videoMode)
-          // Video mode: the button toggles the video. Audio stays paused, so
-          // driving it here would bounce the page back to Song view.
+          // Video mode: the button toggles the video once it is on screen.
+          // Until then (resolving, initializing, failed) the audio is still
+          // the playback, so the same button drives it — otherwise the song
+          // keeps playing with no way to pause or seek it.
           ValueListenableBuilder<VideoPlayerController?>(
             valueListenable: _videoController,
             builder: (context, video, _) => video == null
                 ? _playButton(
-                    playing: false,
-                    loading: false,
+                    playing: isPlaying,
+                    loading: loading,
                     iconColor: iconColor,
                     accent: accent,
-                    onPressed: null,
+                    onPressed: loading
+                        ? null
+                        : () {
+                            if (isPlaying) {
+                              audioService.pause();
+                            } else {
+                              audioService.resume();
+                            }
+                          },
                   )
                 : ValueListenableBuilder<VideoPlayerValue>(
                     valueListenable: video,
@@ -927,28 +954,35 @@ class _LikeBurst extends StatelessWidget {
             ? t / 0.12
             : 1.0 -
                 Curves.easeIn.transform(((t - 0.55) / 0.45).clamp(0.0, 1.0));
-        return Opacity(
-          opacity: fade.clamp(0.0, 1.0),
-          child: Transform.scale(
-            scale: 0.5 + 0.5 * pop,
-            child: Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                // Dark scrim + white glyph reads on any artwork; the plain
-                // action fill vanished on bright covers like this one.
-                color: Colors.black.withValues(alpha: 0.55),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.9)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+        return Center(
+          // Positioned.fill's tight constraints would otherwise stretch the
+          // 88px pill over the whole cover; Center loosens them so the burst
+          // stays a small badge.
+          child: Opacity(
+            opacity: fade.clamp(0.0, 1.0),
+            child: Transform.scale(
+              scale: 0.5 + 0.5 * pop,
+              child: Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  // Dark scrim + white glyph reads on any artwork; the plain
+                  // action fill vanished on bright covers like this one.
+                  color: Colors.black.withValues(alpha: 0.55),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.9)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child:
+                    const Icon(Icons.thumb_up, size: 40, color: Colors.white),
               ),
-              child: const Icon(Icons.thumb_up, size: 40, color: Colors.white),
             ),
           ),
         );
@@ -1147,13 +1181,13 @@ class _PlayerSliderState extends State<_PlayerSlider> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.videoMode) {
-      final video = widget.video;
-      if (video == null) return _slider(0, 0, null);
+    final video = widget.video;
+    if (widget.videoMode && video != null) {
       return ValueListenableBuilder<VideoPlayerController?>(
         valueListenable: video,
         builder: (context, c, _) {
-          if (c == null) return _slider(0, 0, null);
+          // No controller yet: the audio is the playback (see the transport).
+          if (c == null) return _audioSlider(context);
           return ValueListenableBuilder<VideoPlayerValue>(
             valueListenable: c,
             builder: (context, value, _) => _slider(
@@ -1165,6 +1199,10 @@ class _PlayerSliderState extends State<_PlayerSlider> {
         },
       );
     }
+    return _audioSlider(context);
+  }
+
+  Widget _audioSlider(BuildContext context) {
     final posSec =
         context.select<AudioPlayerService, int>((s) => s.position.inSeconds);
     final durSec =

@@ -5,6 +5,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:video_player/video_player.dart';
 
 import 'audio_service.dart';
+import '../models/song.dart';
+import 'user_prefs.dart';
 
 /// Maps a video position back onto the song's timeline. [songStart]/[videoStart]
 /// are the two clocks at the moment the video took over; their difference is
@@ -220,6 +222,17 @@ class VideoHandoff extends ChangeNotifier {
       _notify();
     }
     if (!_advanced && _owned && controller.value.isCompleted) {
+      // Repeat-one is the audio player's job, and it is paused in Video mode:
+      // the parked video is the playback, so it repeats itself.
+      if (_audio?.repeatOne ?? false) {
+        _songStart = Duration.zero;
+        _videoStart = Duration.zero;
+        unawaited(controller
+            .seekTo(Duration.zero)
+            .then((_) => controller.play())
+            .catchError((_) {}));
+        return;
+      }
       _advanced = true;
       // The parked video is still the playback: its end is the song's end.
       unawaited(_audio?.playNext(0, false));
@@ -230,3 +243,210 @@ class VideoHandoff extends ChangeNotifier {
 /// One handoff for the whole app: playback outlives the page, so it cannot be
 /// owned by one.
 final videoHandoff = VideoHandoff();
+
+/// Starts the next song's video while only the mini player is visible.
+///
+/// Video mode is a saved choice, and the mini player is where it is watched
+/// when the full player is closed. Without this, a track change fell back to
+/// the still cover until the full player was reopened and resolved the video
+/// again. The full player owns new loads while open; a load already in flight
+/// here is left to finish so that page can adopt the same controller.
+class MiniVideo {
+  MiniVideo._();
+
+  static final MiniVideo instance = MiniVideo._();
+
+  AudioPlayerService? _audio;
+  bool _playerOpen = false;
+  int _gen = 0;
+
+  /// The song we paused for an auto-load that has not taken over yet, so a
+  /// detach can give playback back.
+  String? _pausedForSong;
+
+  /// The song already attempted, so a failed resolve is not retried on every
+  /// position tick. A new song resets it.
+  String? _attemptedSongId;
+
+  /// Song whose video this loader is resolving/initializing right now.
+  String? _loadingSongId;
+
+  void attach(AudioPlayerService audio) {
+    if (identical(_audio, audio)) return;
+    _audio?.removeListener(_onAudio);
+    _audio = audio;
+    audio.addListener(_onAudio);
+  }
+
+  void detach() {
+    _audio?.removeListener(_onAudio);
+    _audio = null;
+    _attemptedSongId = null;
+    _cancelLoading();
+  }
+
+  /// The full player is opening (true) or has closed (false). While it is open
+  /// it owns the next video load, so an attempt started here is abandoned:
+  /// left to finish, it would pause the song the user is already listening to
+  /// and park a video of its own choosing on top of the mini bar.
+  set playerOpen(bool open) {
+    _playerOpen = open;
+    if (open) _cancelLoading();
+  }
+
+  void _cancelLoading() {
+    _gen++;
+    final songId = _loadingSongId;
+    _loadingSongId = null;
+    if (songId != null) videoHandoff.loaded(songId);
+    _resumeOurPause(songId);
+  }
+
+  /// Give the song back if our attempt paused it and then lost ownership.
+  void _resumeOurPause(String? songId) {
+    final paused = _pausedForSong;
+    if (paused == null) return;
+    _pausedForSong = null;
+    final audio = _audio;
+    if (audio != null && (songId == null || audio.currentSong?.id == paused)) {
+      unawaited(audio.resume());
+    }
+  }
+
+  void _onAudio() {
+    final audio = _audio;
+    if (audio == null) return;
+    final song = audio.currentSong;
+    if (song == null || song.id == _attemptedSongId) return;
+    // The full player owns this track's video while it is open; remember the
+    // song so closing it does not trigger a second background load.
+    if (_playerOpen) {
+      _attemptedSongId = song.id;
+      return;
+    }
+    // Wait for the track itself: a video cannot take over before the song is
+    // actually playing, and the loading spinner already covers that gap.
+    if (audio.isLoading || !audio.isPlaying) return;
+    _attemptedSongId = song.id;
+    if (!UserPrefs.videoMode) return;
+    if (videoHandoff.isLiveFor(song.id) || videoHandoff.isLoadingFor(song.id)) {
+      return;
+    }
+    unawaited(_start(song, audio));
+  }
+
+  /// Loads [song]'s video for the mini player now, for the full player that
+  /// was closed while its video was still starting. [audioAlreadyPaused] means
+  /// the caller already paused the song for this video: the load must give it
+  /// back if the video never arrives.
+  void loadFor(
+    AudioPlayerService audio,
+    Song song, {
+    bool audioAlreadyPaused = false,
+  }) {
+    _audio ??= audio;
+    if (audio.currentSong?.id != song.id) return;
+    if (videoHandoff.isLiveFor(song.id) || videoHandoff.isLoadingFor(song.id)) {
+      return;
+    }
+    _attemptedSongId = song.id;
+    unawaited(_start(song, audio, audioAlreadyPaused: audioAlreadyPaused));
+  }
+
+  bool _alive(int gen, Song song) =>
+      gen == _gen && _audio?.currentSong?.id == song.id;
+
+  Future<void> _start(
+    Song song,
+    AudioPlayerService audio, {
+    bool audioAlreadyPaused = false,
+  }) async {
+    final gen = ++_gen;
+    _loadingSongId = song.id;
+    videoHandoff.loading(song.id);
+    VideoPlayerController? controller;
+    var pausedAudio = audioAlreadyPaused;
+    var handedOff = false;
+    // Video mode is the choice: the song goes quiet while its video starts,
+    // instead of playing for the two or three seconds of the lookup and then
+    // being cut off when the video takes over.
+    var wantPlayback = audio.isPlaying || audioAlreadyPaused;
+    if (audioAlreadyPaused) _pausedForSong = song.id;
+    try {
+      if (audio.isPlaying) {
+        pausedAudio = true;
+        _pausedForSong = song.id;
+        await audio.pause();
+        if (!_alive(gen, song)) return;
+      }
+      // Where the song was when the video took it over.
+      final songStart = audio.position;
+
+      final online = await audio.hasInternet;
+      if (!_alive(gen, song) || !online) return;
+
+      final source =
+          await audio.videoSource(song).timeout(const Duration(seconds: 20));
+      if (!_alive(gen, song) || source == null) return;
+
+      controller = VideoPlayerController.networkUrl(
+        Uri.parse(source.url),
+        formatHint: VideoFormat.hls,
+        httpHeaders: audio.videoHeaders,
+      );
+      await controller.initialize().timeout(const Duration(seconds: 15));
+      if (!_alive(gen, song)) return;
+
+      // A video shorter than the song cannot hold that position: start at 0
+      // and keep the offset, so the timeline mapping still works.
+      final canAlign = songStart <= controller.value.duration;
+      final videoStart = canAlign ? songStart : Duration.zero;
+      await controller.seekTo(videoStart).timeout(const Duration(seconds: 5));
+      if (!_alive(gen, song)) return;
+
+      // The mini bar's transport stays live while the video loads: a resume
+      // during it is the user saying play, and the video is the playback here.
+      if (audio.isPlaying) {
+        wantPlayback = true;
+        pausedAudio = true;
+        _pausedForSong = song.id;
+        await audio.pause();
+        if (!_alive(gen, song)) return;
+      }
+
+      // Parked, not merely published: the mini's play/pause and progress
+      // drive it, and the full player takes the same controller on open.
+      videoHandoff.park(
+        controller: controller,
+        songId: song.id,
+        songStart: songStart,
+        videoStart: videoStart,
+        audio: audio,
+      );
+      videoHandoff.loaded(song.id);
+      handedOff = true;
+      pausedAudio = false;
+      _pausedForSong = null;
+      if (wantPlayback) unawaited(controller.play().catchError((_) {}));
+      controller = null;
+    } on TimeoutException {
+      // Best-effort background load: the song is given back in the finally.
+    } catch (_) {
+      // Best-effort background load: the song is given back in the finally.
+    } finally {
+      if (controller != null) unawaited(controller.dispose());
+      if (_loadingSongId == song.id) {
+        _loadingSongId = null;
+        videoHandoff.loaded(song.id);
+      }
+      // The video never took over: give the song back if we paused it for an
+      // attempt that was cancelled (song change, player open, failure).
+      if (!handedOff) {
+        if (_pausedForSong == song.id) _pausedForSong = null;
+        if (pausedAudio && _audio?.currentSong?.id == song.id) {
+          unawaited(audio.resume());
+        }
+      }
+    }
+  }
+}

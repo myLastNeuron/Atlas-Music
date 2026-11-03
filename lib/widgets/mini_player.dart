@@ -21,8 +21,13 @@ class MiniPlayer extends StatelessWidget {
 
   void _openPlayer(
       BuildContext context, String heroTag, Song song, String? artPath) {
-    final cur = ModalRoute.of(context)?.settings.name;
-    if (cur == PlayerScreen.routeName) return;
+    // A player is already open (an artist page keeps a mini bar above it):
+    // go back to it instead of stacking a second page with a second video.
+    if (PlayerScreen.isOpen) {
+      Navigator.of(context)
+          .popUntil((route) => route.settings.name == PlayerScreen.routeName);
+      return;
+    }
     // The player's cover shares this bar's per-route Hero tag, so only the bar
     // that was tapped flies it.
     playerHeroTag = heroTag;
@@ -55,6 +60,30 @@ class MiniPlayer extends StatelessWidget {
         ),
       );
     }
+  }
+
+  Widget _playPause({
+    required bool playing,
+    required bool loading,
+    required VoidCallback onPressed,
+  }) {
+    return IconButton(
+      key: const ValueKey('mini_play_pause'),
+      visualDensity: VisualDensity.compact,
+      icon: loading
+          ? SizedBox(
+              width: 26,
+              height: 26,
+              child: Padding(
+                padding: const EdgeInsets.all(3),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.2, color: AppColors.charcoal),
+              ),
+            )
+          : PlayPauseIcon(
+              playing: playing, size: 26, color: AppColors.charcoal),
+      onPressed: loading ? null : onPressed,
+    );
   }
 
   Widget _glassBar(Widget child) {
@@ -254,90 +283,85 @@ class MiniPlayer extends StatelessWidget {
                   ),
                 ),
               ),
-              if (loading)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: AppColors.ink),
-                  ),
-                )
-              else ...[
-                if (degraded)
-                  Tooltip(
-                    message: 'Offline mode: some queued tracks need '
-                        'internet and will be skipped',
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 2),
-                      child: Icon(Icons.wifi_off,
-                          size: 18, color: AppColors.inkSoft),
-                    ),
-                  ),
-                MotionPress(
-                  scale: 0.9,
-                  child: IconButton(
-                    key: const ValueKey('mini_prev'),
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.skip_previous,
-                        size: 24, color: AppColors.inkSoft),
-                    onPressed: () => _skip(context, audio, audio.playPrevious),
+              if (degraded)
+                Tooltip(
+                  message: 'Offline mode: some queued tracks need '
+                      'internet and will be skipped',
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Icon(Icons.wifi_off,
+                        size: 18, color: AppColors.inkSoft),
                   ),
                 ),
-                Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.action,
-                  ),
-                  child: MotionPress(
-                    scale: 0.9,
-                    child: ListenableBuilder(
-                      listenable: videoHandoff,
-                      builder: (context, _) {
-                        // A video parked by the closed player is the playback:
-                        // the button toggles it, not the paused audio.
-                        final video = videoHandoff.controller;
-                        final live = videoHandoff.isLiveFor(song.id);
-                        return IconButton(
-                          key: const ValueKey('mini_play_pause'),
-                          visualDensity: VisualDensity.compact,
-                          icon: PlayPauseIcon(
-                            playing: live ? video!.value.isPlaying : playing,
-                            size: 26,
-                            color: AppColors.charcoal,
+              MotionPress(
+                scale: 0.9,
+                child: IconButton(
+                  key: const ValueKey('mini_prev'),
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.skip_previous,
+                      size: 24, color: AppColors.inkSoft),
+                  onPressed: loading
+                      ? null
+                      : () => _skip(context, audio, audio.playPrevious),
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.action,
+                ),
+                child: MotionPress(
+                  scale: 0.9,
+                  child: ListenableBuilder(
+                    listenable: videoHandoff,
+                    builder: (context, _) {
+                      // A video parked by the closed player is the playback:
+                      // the button toggles it, not the paused audio.
+                      final video = videoHandoff.controller;
+                      if (video != null && videoHandoff.isLiveFor(song.id)) {
+                        return ValueListenableBuilder<VideoPlayerValue>(
+                          valueListenable: video,
+                          builder: (context, value, _) => _playPause(
+                            // Buffering is a load, not a pause: the audio
+                            // path already shows a spinner here, and a tap
+                            // that does nothing looked broken.
+                            loading: value.isBuffering && value.isPlaying,
+                            playing: value.isPlaying,
+                            // A disposed controller can throw from an
+                            // in-flight tap.
+                            onPressed: () => unawaited(
+                                (value.isPlaying ? video.pause() : video.play())
+                                    .catchError((_) {})),
                           ),
-                          onPressed: () {
-                            if (live) {
-                              unawaited((video!.value.isPlaying
-                                      ? video.pause()
-                                      : video.play())
-                                  .catchError((_) {}));
-                              return;
-                            }
-                            if (playing) {
-                              audio.pause();
-                            } else {
-                              audio.resume();
-                            }
-                          },
                         );
-                      },
-                    ),
+                      }
+                      return _playPause(
+                        // One loading language for the whole bar: whatever is
+                        // pending (the song's own load, or a video resolving
+                        // in Video mode) spins in this button.
+                        loading: !playing &&
+                            (isLoading || videoHandoff.isLoadingFor(song.id)),
+                        playing: playing,
+                        onPressed: () =>
+                            playing ? audio.pause() : audio.resume(),
+                      );
+                    },
                   ),
                 ),
-                MotionPress(
-                  scale: 0.9,
-                  child: IconButton(
-                    key: const ValueKey('mini_skip_next'),
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.skip_next,
-                        size: 24, color: AppColors.inkSoft),
-                    onPressed: () =>
-                        _skip(context, audio, () => audio.playNext(0, true)),
-                  ),
+              ),
+              MotionPress(
+                scale: 0.9,
+                child: IconButton(
+                  key: const ValueKey('mini_skip_next'),
+                  visualDensity: VisualDensity.compact,
+                  icon:
+                      Icon(Icons.skip_next, size: 24, color: AppColors.inkSoft),
+                  onPressed: loading
+                      ? null
+                      : () =>
+                          _skip(context, audio, () => audio.playNext(0, true)),
                 ),
-              ],
+              ),
             ],
           ),
         ),

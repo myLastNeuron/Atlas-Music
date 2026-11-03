@@ -22,6 +22,43 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   ordinary editable playlist.
 
 ### Fixed
+- **Creating or renaming anything no longer crashes the app**: the text
+  controllers were disposed the moment the dialog's future returned, while the
+  field was still on screen for the exit animation — the framework's
+  `_dependents.isEmpty` assertion killed the whole UI. They now live exactly as
+  long as the dialog does (playlists, renames, imports, Spotify keys, add song).
+- **Video mode with no video still has working controls**: while the video
+  resolves (or when it fails) the play/pause button and the slider drive the
+  song again, instead of sitting dead while the music plays on.
+- **Leaving Video before the video appears no longer leaves the song silent**:
+  the audio is now paused only when the first frame is ready, and a song paused
+  for a video that never started is given back on the way to Song.
+- **The background video loader can't hijack a song you took back**: opening
+  the player cancels the mini player's in-flight video instead of pausing the
+  song seconds later and taking over the bar.
+- **Repeat-one works in Video mode**: the video repeats the song instead of
+  advancing the queue.
+- **Tapping the pinned *Play next* row plays it once**: it no longer replays
+  itself when it ends.
+- **Search in non-Latin languages returns the whole list**: the dedupe key kept
+  only ASCII, so every Cyrillic/Japanese/Devanagari/Arabic title collapsed into
+  one result.
+- **Profile's playlist count ignores the system downloads playlist** (Library
+  already hid it), so a first download no longer reads as "1 playlist".
+- **Tapping a song the content filter excludes plays the right next track**: it
+  was inserted at its raw queue index, which counts the dropped songs and left
+  the playhead past the rows before it.
+- **Listening stats credit the song you actually heard**: a skip used to be
+  recorded against the incoming track, so recommendations avoided what you play.
+- **One player at a time**: the mini bar no longer opens a second player over an
+  artist page (two videos, doubled sound); it returns to the open one.
+- **The video is the song or nothing**: a video upload that is another song, a
+  slowed/lo-fi/synthwave/remix variant, a cover, or another creator's "version"
+  is rejected instead of being shown for the track ("Kesariya (Synthwave)" and
+  "Often (Ethan Swope Version)" were both served as official videos). A found
+  video must also name the song's artist or come from a label channel.
+- **"1 song" instead of "1 songs"** in the playlist header, the Library
+  playlist rows and the add-to-playlist sheet.
 - **The cover no longer ghosts on the way to the full player**: the flight used
   to stretch the 42 px mini thumbnail over the whole morph, so the artwork
   arrived as a blurred, washed-out copy and only sharpened on landing. It now

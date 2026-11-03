@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../widgets/dialog_helpers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -115,7 +116,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await _refreshAvatar();
     try {
       final l = await _storage.getLikedSongs();
-      final p = await _storage.getPlaylists();
+      // The system "Downloaded Music" playlist is not one the user made (the
+      // Library hides it too), so it must not show up in the count.
+      final p = (await _storage.getPlaylists())
+          .where((pl) => pl.id != StorageService.downloadedPlaylistId)
+          .toList();
       final r = await _storage.getRecentlyPlayed();
       if (!mounted) return;
       // Storage notifies on every play tick: rebuild only when something
@@ -153,7 +158,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final idCtrl = TextEditingController(text: existing ?? '');
     final secretCtrl = TextEditingController();
     if (!mounted) return;
-    final action = await showDialog<String>(
+    final action = await showDisposingDialog<String>(
+      controllers: [idCtrl, secretCtrl],
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Spotify keys'),
@@ -198,8 +204,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
     final id = idCtrl.text;
     final secret = secretCtrl.text;
-    idCtrl.dispose();
-    secretCtrl.dispose();
+
     if (action == 'clear') {
       await sp.clearCredentials();
       if (!mounted) return;
@@ -236,8 +241,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _rename() async {
     final ctrl = TextEditingController(text: _name);
-    final v = await showDialog<String>(
+    final v = await showDisposingDialog<String>(
       context: context,
+      controllers: [ctrl],
       builder: (_) => AlertDialog(
         title: const Text('Change name'),
         content: TextField(
@@ -257,7 +263,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
-    ctrl.dispose();
     if (v == null || v.isEmpty) return;
     await _prefs.setName(v);
     if (!mounted) return;
@@ -280,8 +285,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           // not need to scroll. ponytail: assumes a tall phone viewport — trim
           // more here if it still scrolls on a short screen.
           physics: const ClampingScrollPhysics(),
-          padding: const EdgeInsets.only(
-              left: 20, right: 20, top: 14, bottom: 110),
+          padding:
+              const EdgeInsets.only(left: 20, right: 20, top: 14, bottom: 110),
           children: [
             const Text('Profile',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
@@ -316,10 +321,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 onBackgroundImageError: _avatarUrl == null
                                     ? null
                                     : (_, __) {
-                                  if (mounted && !_avatarError) {
-                                    setState(() => _avatarError = true);
-                                  }
-                                },
+                                        if (mounted && !_avatarError) {
+                                          setState(() => _avatarError = true);
+                                        }
+                                      },
                                 child: (_avatarUrl == null || _avatarError)
                                     ? Text(initial,
                                         style: TextStyle(
@@ -408,8 +413,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       subtitle: Text('Find song or Auto listen',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: Icon(Icons.chevron_right,
-                          color: AppColors.mute),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.mute),
                       onTap: () => showIdentifyMenu(context),
                     ),
                   ),
@@ -428,8 +433,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       style: TextStyle(fontSize: 14)),
                   subtitle: Text('Songs Auto listen named, with times',
                       style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
-                  trailing: Icon(Icons.chevron_right,
-                      color: AppColors.mute),
+                  trailing: Icon(Icons.chevron_right, color: AppColors.mute),
                   onTap: () => pushAppPage(context, const AutoFindsScreen()),
                 ),
               ),
@@ -479,10 +483,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       subtitle: Text('Transparency, blur and surfaces',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: Icon(Icons.chevron_right,
-                          color: AppColors.mute),
-                      onTap: () => pushAppPage(
-                          context, const AdvancedSettingsScreen()),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.mute),
+                      onTap: () =>
+                          pushAppPage(context, const AdvancedSettingsScreen()),
                     ),
                   ),
                   // Hidden when F-Droid installed the app: its build is signed
@@ -496,8 +500,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         leading: const Icon(Icons.system_update_alt, size: 20),
                         title: const Text('Check for updates',
                             style: TextStyle(fontSize: 14)),
-                        trailing: Icon(Icons.chevron_right,
-                            color: AppColors.mute),
+                        trailing:
+                            Icon(Icons.chevron_right, color: AppColors.mute),
                         onTap: () => showUpdateSheet(context),
                       ),
                     ),
@@ -526,8 +530,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               style:
                   const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
-          Text(label,
-              style: TextStyle(fontSize: 11, color: AppColors.inkSoft)),
+          Text(label, style: TextStyle(fontSize: 11, color: AppColors.inkSoft)),
         ],
       ),
     );

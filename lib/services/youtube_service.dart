@@ -115,7 +115,12 @@ class YouTubeService {
   /// ("- Topic", "VEVO", "Official") removed so a catalogue entry and its
   /// upload collapse to one key.
   static String _searchKey(String value) {
-    final v = value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    // Unicode letters and digits: an ASCII-only strip erased every Japanese,
+    // Cyrillic, Devanagari or Arabic title into "" (one key for all of them,
+    // so the merge kept a single result).
+    final v = value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
     return v.replaceAll(RegExp(r'(topic|vevo|official)$'), '');
   }
 

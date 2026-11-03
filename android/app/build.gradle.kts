@@ -64,6 +64,12 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // No debug-symbol stripping: the strip step fails on this toolchain
+            // ("failed to strip debug symbols"), which aborts `flutter build
+            // appbundle`. Play does the symbol work anyway.
+            ndk {
+                debugSymbolLevel = "none"
+            }
         }
     }
 }

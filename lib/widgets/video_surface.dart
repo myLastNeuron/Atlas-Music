@@ -62,6 +62,11 @@ class _VideoSurfaceState extends State<VideoSurface>
   /// The video actually started, so its position is worth seeking audio to.
   bool _played = false;
 
+  /// The video's own `play()` resolved: playback really is the video's now, so
+  /// a paused video on the way out is the user's pause, not a switch that was
+  /// interrupted before the video ever played.
+  bool _videoTookPlayback = false;
+
   /// The end of the video already asked the queue to advance.
   bool _advanced = false;
 
@@ -82,6 +87,18 @@ class _VideoSurfaceState extends State<VideoSurface>
 
   /// The widget is being disposed; every post-await continuation bails.
   bool _closed = false;
+
+  /// Waiting for the track load the mini player started; the video opens as
+  /// soon as the audio load settles instead of failing on a cold start.
+  bool _waitingForTrack = false;
+
+  /// Listener waiting for the mini player's in-flight video to park.
+  VoidCallback? _handoffWait;
+
+  /// This surface set [videoHandoff] loading, so only this surface may clear
+  /// it. A surface that is merely waiting on the mini player's load must not
+  /// hide the mini's spinner when it closes.
+  bool _loadingOwned = false;
 
   /// Immersive chrome is on and still needs restoring (exactly once).
   bool _chromeHeld = false;
@@ -104,12 +121,55 @@ class _VideoSurfaceState extends State<VideoSurface>
       _adopt(parked.controller, parked.songStart, parked.videoStart);
       return;
     }
+    // The mini player is already resolving this song: wait for it instead of
+    // resolving twice (the second pause used to leave a Video-only start
+    // paused). Its controller is adopted when it parks; a failed attempt
+    // falls through to this page's own load.
+    if (videoHandoff.isLoadingFor(widget.song.id)) {
+      _waitForHandoff();
+      return;
+    }
     // Marked before the first post-frame open so the cover flight that is
     // already under way carries the spinner instead of the artwork.
     videoHandoff.loading(widget.song.id);
+    _loadingOwned = true;
     // Deferred: the failure path calls setState and must not run mid-initState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _open();
+    });
+  }
+
+  /// Takes over a video the mini player started. Called from [initState], so
+  /// every handoff write here is deferred to the next frame.
+  void _waitForHandoff() {
+    var done = false;
+    void check() {
+      if (_closed || done || _controller != null) return;
+      final parked = videoHandoff.take(widget.song.id);
+      if (parked != null) {
+        done = true;
+        _handoffWait = null;
+        videoHandoff.removeListener(check);
+        _adopt(parked.controller, parked.songStart, parked.videoStart);
+        // Adopted after the first build (unlike initState), so the page must
+        // rebuild from the spinner to the first frame.
+        if (mounted) setState(() {});
+        return;
+      }
+      if (videoHandoff.isLoadingFor(widget.song.id)) return;
+      done = true;
+      _handoffWait = null;
+      videoHandoff.removeListener(check);
+      // The mini attempt ended without a controller: try once here.
+      videoHandoff.loading(widget.song.id);
+      _loadingOwned = true;
+      unawaited(_open());
+    }
+
+    _handoffWait = check;
+    videoHandoff.addListener(check);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_closed) check();
     });
   }
 
@@ -136,9 +196,15 @@ class _VideoSurfaceState extends State<VideoSurface>
   @override
   void dispose() {
     _closed = true;
+    final wait = _handoffWait;
+    _handoffWait = null;
+    if (wait != null) videoHandoff.removeListener(wait);
     // A load that never reached a frame ends with the surface: the mini bar
     // must fall back to the artwork instead of spinning forever.
-    videoHandoff.loaded(widget.song.id);
+    if (_loadingOwned) {
+      _loadingOwned = false;
+      videoHandoff.loaded(widget.song.id);
+    }
     _audio?.removeListener(_onAudio);
     WidgetsBinding.instance.removeObserver(this);
     final c = _controller;
@@ -153,10 +219,20 @@ class _VideoSurfaceState extends State<VideoSurface>
     // switch back to the audio stream, and it is what puts the live frame in
     // the mini player's square. A Song tap, a track change or an app close all
     // fall through to the normal hand-back.
-    final park = c != null &&
-        _played &&
-        widget.keepPlayingOnDetach() &&
+    final keep = widget.keepPlayingOnDetach() &&
         _audio?.currentSong?.id == widget.song.id;
+    final park = c != null && _played && keep;
+    // Closed while the video is still starting: Video is still the mode the
+    // user wants, so the load must not die with the page. The mini loader
+    // finishes it and the bar takes over where this surface stopped.
+    final handOver = keep && !_played && _phase == _VideoPhase.loading;
+    if (handOver) {
+      MiniVideo.instance.loadFor(
+        _audio!,
+        widget.song,
+        audioAlreadyPaused: _pausedAudio && _resumeAudio,
+      );
+    }
     if (park) {
       final at = c.value.position;
       videoHandoff.park(
@@ -166,23 +242,39 @@ class _VideoSurfaceState extends State<VideoSurface>
         videoStart: _videoStart,
         audio: _audio!,
       );
+      // A song that was playing switches into a playing video, even when the
+      // close lands between the first frame and play() resolving.
+      if (_resumeAudio && !_videoTookPlayback) {
+        unawaited(c.play().catchError((_) {}));
+      }
       // Playback stays with the video, but the paused audio clock is moved to
       // the same place: the saved session then resumes where the video is.
       unawaited(_restoreAudio(at, resume: false));
     } else {
       final at = c?.value.position ?? Duration.zero;
       // Paused stays paused: only playback that was actually running carries
-      // back to the audio on the way out.
-      final wasPlaying = c?.value.isPlaying ?? false;
+      // back to the audio on the way out. A video that never started playing
+      // (leave while it is still resolving/initializing) has no play state to
+      // carry, and the audio we paused for it must come back. A hand-over keeps
+      // the audio quiet: the video it was paused for is still coming.
+      final wasPlaying = !handOver &&
+          ((c?.value.isPlaying ?? false) ||
+              (_pausedAudio && _resumeAudio && !_videoTookPlayback));
       // Released here, not via _dropController: that one also writes the page's
       // notifier, which is not safe from dispose. Skipping the release left the
       // handoff advertising this controller, so the mini player kept painting
       // the dead video's last frame instead of the song's artwork.
       if (c != null) {
         videoHandoff.release(c);
-        unawaited(c.dispose());
+        // The audio comes back only once the video player is gone: it gives
+        // its audio focus back on dispose, and a resume that races that is
+        // refused by the platform (the song came back silent).
+        unawaited(c
+            .dispose()
+            .whenComplete(() => _restoreAudio(at, resume: wasPlaying)));
+      } else {
+        unawaited(_restoreAudio(at, resume: wasPlaying));
       }
-      unawaited(_restoreAudio(at, resume: wasPlaying));
     }
     _restoreChrome();
     super.dispose();
@@ -191,13 +283,34 @@ class _VideoSurfaceState extends State<VideoSurface>
   Future<void> _open({bool refresh = false}) async {
     if (_closed) return;
     final audio = _audio!;
-    final mine = audio.currentSong?.id == widget.song.id;
+    // The player is pushed the moment a song is tapped, before its audio has
+    // finished loading. Wait for that load instead of failing the video with
+    // "Track is still loading" (which left a Video-only start paused).
     if (audio.isLoading) {
-      _fail('Track is still loading');
+      _waitingForTrack = true;
+      if (mounted) setState(() => _message = 'Starting track…');
       return;
     }
+    _waitingForTrack = false;
+    final mine = audio.currentSong?.id == widget.song.id;
 
     try {
+      // Video mode is the choice, so the song goes quiet as soon as the video
+      // starts looking for itself: it used to keep playing for the two or
+      // three seconds of the resolve and then be cut off mid-word when the
+      // video took over.
+      _resumeAudio = mine && audio.isPlaying;
+      if (_resumeAudio) {
+        // Marked before the await: this pause is ours, not the user's.
+        _pausedAudio = true;
+        await audio.pause();
+        if (_closed) {
+          await audio.resume();
+          return;
+        }
+      }
+      _audioStart = mine ? audio.position : Duration.zero;
+
       final online = await audio.hasInternet;
       if (_closed) return;
       if (!online) {
@@ -205,7 +318,6 @@ class _VideoSurfaceState extends State<VideoSurface>
         return;
       }
 
-      // Resolve before pausing: the audio keeps playing while we look.
       if (mounted) setState(() => _message = 'Finding video…');
       final source = await audio
           .videoSource(widget.song, refresh: refresh)
@@ -215,25 +327,6 @@ class _VideoSurfaceState extends State<VideoSurface>
         _fail('No music video for this track');
         return;
       }
-      // The resolve can take seconds: the user may have paused or resumed the
-      // audio meanwhile, so the snapshot from _open's start is stale.
-      _resumeAudio = mine && audio.isPlaying;
-      // The video opens where the song is, whatever media it is: resetting to
-      // 0 made the switch look like it lost the position (and pushed the song
-      // to its end on the way back).
-      _audioStart = mine ? audio.position : Duration.zero;
-
-      if (_resumeAudio) {
-        await audio.pause();
-        _pausedAudio = true;
-        if (_closed) {
-          await audio.resume();
-          return;
-        }
-      }
-      // From here the video owns playback: any audio resume is a takeover,
-      // even when the audio was already paused on entry.
-      _audioSettled = true;
 
       final c = VideoPlayerController.networkUrl(
         Uri.parse(source.url),
@@ -245,12 +338,33 @@ class _VideoSurfaceState extends State<VideoSurface>
       _controller = c;
       await c.initialize().timeout(const Duration(seconds: 15));
       if (_closed) return;
+      // The song keeps its position while the video loads: read the timeline
+      // again, so the frame opens where the song is now.
+      _audioStart = mine ? audio.position : Duration.zero;
       // A video shorter than the song cannot hold that position: start it at 0
       // and keep the offset, so the mapping still carries the position back.
       final canAlign = _audioStart <= c.value.duration;
       _videoStart = canAlign ? _audioStart : Duration.zero;
       await c.seekTo(_videoStart).timeout(const Duration(seconds: 5));
       if (_closed) return;
+      // The transport stays live while the video loads; a resume during it is
+      // the user saying play, and the video is the playback from here.
+      if (audio.isPlaying) {
+        _resumeAudio = true;
+        _pausedAudio = true;
+        await audio.pause();
+        if (_closed) {
+          await audio.resume();
+          return;
+        }
+      } else if (!_pausedAudio) {
+        // Not playing and we never paused it: the user did, so the video opens
+        // paused.
+        _resumeAudio = false;
+      }
+      // From here the video owns playback: any audio resume is a takeover,
+      // even when the audio was already paused on entry.
+      _audioSettled = true;
       // First frame on screen before play(): the spinner stops right here.
       setState(() {
         _phase = _VideoPhase.playing;
@@ -269,7 +383,10 @@ class _VideoSurfaceState extends State<VideoSurface>
         videoStart: _videoStart,
       );
       // There is a frame to carry now: stop advertising the spinner.
-      videoHandoff.loaded(widget.song.id);
+      if (_loadingOwned) {
+        _loadingOwned = false;
+        videoHandoff.loaded(widget.song.id);
+      }
       // In Video the video is the playback: its end is the song's end, so the
       // queue advances into the next song's video instead of stopping dead.
       c.addListener(_onVideoEnd);
@@ -277,6 +394,7 @@ class _VideoSurfaceState extends State<VideoSurface>
       // video paused, a playing one keeps playing.
       if (!_backgrounded && _resumeAudio) {
         await c.play().timeout(const Duration(seconds: 5));
+        _videoTookPlayback = true;
         if (_closed) return;
       }
     } on TimeoutException {
@@ -292,9 +410,20 @@ class _VideoSurfaceState extends State<VideoSurface>
   /// track opens (in Video, because the choice is saved) instead of silence.
   void _onVideoEnd() {
     if (_closed || _exited || !_played || _advanced) return;
-    if (!(_controller?.value.isCompleted ?? false)) return;
+    final c = _controller;
+    if (c == null || !c.value.isCompleted) return;
+    final audio = _audio;
+    // Repeat-one is the audio player's job, and it is paused in Video mode:
+    // here the video is the playback, so it repeats itself.
+    if (audio != null && audio.repeatOne) {
+      _audioStart = Duration.zero;
+      _videoStart = Duration.zero;
+      unawaited(
+          c.seekTo(Duration.zero).then((_) => c.play()).catchError((_) {}));
+      return;
+    }
     _advanced = true;
-    unawaited(_audio?.playNext(0, false));
+    unawaited(audio?.playNext(0, false));
   }
 
   /// Restarts a failed open from the Retry button.
@@ -310,6 +439,7 @@ class _VideoSurfaceState extends State<VideoSurface>
     _audioSettled = false;
     // A retry is a fresh load: the flight must carry the spinner again.
     videoHandoff.loading(widget.song.id);
+    _loadingOwned = true;
     // A Retry exists because the URL may be dead: skip the cached answer.
     unawaited(_open(refresh: true));
   }
@@ -322,6 +452,13 @@ class _VideoSurfaceState extends State<VideoSurface>
     if (audio.currentSong?.id != widget.song.id) {
       _audioTookOver = true;
       _handOverToNextTrack();
+      return;
+    }
+    // The cold-start wait ended: the track load settled, so open the video.
+    if (_waitingForTrack) {
+      if (audio.isLoading) return;
+      _waitingForTrack = false;
+      unawaited(_open());
       return;
     }
     // While the video owns the screen, an audio resume is a service retry or
@@ -394,7 +531,10 @@ class _VideoSurfaceState extends State<VideoSurface>
   void _fail(String message) {
     if (!mounted) return;
     // No frame is coming: the spinner must not outlive the failed attempt.
-    videoHandoff.loaded(widget.song.id);
+    if (_loadingOwned) {
+      _loadingOwned = false;
+      videoHandoff.loaded(widget.song.id);
+    }
     // Cleared before setState: a failed video never resumes audio twice.
     final resume = _pausedAudio;
     _pausedAudio = false;

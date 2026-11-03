@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../widgets/dialog_helpers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -171,8 +172,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     bool searched = false;
     bool loading = false;
 
-    final song = await showDialog<Song>(
+    final song = await showDisposingDialog<Song>(
       context: context,
+      controllers: [ctrl],
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: const Text('Add Song'),
@@ -268,7 +270,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     );
 
     yt.dispose();
-    ctrl.dispose();
     if (song == null) return;
     await _storage.addSongToPlaylist(_playlist.id, song);
     await _refreshFromStorage();
@@ -555,8 +556,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 context,
                                 PlaylistQrScreen(playlist: playlist),
                               );
-                            } else if (value == 'shuffle' &&
-                                songs.isNotEmpty) {
+                            } else if (value == 'shuffle' && songs.isNotEmpty) {
                               final shuffled = List<Song>.from(songs)
                                 ..shuffle();
                               playSongs(
@@ -646,12 +646,13 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 playlist.description!.isNotEmpty)
                               Text(
                                 playlist.description!,
-                                style:
-                                    TextStyle(color: AppColors.inkSoft),
+                                style: TextStyle(color: AppColors.inkSoft),
                               ),
                             const SizedBox(height: 8),
                             Text(
-                              '${songs.length} songs',
+                              songs.length == 1
+                                  ? '1 song'
+                                  : '${songs.length} songs',
                               style: TextStyle(color: AppColors.inkSoft),
                             ),
                             if (playlist.source != null) ...[
@@ -670,8 +671,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                   ),
                                   const SizedBox(width: 4),
                                   Text(
-                                    playlist.source ==
-                                            PlaylistQrCodec.sourceTag
+                                    playlist.source == PlaylistQrCodec.sourceTag
                                         ? 'Cloned from an Atlas Music QR code'
                                         : 'Imported from ${playlist.source}',
                                     style: TextStyle(
@@ -836,8 +836,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
   Future<void> _renamePlaylist() async {
     final ctrl = TextEditingController(text: _playlist.name);
-    final name = await showDialog<String>(
+    final name = await showDisposingDialog<String>(
       context: context,
+      controllers: [ctrl],
       builder: (_) => AlertDialog(
         title: const Text('Rename playlist'),
         content: TextField(
@@ -857,7 +858,6 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         ],
       ),
     );
-    ctrl.dispose();
     if (name == null || name.isEmpty) return;
     await _storage.renamePlaylist(_playlist.id, name);
     if (!mounted) return;

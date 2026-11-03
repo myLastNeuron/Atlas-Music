@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/dialog_helpers.dart';
 import 'package:provider/provider.dart';
 import '../models/playlist.dart';
 import '../services/audio_service.dart';
@@ -109,8 +110,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
     if (!mounted) return;
     final ctrl = TextEditingController();
-    final result = await showDialog<String>(
+    final result = await showDisposingDialog<String>(
       context: context,
+      controllers: [ctrl],
       builder: (_) => AlertDialog(
         title: const Text('Import YouTube Playlist'),
         content: TextField(
@@ -129,7 +131,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       ),
     );
-    ctrl.dispose();
     if (result == null || result.isEmpty) return;
     final text = result.trim();
     final m = RegExp(r'[?&]list=([a-zA-Z0-9_-]+)').firstMatch(text);
@@ -209,23 +210,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(name,
-                style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
             Text(count == 1 ? '1 song' : '$count songs',
-                style: TextStyle(
-                    fontSize: 13, color: AppColors.inkSoft)),
+                style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
             if (preview.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(preview,
                   maxLines: 4,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 12, color: AppColors.inkSoft)),
+                  style: TextStyle(fontSize: 12, color: AppColors.inkSoft)),
               if (count > 3)
                 Text('+ ${count - 3} more',
-                    style: TextStyle(
-                        fontSize: 12, color: AppColors.mute)),
+                    style: TextStyle(fontSize: 12, color: AppColors.mute)),
             ],
           ],
         ),
@@ -368,8 +365,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
       if (!mounted) return;
       final linkCtrl = TextEditingController();
-      final link = await showDialog<String>(
+      final link = await showDisposingDialog<String>(
         context: context,
+        controllers: [linkCtrl],
         builder: (_) => AlertDialog(
           title: const Text('Clone Spotify playlist'),
           content: TextField(
@@ -388,7 +386,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ],
         ),
       );
-      linkCtrl.dispose();
       if (link == null || link.trim().isEmpty) return;
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
@@ -463,7 +460,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _importPasted() async {
     final nameCtrl = TextEditingController();
     final tracksCtrl = TextEditingController();
-    final input = await showDialog<List<String>>(
+    final input = await showDisposingDialog<List<String>>(
+      controllers: [nameCtrl, tracksCtrl],
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Paste track list'),
@@ -510,8 +508,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     final name = (input != null && input.isNotEmpty ? input[0] : '');
     final text = (input != null && input.length > 1 ? input[1] : '');
-    nameCtrl.dispose();
-    tracksCtrl.dispose();
+
     if (input == null || text.trim().isEmpty) return;
     if (!mounted) return;
     final navigator = Navigator.of(context, rootNavigator: true);
@@ -574,8 +571,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _create() async {
     final ctrl = TextEditingController();
-    final result = await showDialog<String>(
+    final result = await showDisposingDialog<String>(
       context: context,
+      controllers: [ctrl],
       builder: (_) => AlertDialog(
         title: const Text('Create Playlist'),
         content: TextField(
@@ -594,7 +592,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       ),
     );
-    ctrl.dispose();
     if (result == null || result.isEmpty) return;
     await _storage.savePlaylist(Playlist(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -715,9 +712,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 title: Text(p.name,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis),
-                                subtitle: Text('${p.songs.length} songs',
-                                    style: TextStyle(
-                                        color: AppColors.inkSoft)),
+                                subtitle: Text(
+                                    p.songs.length == 1
+                                        ? '1 song'
+                                        : '${p.songs.length} songs',
+                                    style: TextStyle(color: AppColors.inkSoft)),
                                 trailing: Icon(Icons.chevron_right,
                                     color: AppColors.mute),
                                 onTap: () async {
