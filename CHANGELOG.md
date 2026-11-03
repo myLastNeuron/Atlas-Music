@@ -21,15 +21,6 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   sheets blur what is behind them. Panels inside the page keep the flat tint,
   because the page colour is all that is behind them — the filter there cost a
   repaint every frame and showed nothing.
-- **Share a playlist as a QR code** (playlist menu → *Share Playlist*): the
-  code carries the playlist name and every track, and a *Share QR Code* button
-  shares it as an image through any app (WhatsApp, chat, email). Playlists too
-  long for one code are split into numbered parts that cycle on screen and are
-  all included in the shared image.
-- **Import Atlas Music Playlist** (Library → Import): scans a shared playlist
-  QR code with the camera, or reads it from a saved photo, and clones the
-  playlist locally — no account, no server, no network needed. The clone is an
-  ordinary editable playlist.
 
 ### Fixed
 - **Creating or renaming anything no longer crashes the app**: the text
