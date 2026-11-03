@@ -145,6 +145,10 @@ class YouTubeMusicSearch {
         artist: artist,
         channel: c.artist,
         requireArtist: true,
+        // Only YouTube's own OMV classification vouches for an upload from a
+        // channel that is neither the label nor the artist.
+        originalChannel: !omv,
+        realVideo: true,
       )) {
         continue;
       }
@@ -255,6 +259,53 @@ class YouTubeMusicSearch {
     r'karaoke|instrumental)',
   );
 
+  /// Uploads that are not the song's video at all: a lyric card, a still
+  /// cover, a translation. Only a real video counts when one is asked for.
+  static const Set<String> _notVideo = {
+    'lyric',
+    'lyrics',
+    'lyrical',
+    'lirik',
+    'letra',
+    'letras',
+    'visualizer',
+    'visualiser',
+    'audio',
+    'subtitulado',
+    'subtitles',
+    'terjemahan',
+  };
+
+  /// Letters that stand in for Latin ones in these titles ("MC STΔN",
+  /// "𝔼𝕂 𝔻𝕀ℕ"): folded before any comparison, or the artist is never
+  /// recognised and a real video looks like a stranger's upload.
+  static const Map<int, String> _lookalikes = {
+    0x0394: 'a', // Δ GREEK CAPITAL DELTA
+    0x2206: 'a', // ∆ INCREMENT
+    0x03B4: 'd', // δ GREEK SMALL DELTA
+  };
+
+  /// [value] with lookalike letters folded to Latin.
+  static String _fold(String value) {
+    final out = StringBuffer();
+    for (final rune in value.runes) {
+      final mapped = _lookalikes[rune];
+      if (mapped != null) {
+        out.write(mapped);
+        continue;
+      }
+      // Mathematical alphanumerics (U+1D400…) are 52-letter blocks, A–Z then
+      // a–z; some styles have holes, which only costs a rejected match.
+      if (rune >= 0x1D400 && rune <= 0x1D7FF) {
+        final letter = (rune - 0x1D400) % 52;
+        out.writeCharCode(0x61 + (letter < 26 ? letter : letter - 26));
+        continue;
+      }
+      out.writeCharCode(rune);
+    }
+    return out.toString();
+  }
+
   /// True when [candidate] is [wantTitle] by [artist] (or [channel]): the
   /// wanted words appear in it as a run, and every other word is release
   /// noise, part of the artist name, or a featured artist. A title that only
@@ -265,6 +316,8 @@ class YouTubeMusicSearch {
     required String artist,
     String channel = '',
     bool requireArtist = false,
+    bool originalChannel = false,
+    bool realVideo = false,
   }) {
     final want = _words(_baseTitle(wantTitle));
     if (want.isEmpty) return false;
@@ -282,19 +335,31 @@ class YouTubeMusicSearch {
     // Only the words OUTSIDE the wanted title decide the variant: a slowed
     // upload is rejected, a song actually called "Cover Me" is not.
     if (_variant.hasMatch('${rest.join(' ')} $channel')) return false;
+    // A lyric or audio upload is the song, but not its video: asked for a
+    // video, it is as good as none.
+    if (realVideo && rest.any(_notVideo.contains)) return false;
     if (_variantCompact.hasMatch(rest.join(''))) return false;
+    final artistKey = _matchKey(artist);
+    final label = _isLabelChannel(channel);
+    // The label's upload and the artist's own channel speak for the song:
+    // extra words there are release context (album, year, "Long Version"),
+    // not another recording. A fan channel has to earn the title instead.
+    final ownChannel = label ||
+        (artistKey.isNotEmpty && _matchKey(channel).contains(artistKey));
     // A bracketed segment names a version unless it is release noise:
     // "Kesariya (Synthwave)" is a remix, "Blinding Lights (Official Video)"
-    // is not.
-    for (final m in _brackets.allMatches(candidate)) {
-      final words = _words(m.group(1) ?? '');
-      if (words.every((w) =>
-          _titleNoise.contains(w) ||
-          ownWords.contains(w) ||
-          artistWords.contains(w))) {
-        continue;
+    // is not, and "Ek Din Pyaar (Tadipaar)" is the song's own album.
+    if (!ownChannel) {
+      for (final m in _brackets.allMatches(candidate)) {
+        final words = _words(m.group(1) ?? '');
+        if (words.every((w) =>
+            _titleNoise.contains(w) ||
+            ownWords.contains(w) ||
+            artistWords.contains(w))) {
+          continue;
+        }
+        return false;
       }
-      return false;
     }
     // Everything after a featured artist is that artist, not the title.
     final content = <String>[];
@@ -303,22 +368,24 @@ class YouTubeMusicSearch {
       if (artistWords.contains(w) || _titleNoise.contains(w)) continue;
       content.add(w);
     }
-    final artistKey = _matchKey(artist);
     final named =
         artistKey.isNotEmpty && _matchKey('$candidate $channel').contains(artistKey);
-    final label = _isLabelChannel(channel);
+    // The video of a song is the song's own: the label's upload or the
+    // artist's channel. A fan reupload that merely names the artist (a slowed
+    // or reverb version with a clean title) is some other recording.
+    if (originalChannel && !ownChannel) return false;
     // A found video must show whose song it is: its own artist, or a label
     // channel. Anything else is some upload that happens to share the title
     // (seen: "Often" by a fan was a slowed remix, "Ethan Swope Version").
     if (requireArtist && !named && !label) return false;
-    // Extra words are release/movie context on a label channel; on a personal
-    // channel they name another version.
-    if (!label) return content.isEmpty;
+    // Extra words are release/movie context on a label channel or the artist's
+    // own; on a personal channel they name another version.
+    if (!ownChannel) return content.isEmpty;
     return true;
   }
 
   /// Lowercased words of [value]: unicode letters/digits, in order.
-  static List<String> _words(String value) => value
+  static List<String> _words(String value) => _fold(value)
       .toLowerCase()
       .split(RegExp(r'[^\p{L}\p{N}]+', unicode: true))
       .where((w) => w.isNotEmpty)
@@ -363,6 +430,10 @@ class YouTubeMusicSearch {
         artist: artist,
         channel: row.channel,
         requireArtist: true,
+        // Plain YouTube has no classification: only the label's or the
+        // artist's own upload can be this song's video.
+        originalChannel: true,
+        realVideo: true,
       )) {
         return id;
       }
@@ -1167,7 +1238,7 @@ class YouTubeMusicSearch {
 
   /// Unicode-aware match key for [bestMusicVideo]: ASCII-only [_normalize]
   /// erases Japanese/Korean/Cyrillic titles and rejects every candidate.
-  static String _matchKey(String value) => value
+  static String _matchKey(String value) => _fold(value)
       .toLowerCase()
       .replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
 

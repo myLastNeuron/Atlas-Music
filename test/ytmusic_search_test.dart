@@ -549,6 +549,134 @@ void main() {
         isNull,
       );
     });
+
+    test('a lyric or audio upload is not the video', () {
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('lyric', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Lyric Video)',
+                'Arijit Singh'),
+            c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Official Video)',
+                'Arijit Singh'),
+          ],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [c('audio', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Official Audio)',
+              'Arijit Singh')],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
+
+    test('an album name in brackets is not another version', () {
+      // Live: the real video is catalogued as "Ek Din Pyaar (Tadipaar)" —
+      // Tadipaar is the album, and it used to make the video look like a
+      // different recording.
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Ek Din Pyaar (Tadipaar)',
+          wantTitle: 'Ek Din Pyaar',
+          artist: 'MC Stan',
+          channel: 'MC STAN',
+          requireArtist: true,
+          originalChannel: true,
+          realVideo: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('"Long Version" on the artist channel is the same video', () {
+      // Live: Eminem's real video is "Stan (Long Version) (feat. Dido)".
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'Stan (Long Version) (feat. Dido)',
+          wantTitle: 'Stan',
+          artist: 'Eminem',
+          channel: 'EminemMusic',
+          requireArtist: true,
+          originalChannel: true,
+          realVideo: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('stylised letters still name the artist', () {
+      // Live: "MC STΔN - EK DIN PYAAR | TADIPAAR | 2K20" (Greek delta) is the
+      // only original on plain YouTube.
+      expect(
+        YouTubeMusicSearch.isSameSong(
+          candidate: 'MC STΔN - EK DIN PYAAR | TADIPAAR | 2K20',
+          wantTitle: 'Ek Din Pyaar',
+          artist: 'MC Stan',
+          channel: 'MC STAN',
+          requireArtist: true,
+          originalChannel: true,
+          realVideo: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('the real video wins over its lyric uploads', () {
+      // Live: Eminem's "Stan (Long Version)" is the real video; every other row
+      // is a lyric channel.
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('lyrics', 'MUSIC_VIDEO_TYPE_UGC', 'Eminem - Stan (Lyrics)',
+                '7clouds'),
+            c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Stan (Long Version) (feat. Dido)',
+                'Eminem'),
+          ],
+          title: 'Stan',
+          artist: 'Eminem',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+    });
+
+    test('a fan reupload is not the video, even with a clean title', () {
+      // A slowed/reverb version often carries the plain title and names the
+      // artist; only YouTube's OMV tag or an own/label channel can stand for
+      // the song.
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('fan', 'MUSIC_VIDEO_TYPE_UGC',
+                'Blinding Lights - The Weeknd', 'ButenkoDV'),
+            c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Blinding Lights', 'The Weeknd'),
+          ],
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+      expect(
+        YouTubeMusicSearch.bestMusicVideo(
+          [
+            c('fan', 'MUSIC_VIDEO_TYPE_UGC',
+                'Blinding Lights - The Weeknd', 'ButenkoDV'),
+          ],
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
   });
 
   group('isSameSong', () {
@@ -739,6 +867,47 @@ void main() {
           excludeId: 'self',
         ),
         'mv',
+      );
+    });
+
+    test('a label lyric upload is skipped for the real video', () {
+      expect(
+        YouTubeMusicSearch.bestPlainVideo(
+          [
+            v('lyric', 'Kesariya - Official Lyric | Brahmastra',
+                'Sony Music India'),
+            v('mv', 'Kesariya - Brahmastra | Arijit Singh', 'Sony Music India'),
+          ],
+          title: 'Kesariya',
+          artist: 'Arijit Singh',
+          excludeId: 'atv',
+        ),
+        'mv',
+      );
+    });
+
+    test('a fan reupload with the plain title is skipped', () {
+      expect(
+        YouTubeMusicSearch.bestPlainVideo(
+          [
+            v('fan', 'Blinding Lights - The Weeknd', 'ButenkoDV'),
+            v('real', 'The Weeknd - Blinding Lights (Official Video)',
+                'The Weeknd'),
+          ],
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          excludeId: 'atv',
+        ),
+        'real',
+      );
+      expect(
+        YouTubeMusicSearch.bestPlainVideo(
+          [v('fan', 'Blinding Lights - The Weeknd', 'ButenkoDV')],
+          title: 'Blinding Lights',
+          artist: 'The Weeknd',
+          excludeId: 'atv',
+        ),
+        isNull,
       );
     });
 

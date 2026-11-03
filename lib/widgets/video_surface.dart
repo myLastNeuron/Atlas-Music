@@ -461,6 +461,16 @@ class _VideoSurfaceState extends State<VideoSurface>
       unawaited(_open());
       return;
     }
+    // Video is the playback here: a play request made while the video is still
+    // resolving must not be heard for the length of the lookup (the song used
+    // to play for those two or three seconds and then get cut off). The pause
+    // is marked as ours, so dispose() gives the song back if no video arrives.
+    if (!_audioSettled && _phase == _VideoPhase.loading && audio.isPlaying) {
+      _resumeAudio = true;
+      _pausedAudio = true;
+      unawaited(audio.pause());
+      return;
+    }
     // While the video owns the screen, an audio resume is a service retry or
     // a stale platform state, not a user request: pause it again instead of
     // dropping the user out of Video. A real track change exits above, and

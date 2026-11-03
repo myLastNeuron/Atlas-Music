@@ -271,6 +271,10 @@ class MiniVideo {
   /// Song whose video this loader is resolving/initializing right now.
   String? _loadingSongId;
 
+  /// A play request arrived while that load was in flight: the video is the
+  /// playback, so it must start playing once it has a first frame.
+  bool _resumedDuringLoad = false;
+
   void attach(AudioPlayerService audio) {
     if (identical(_audio, audio)) return;
     _audio?.removeListener(_onAudio);
@@ -317,7 +321,17 @@ class MiniVideo {
     final audio = _audio;
     if (audio == null) return;
     final song = audio.currentSong;
-    if (song == null || song.id == _attemptedSongId) return;
+    if (song == null) return;
+    // Video is the playback: a play request made while this loader is still
+    // resolving must not be heard. The pause is ours, so a failed load gives
+    // the song back (see the finally in [_start]).
+    if (_loadingSongId == song.id && audio.isPlaying) {
+      _pausedForSong = song.id;
+      _resumedDuringLoad = true;
+      unawaited(audio.pause());
+      return;
+    }
+    if (song.id == _attemptedSongId) return;
     // The full player owns this track's video while it is open; remember the
     // song so closing it does not trigger a second background load.
     if (_playerOpen) {
@@ -406,7 +420,7 @@ class MiniVideo {
 
       // The mini bar's transport stays live while the video loads: a resume
       // during it is the user saying play, and the video is the playback here.
-      if (audio.isPlaying) {
+      if (audio.isPlaying || _resumedDuringLoad) {
         wantPlayback = true;
         pausedAudio = true;
         _pausedForSong = song.id;
@@ -434,6 +448,7 @@ class MiniVideo {
     } catch (_) {
       // Best-effort background load: the song is given back in the finally.
     } finally {
+      _resumedDuringLoad = false;
       if (controller != null) unawaited(controller.dispose());
       if (_loadingSongId == song.id) {
         _loadingSongId = null;
@@ -442,8 +457,9 @@ class MiniVideo {
       // The video never took over: give the song back if we paused it for an
       // attempt that was cancelled (song change, player open, failure).
       if (!handedOff) {
-        if (_pausedForSong == song.id) _pausedForSong = null;
-        if (pausedAudio && _audio?.currentSong?.id == song.id) {
+        final pausedHere = pausedAudio || _pausedForSong == song.id;
+        _pausedForSong = null;
+        if (pausedHere && _audio?.currentSong?.id == song.id) {
           unawaited(audio.resume());
         }
       }

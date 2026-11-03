@@ -439,8 +439,10 @@ class AudioPlayerService extends ChangeNotifier {
           // India's Kesariya) are ranked first by plain youtube.com search.
           List<Song> plain = const [];
           try {
+            // Wider than the first screen: the real video is often a few rows
+            // below lyric/audio uploads that are rejected now.
             plain = await _youtubeService.searchVideos('${s.title} ${s.artist}',
-                limit: 10);
+                limit: 20);
           } catch (_) {}
           final fromPlain = YouTubeMusicSearch.bestPlainVideo(
             plain,
