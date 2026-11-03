@@ -6,6 +6,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-03
+
 ### Added
 - **Real frosted glass, without the stutter**: the nav bar, mini player and
   sheets blur what is behind them. Panels inside the page keep the flat tint,
