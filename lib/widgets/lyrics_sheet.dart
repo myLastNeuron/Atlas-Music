@@ -102,14 +102,20 @@ class _LyricsSheetState extends State<LyricsSheet> {
         shadow: false,
         blur: true,
         child: Column(
+        // Center is Column's default, and a shrink-wrapping child (the
+        // unsynced lyrics block) then floats to the middle of the sheet
+        // instead of sitting on the left edge.
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SizedBox(height: 10),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.line,
-              borderRadius: BorderRadius.circular(2),
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.line,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
           Padding(
@@ -211,6 +217,12 @@ class _LyricsSheetState extends State<LyricsSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(
+                          'Not synced — LRCLIB has no timings for this track',
+                          style: TextStyle(
+                              fontSize: 11, color: AppColors.mute),
+                        ),
+                        const SizedBox(height: 12),
                         for (var i = 0; i < src.length; i++) ...[
                           Text(
                             src[i],
@@ -235,7 +247,13 @@ class _LyricsSheetState extends State<LyricsSheet> {
                     ),
                   );
                 }
-                for (var i = 0; i < data.lines.length; i++) {
+                final rows = lyricRows(data.lines, widget.song.duration);
+                final timed = SyncedLyrics(
+                    track: data.track,
+                    artist: data.artist,
+                    lines: rows,
+                    isSynced: true);
+                for (var i = 0; i < rows.length; i++) {
                   _keys.putIfAbsent(i, () => GlobalKey());
                 }
                 return StreamBuilder<Duration>(
@@ -243,15 +261,18 @@ class _LyricsSheetState extends State<LyricsSheet> {
                   initialData: widget.audio.position,
                   builder: (context, posSnap) {
                     final pos = posSnap.data ?? Duration.zero;
-                    final idx = data.indexFor(pos);
+                    final idx = timed.indexFor(pos);
                     _maybeScroll(idx);
                     return ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.fromLTRB(20, 12, 20, 40),
-                      itemCount: data.lines.length,
+                      itemCount: rows.length,
                       itemBuilder: (context, i) {
-                        final line = data.lines[i];
+                        final line = rows[i];
                         final active = i == idx;
+                        // A timed line with no words is an instrumental gap.
+                        final text =
+                            line.text.trim().isEmpty ? '♫' : line.text;
                         return MotionPress(
                           child: GestureDetector(
                             key: _keys[i],
@@ -263,20 +284,26 @@ class _LyricsSheetState extends State<LyricsSheet> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    line.text,
+                                    text,
                                     style: TextStyle(
-                                      fontSize: active ? 13.5 : 12.5,
+                                      // The playing line has to be obvious at
+                                      // a glance: white and two steps larger
+                                      // than the muted rest, not a shade
+                                      // apart.
+                                      fontSize: active ? 16 : 12.5,
                                       height: 1.4,
                                       fontWeight: active
-                                          ? FontWeight.w600
+                                          ? FontWeight.w700
                                           : FontWeight.w400,
                                       color: active
-                                          ? AppColors.inkSoft
+                                          ? AppColors.ink
                                           : AppColors.mute,
                                     ),
                                   ),
                                   if (_showTranslated &&
-                                      _translated != null) ...[
+                                      _translated != null &&
+                                      i < _translated!.length &&
+                                      _translated![i].trim().isNotEmpty) ...[
                                     const SizedBox(height: 3),
                                     Text(
                                       _translated![i],

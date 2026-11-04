@@ -45,10 +45,14 @@ void main() {
       expect(lines[1].text, 'B');
     });
 
-    test('ignores metadata and empty bodies', () {
+    test('ignores metadata but keeps timed gaps as empty lines', () {
       final lines = parseLrc('[ti:Title]\n[ar:Artist]\n[00:10.00]\n[00:12.00] Real');
-      expect(lines.length, 1);
-      expect(lines[0].text, 'Real');
+      expect(lines.length, 2);
+      // The timed-but-silent line is the instrumental gap the sheet shows
+      // as ♫; dropping it left the previous line highlighted instead.
+      expect(lines[0].text, '');
+      expect(lines[0].start, const Duration(seconds: 10));
+      expect(lines[1].text, 'Real');
     });
   });
 
@@ -122,6 +126,80 @@ void main() {
         LyricsService.trackVariants('Blinding Lights'),
         ['Blinding Lights'],
       );
+    });
+  });
+
+  group('lyricRows', () {
+    LyricLine at(int sec, String text) =>
+        LyricLine(start: Duration(seconds: sec), text: text);
+
+    test('marks music before the first word', () {
+      final rows = lyricRows([at(20, 'A')], Duration.zero);
+      expect(rows.length, 2);
+      expect(rows.first.start, Duration.zero);
+      expect(rows.first.text, '');
+    });
+
+    test('leaves a normal song untouched', () {
+      final rows = lyricRows(
+          [at(1, 'A'), at(6, 'B'), at(11, 'C')], const Duration(seconds: 15));
+      expect(rows.map((r) => r.text).toList(), ['A', 'B', 'C']);
+    });
+
+    test('marks a long silent stretch LRC forgot about', () {
+      final rows = lyricRows(
+          [at(5, 'A'), at(35, 'B')], const Duration(seconds: 42));
+      expect(rows.length, 3);
+      expect(rows[1].text, '');
+      // A is short, so the music starts well before B.
+      expect(rows[1].start.inSeconds, inInclusiveRange(5, 20));
+      expect(rows[2].start, const Duration(seconds: 35));
+    });
+
+    test('does not stack a marker on an explicit one', () {
+      final rows = lyricRows(
+          [at(5, 'A'), at(10, ''), at(40, 'B')], const Duration(seconds: 42));
+      expect(rows.map((r) => r.text).toList(), ['A', '', 'B']);
+    });
+
+    test('drops a "..." line instead of printing dots', () {
+      final rows = lyricRows(
+          [at(0, '...'), at(32, 'A')], const Duration(seconds: 40));
+      // The dots are gone; the real 32 s intro still gets its one ♫.
+      expect(rows.map((r) => r.text).toList(), ['', 'A']);
+      expect(rows.first.start, Duration.zero);
+      expect(rows.any((r) => r.text.trim() == '...'), isFalse);
+    });
+
+    test('ignores a stanza-separator gap on the next line\'s beat', () {
+      final rows = lyricRows(
+          [at(5, 'A'), at(10, ''), at(10, 'B')], const Duration(seconds: 20));
+      expect(rows.map((r) => r.text).toList(), ['A', 'B']);
+    });
+
+    // Real LRCLIB entry for Manwa Laage: a "..." intro line and stanza
+    // separators timed onto the next line. Neither is drawn.
+    test('real LRC head: no dots and no separator ♫', () {
+      final lines = parseLrc('[00:00.00] ...\n'
+          '[00:32.02] Manwa laage, o manwa laage\n'
+          '[00:36.99] \n'
+          '[00:36.99] Laage re sanware');
+      final rows = lyricRows(lines, const Duration(seconds: 42));
+      expect(rows.map((r) => r.text).toList(),
+          ['', 'Manwa laage, o manwa laage', 'Laage re sanware']);
+    });
+
+    test('marks the outro after the last line', () {
+      final rows = lyricRows([at(5, 'A'), at(10, 'B')],
+          const Duration(seconds: 120));
+      expect(rows.length, 3);
+      expect(rows.last.text, '');
+      expect(rows.last.start.inSeconds, inInclusiveRange(10, 30));
+    });
+
+    test('no outro marker when the duration is unknown', () {
+      final rows = lyricRows([at(5, 'A')], Duration.zero);
+      expect(rows.length, 1);
     });
   });
 
@@ -207,6 +285,82 @@ void main() {
       expect(out, isNotNull);
       expect(out!.lines.length, 2);
       expect(getCalls, greaterThanOrEqualTo(3));
+    });
+
+    test('keeps looking when /api/get only has plain lyrics', () async {
+      // Regression: LRCLIB carries several entries per song and /api/get
+      // can return the plain-only one while a timed entry sits one search
+      // away — the song showed unsynced text with no highlight.
+      final mock = MockClient((http.BaseRequest req) async {
+        if (req.url.path == '/api/get') {
+          return http.Response(
+            json.encode({
+              'trackName': 'Jeene Laga Hoon',
+              'artistName': 'Atif Aslam',
+              'syncedLyrics': '',
+              'plainLyrics': 'plain only',
+              'instrumental': false,
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          json.encode([
+            {
+              'trackName': 'Jeene Laga Hoon',
+              'artistName': 'Atif Aslam',
+              'duration': 237,
+              'syncedLyrics': '[00:10.00] Timed',
+              'plainLyrics': 'Timed',
+              'instrumental': false,
+            }
+          ]),
+          200,
+        );
+      });
+      final svc = _svc(mock);
+      final out = await svc.fetch(
+          _song(title: 'Jeene Laga Hoon', artist: 'Atif Aslam', sec: 237));
+      expect(out, isNotNull);
+      expect(out!.isSynced, true);
+      expect(out.lines.single.text, 'Timed');
+    });
+
+    test('still answers with the plain hit when no entry has timings', () async {
+      final mock = MockClient((http.BaseRequest req) async {
+        if (req.url.path == '/api/get') {
+          return http.Response(
+            json.encode({
+              'trackName': 'Blinding Lights',
+              'artistName': 'The Weeknd',
+              'syncedLyrics': '',
+              'plainLyrics': 'plain only',
+              'instrumental': false,
+            }),
+            200,
+          );
+        }
+        return http.Response('[]', 200);
+      });
+      final svc = _svc(mock);
+      final out = await svc.fetch(_song());
+      expect(out, isNotNull);
+      expect(out!.isSynced, false);
+      expect(out.plain, 'plain only');
+    });
+
+    test('an LRC of only "..." is not synced lyrics', () async {
+      final mock = MockClient((_) async => http.Response(
+            json.encode({
+              'trackName': 'X',
+              'artistName': 'Y',
+              'syncedLyrics': '[00:00.00] ...',
+              'plainLyrics': '',
+              'instrumental': false,
+            }),
+            200,
+          ));
+      expect(await _svc(mock).fetch(_song(title: 'X', artist: 'Y')), isNull);
     });
 
     test('returns null when nothing found', () async {

@@ -395,10 +395,13 @@ class LyricsService {
     if (_mem.containsKey(key)) return _mem[key];
 
     final disk = await _readDisk(key);
-    if (disk != null) {
+    if (disk != null && (disk.isSynced || disk.instrumental)) {
       _mem[key] = disk;
       return disk;
     }
+    // A cached plain entry is a fallback only, not an answer: it may have
+    // been written by a fetch that stopped at the first plain hit while a
+    // timed entry for the same song was one query away.
 
     final tracks = trackVariants(song.title);
     final artist = cleanArtist(song.artist);
@@ -433,9 +436,10 @@ class LyricsService {
     // cache a network failure/timeout: the device may be offline now and
     // online a moment later, and a memoized failure would keep the sheet
     // stuck on "not found" until the app restarts.
-    if (networkReached) _mem[key] = found;
+    final result = found ?? disk;
+    if (networkReached) _mem[key] = result;
     if (found != null) await _writeDisk(key, found);
-    return found;
+    return result;
   }
 
   Future<SyncedLyrics?> _fetchNetwork(
@@ -445,28 +449,39 @@ class LyricsService {
   ) async {
     final primary = artists.isNotEmpty ? artists.first : '';
     SyncedLyrics? found;
+    // A plain-only hit must not end the search: LRCLIB holds several
+    // entries per song and /api/get happily returns one without timings
+    // while a timed entry sits one query away. Keep it as the fallback and
+    // look for a synced (or instrumental) answer first.
+    SyncedLyrics? plain;
+    SyncedLyrics? keep(SyncedLyrics? r) {
+      if (r == null) return null;
+      if (r.isSynced || r.instrumental) return r;
+      plain ??= r;
+      return null;
+    }
     // 1. Exact get with duration (best precision).
     if (song.duration.inSeconds > 0) {
       for (final t in tracks) {
-        found = await _get(
+        found = keep(await _get(
           track: t,
           artist: primary,
           duration: song.duration.inSeconds,
           labelTrack: song.title,
           labelArtist: song.artist,
-        );
+        ));
         if (found != null) return found;
       }
     }
     // 2. Exact get without duration, primary then secondary artist.
     for (final a in artists) {
       for (final t in tracks) {
-        found = await _get(
+        found = keep(await _get(
           track: t,
           artist: a,
           labelTrack: song.title,
           labelArtist: song.artist,
-        );
+        ));
         if (found != null) return found;
       }
     }
@@ -477,13 +492,13 @@ class LyricsService {
         ? song.duration.inSeconds
         : null;
     for (final t in tracks) {
-      found = await _get(
+      found = keep(await _get(
         track: t,
         artist: null,
         duration: withDuration,
         labelTrack: song.title,
         labelArtist: song.artist,
-      );
+      ));
       if (found != null) return found;
     }
     // 4. Fuzzy search, title-guarded so same-artist wrong tracks lose.
@@ -509,15 +524,15 @@ class LyricsService {
       addQuery('$rawTrack $rawArtist', rawTrack);
     }
     for (final q in queries.take(5)) {
-      found = await _searchOnce(
+      found = keep(await _searchOnce(
         q.q,
         queryTrack: q.track,
         labelArtist: song.artist,
         labelDuration: song.duration.inSeconds,
-      );
+      ));
       if (found != null) return found;
     }
-    return null;
+    return plain;
   }
 
   Future<SyncedLyrics?> _get({
@@ -637,7 +652,8 @@ class LyricsService {
       );
     }
     final lines = synced.trim().isEmpty ? <LyricLine>[] : parseLrc(synced);
-    if (lines.isNotEmpty) {
+    // Only gaps ("...", "") means no words at all: not synced lyrics.
+    if (lines.any((l) => !isGapText(l.text))) {
       return SyncedLyrics(
         track: (track?.isNotEmpty ?? false) ? track! : fallbackTrack,
         artist: (artist?.isNotEmpty ?? false) ? artist! : fallbackArtist,
