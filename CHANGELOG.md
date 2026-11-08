@@ -4,7 +4,7 @@ All notable changes to Atlas Music are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.3.2] - 2026-11-08
 
 ### Added
 - **Revert update**: Advanced settings now has a **Revert update** row that
