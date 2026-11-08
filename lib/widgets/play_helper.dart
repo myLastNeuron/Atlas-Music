@@ -31,13 +31,18 @@ Future<void> playSongs(
 }) async {
   try {
     final audio = context.read<AudioPlayerService>();
+    // Tapping the song that is already loaded is a no-op: do not restart it,
+    // do not resume a paused song, and do not let a reload flip its
+    // audio/video state (the mini player could show audio while the saved
+    // preference still opened the full player as video).
+    if (audio.isCurrent(song)) return;
     final ok = await audio.playSong(
-          song,
-          queue: queue,
-          index: index,
-          autoplayOnEnd: autoplayOnEnd,
-          queueOrigin: queueOrigin,
-        );
+      song,
+      queue: queue,
+      index: index,
+      autoplayOnEnd: autoplayOnEnd,
+      queueOrigin: queueOrigin,
+    );
     // Silent FAIL (no exception): toast only if this tap still owns
     // playback AND it sits silent — a same-song double-tap's first load
     // returns false while the second load flies (or already plays), and

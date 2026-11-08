@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
@@ -69,7 +70,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
     // Listener reloads; no manual refresh needed.
   }
 
-  void _startSelection(int i) => setState(() => _sel.start(i));
+  void _startSelection(int i) {
+    HapticFeedback.vibrate();
+    setState(() => _sel.start(i));
+  }
 
   void _toggle(int i) => setState(() => _sel.toggle(i));
 
@@ -255,103 +259,111 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 ),
                               ),
                             )
-                          : ListView.builder(
-                              key: const ValueKey('history_list'),
-                              padding: EdgeInsets.only(
-                                  left: 8,
-                                  right: 8,
-                                  top: 8,
-                                  bottom: (hasSong ? 190 : 120) +
-                                      (_selecting ? 90 : 0)),
-                              physics: const BouncingScrollPhysics(),
-                              itemCount: _history.length,
-                              itemBuilder: (_, i) {
-                                final s = _history[i];
-                                final selected = _selected.contains(i);
-                                return MotionPress(
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(14),
-                                    onTap: _selecting
-                                        ? () => _toggle(i)
-                                        : () => playSongs(context,
-                                            song: s, queue: _history, index: i),
-                                    onLongPress: () => _startSelection(i),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: selected
-                                            ? AppColors.ink
-                                                .withValues(alpha: 0.06)
-                                            : null,
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 6, horizontal: 4),
-                                      child: Row(
-                                        children: [
-                                          Artwork(s.thumbnailUrl,
-                                              size: 48, radius: 10),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(s.title,
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style: TextStyle(
-                                                        fontSize: 14,
-                                                        fontWeight:
-                                                            FontWeight.w500,
-                                                        color: AppColors.ink)),
-                                                Text(s.artist,
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                    style: TextStyle(
-                                                        color:
-                                                            AppColors.inkSoft,
-                                                        fontSize: 12)),
-                                              ],
+                          : ScrollConfiguration(
+                              behavior: ScrollConfiguration.of(context)
+                                  .copyWith(overscroll: false),
+                              child: ListView.builder(
+                                key: const ValueKey('history_list'),
+                                padding: EdgeInsets.only(
+                                    left: 8,
+                                    right: 8,
+                                    top: 8,
+                                    bottom: (hasSong ? 190 : 120) +
+                                        (_selecting ? 90 : 0)),
+                                physics: const ClampingScrollPhysics(),
+                                itemCount: _history.length,
+                                itemBuilder: (_, i) {
+                                  final s = _history[i];
+                                  final selected = _selected.contains(i);
+                                  return MotionPress(
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(14),
+                                      onTap: _selecting
+                                          ? () => _toggle(i)
+                                          : () => playSongs(context,
+                                              song: s,
+                                              queue: _history,
+                                              index: i),
+                                      onLongPress: () => _startSelection(i),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: selected
+                                              ? AppColors.ink
+                                                  .withValues(alpha: 0.06)
+                                              : null,
+                                          borderRadius:
+                                              BorderRadius.circular(14),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 6, horizontal: 4),
+                                        child: Row(
+                                          children: [
+                                            Artwork(s.thumbnailUrl,
+                                                size: 48, radius: 10),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(s.title,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.w500,
+                                                          color:
+                                                              AppColors.ink)),
+                                                  Text(s.artist,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                          color:
+                                                              AppColors.inkSoft,
+                                                          fontSize: 12)),
+                                                ],
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(formatClock(s.duration),
-                                              style: TextStyle(
-                                                  color: AppColors.mute,
-                                                  fontSize: 12)),
-                                          const SizedBox(width: 4),
-                                          if (_selecting)
-                                            SelectionCheck(selected)
-                                          else
-                                            Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                IconButton(
-                                                  tooltip:
-                                                      'Remove from history',
-                                                  visualDensity:
-                                                      VisualDensity.compact,
-                                                  icon: Icon(
-                                                      Icons.delete_outline,
-                                                      size: 20,
-                                                      color: AppColors.mute),
-                                                  onPressed: () => _remove(s),
-                                                ),
-                                                SongMenuButton(
-                                                  song: s,
-                                                  queue: _history,
-                                                  index: i,
-                                                ),
-                                              ],
-                                            ),
-                                        ],
+                                            const SizedBox(width: 8),
+                                            Text(formatClock(s.duration),
+                                                style: TextStyle(
+                                                    color: AppColors.mute,
+                                                    fontSize: 12)),
+                                            const SizedBox(width: 4),
+                                            if (_selecting)
+                                              SelectionCheck(selected)
+                                            else
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  IconButton(
+                                                    tooltip:
+                                                        'Remove from history',
+                                                    visualDensity:
+                                                        VisualDensity.compact,
+                                                    icon: Icon(
+                                                        Icons.delete_outline,
+                                                        size: 20,
+                                                        color: AppColors.mute),
+                                                    onPressed: () => _remove(s),
+                                                  ),
+                                                  SongMenuButton(
+                                                    song: s,
+                                                    queue: _history,
+                                                    index: i,
+                                                  ),
+                                                ],
+                                              ),
+                                          ],
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
                             ),
                 ),
                 if (hasSong)

@@ -9,6 +9,7 @@ import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/play_helper.dart';
+import '../widgets/skeleton_card.dart';
 import '../widgets/song_actions.dart';
 
 /// Shared list scaffold for a stored song collection (liked, downloaded).
@@ -21,6 +22,12 @@ class SongCollectionScreen extends StatefulWidget {
   final String emptyHint;
   final Future<List<Song>> Function() load;
   final Widget Function(Song, int, List<Song>) trailing;
+
+  /// Long-press counterpart of the row menu's "Remove from downloads". The
+  /// menu builds its own callback through [trailing]; without this the same
+  /// action is missing when the row is held.
+  final Future<void> Function()? Function(Song, int, List<Song>)?
+      onRemoveFromDownloads;
 
   /// Remote lists (an artist's release) load once; local collections
   /// (liked/downloads) reload on any storage change. Remote reloads would
@@ -36,6 +43,7 @@ class SongCollectionScreen extends StatefulWidget {
     required this.emptyHint,
     required this.load,
     required this.trailing,
+    this.onRemoveFromDownloads,
     this.reloadOnStorage = true,
   });
 
@@ -67,14 +75,26 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
       songs = await widget.load();
     } catch (_) {
       // A throwing loader (e.g. an album fetch while offline) must not leave
-      // the screen spinning forever.
-      songs = const [];
+      // the screen spinning forever. On a failed pull-to-refresh, keep the
+      // rows already on screen instead of wiping them.
+      songs = _loading ? const [] : _songs;
     }
     if (!mounted) return;
     setState(() {
       _songs = songs;
       _loading = false;
     });
+  }
+
+  /// Only remote collections (the artist's releases) get pull-to-refresh:
+  /// stored lists already reload from the storage listener.
+  Widget _withRefresh(Widget list) {
+    if (widget.reloadOnStorage) return list;
+    return RefreshSkeleton(
+      onRefresh: _load,
+      skeletonPadding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      child: list,
+    );
   }
 
   @override
@@ -140,43 +160,57 @@ class _SongCollectionScreenState extends State<SongCollectionScreen> {
                               ),
                             ),
                           )
-                        : ListView.builder(
-                            key: ValueKey(widget.listKey),
-                            padding: EdgeInsets.only(
-                                left: 8,
-                                right: 8,
-                                top: 8,
-                                bottom: hasSong ? 190 : 120),
-                            physics: const BouncingScrollPhysics(),
-                            itemCount: _songs.length,
-                            itemBuilder: (_, i) {
-                              final s = _songs[i];
-                              return MotionPress(
-                                child: ListTile(
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14)),
-                                  leading: Artwork(s.thumbnailUrl,
-                                      size: 48, radius: 10),
-                                  title: Text(s.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: AppColors.ink)),
-                                  subtitle: Text(s.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          color: AppColors.inkSoft,
-                                          fontSize: 12)),
-                                  trailing: songTrailing(s,
-                                      [widget.trailing(s, i, _songs)]),
-                                  onTap: () => playSongs(context,
-                                      song: s, queue: _songs, index: i),
-                                ),
-                              );
-                            },
+                        : _withRefresh(
+                            ListView.builder(
+                              key: ValueKey(widget.listKey),
+                              padding: EdgeInsets.only(
+                                  left: 8,
+                                  right: 8,
+                                  top: 8,
+                                  bottom: hasSong ? 190 : 120),
+                              physics: widget.reloadOnStorage
+                                  ? const BouncingScrollPhysics()
+                                  : const AlwaysScrollableScrollPhysics(
+                                      parent: BouncingScrollPhysics()),
+                              itemCount: _songs.length,
+                              itemBuilder: (_, i) {
+                                final s = _songs[i];
+                                return MotionPress(
+                                  child: SongLongPress(
+                                    song: s,
+                                    queue: _songs,
+                                    index: i,
+                                    onRemoveFromDownloads: widget
+                                        .onRemoveFromDownloads
+                                        ?.call(s, i, _songs),
+                                    child: ListTile(
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(14)),
+                                      leading: Artwork(s.thumbnailUrl,
+                                          size: 48, radius: 10),
+                                      title: Text(s.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                              color: AppColors.ink)),
+                                      subtitle: Text(s.artist,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                              color: AppColors.inkSoft,
+                                              fontSize: 12)),
+                                      trailing: songTrailing(
+                                          s, [widget.trailing(s, i, _songs)]),
+                                      onTap: () => playSongs(context,
+                                          song: s, queue: _songs, index: i),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                           ),
               ),
               if (hasSong)

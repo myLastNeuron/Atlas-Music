@@ -58,7 +58,7 @@ class YouTubeProvider extends MediaResolver {
   // handshake per request but removes the dead-socket reuse entirely.
   final YoutubeExplode _yt =
       YoutubeExplode(httpClient: YoutubeHttpClient(_FreshConnectionClient()));
-  final http.Client _http = _FreshConnectionClient();
+  final http.Client _http;
 
   /// Optional staleness check callback. If provided, called during long
   /// operations (resolve/download) to check if the load has been superseded.
@@ -67,7 +67,21 @@ class YouTubeProvider extends MediaResolver {
   /// `() => false` made the abort hook dead code.
   bool Function()? stale;
 
-  YouTubeProvider({this.stale});
+  /// One wall-clock budget for the own video, the finder, and the found
+  /// video's stream. Callers keep a safety net a few seconds longer, so a
+  /// slow lookup cannot outlive the tap that started it. The old 20s caller
+  /// vs 25s+15s provider race made the first tap fail and the second tap
+  /// return the fallback the orphaned resolve had cached.
+  final Duration videoBudget;
+
+  static const videoSourceBudget = Duration(seconds: 15);
+
+  YouTubeProvider({
+    this.stale,
+    http.Client? httpClient,
+    Duration? videoBudget,
+  })  : _http = httpClient ?? _FreshConnectionClient(),
+        videoBudget = videoBudget ?? videoSourceBudget;
 
   /// Manifest cache: one InnerTube player call serves resolve, retries,
   /// downloads, and replays of the same video. Without it every retry
@@ -386,20 +400,21 @@ class YouTubeProvider extends MediaResolver {
         return hit.source;
       }
     }
-    final own = await _hlsMasterUrl(videoId);
+    final deadline = DateTime.now().add(videoBudget);
+    final own = await _hlsMasterUrl(videoId, deadline: deadline);
     // A flaky/absent own stream must not veto a findable music video.
     final found = (own == null || own.artTrack) && findMusicVideo != null
-        ? await _musicVideoSource(videoId, () => findMusicVideo(song))
-            // The whole extra lookup is bounded: one search plus one player
-            // call may not hold the player on "Finding video…" forever.
-            .timeout(const Duration(seconds: 15), onTimeout: () => null)
+        ? await _musicVideoSource(videoId, () => findMusicVideo(song),
+            deadline: deadline)
         : null;
     final pick = chooseVideoSource(
       own: own,
       found: found,
       hasFinder: findMusicVideo != null,
     );
-    if (pick == null) return null;
+    // Past the budget the answer belongs to a tap the user already left:
+    // it must not be cached for the next tap to pick up.
+    if (pick == null || DateTime.now().isAfter(deadline)) return null;
     return pick.cache ? _cacheVideo(videoId, pick.source) : pick.source;
   }
 
@@ -426,10 +441,15 @@ class YouTubeProvider extends MediaResolver {
   /// HLS of the music video [find] names, or null. The song's own id is
   /// rejected so a finder that echoes it cannot produce the art track again.
   Future<VideoSource?> _musicVideoSource(
-      String ownId, Future<String?> Function() find) async {
-    final id = await find();
+    String ownId,
+    Future<String?> Function() find, {
+    required DateTime deadline,
+  }) async {
+    final left = deadline.difference(DateTime.now());
+    if (left <= Duration.zero) return null;
+    final id = await find().timeout(left, onTimeout: () => null);
     if (id == null || id.isEmpty || id == ownId) return null;
-    final master = await _hlsMasterUrl(id);
+    final master = await _hlsMasterUrl(id, deadline: deadline);
     if (master == null) return null;
     return (url: master.url, matchAudioPosition: false);
   }
@@ -442,9 +462,11 @@ class YouTubeProvider extends MediaResolver {
     return source;
   }
 
-  /// Two attempts under one 25s deadline. Never throws.
-  Future<({String url, bool artTrack})?> _hlsMasterUrl(String videoId) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 25));
+  /// Two attempts under the caller's deadline. Never throws.
+  Future<({String url, bool artTrack})?> _hlsMasterUrl(
+    String videoId, {
+    required DateTime deadline,
+  }) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       // A retry always starts from a fresh token: a bot-gated token makes
       // VISIONOS answer LOGIN_REQUIRED instead of an HLS master.
@@ -454,29 +476,39 @@ class YouTubeProvider extends MediaResolver {
       const perAttempt = Duration(seconds: 15);
       final budget = remaining < perAttempt ? remaining : perAttempt;
       try {
-        final client =
-            withVisitorData(_visionosClient, await _visitorDataOrNull());
-        final resp = await _http
-            .post(
-              Uri.parse(client.apiUrl),
-              headers: const {'Content-Type': 'application/json'},
-              body: jsonEncode({...client.payload, 'videoId': videoId}),
-            )
-            .timeout(budget);
-        if (resp.statusCode != 200) continue;
-        final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        if ((json['playabilityStatus'] as Map?)?['status'] != 'OK') continue;
-        final master = hlsMasterFromPlayerJson(json);
-        // Playable but no HLS master is permanent: a retry cannot conjure it.
-        if (master == null) return null;
-        // No HEAD probe here: on this path a 10s probe can outlive the UI's
-        // patience and reject a master ExoPlayer would play.
-        return (url: master, artTrack: isArtTrackPlayerJson(json));
+        // Null means a playable video with no HLS master: a retry cannot
+        // conjure one, so this attempt ends the lookup.
+        return await _masterOnce(videoId).timeout(budget);
       } catch (_) {
-        // Next attempt; the last one falls through to null.
+        // Transport/status failure or the budget ran out: next attempt.
       }
     }
     return null;
+  }
+
+  /// One VISIONOS player call. Returns null only for a playable video with
+  /// no HLS master (permanent); every retryable failure throws.
+  Future<({String url, bool artTrack})?> _masterOnce(String videoId) async {
+    final client =
+        withVisitorData(_visionosClient, await _visitorDataOrNull());
+    final resp = await _http.post(
+      Uri.parse(client.apiUrl),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({...client.payload, 'videoId': videoId}),
+    );
+    if (resp.statusCode != 200) {
+      throw StateError('player HTTP ${resp.statusCode}');
+    }
+    final json = jsonDecode(resp.body) as Map<String, dynamic>;
+    if ((json['playabilityStatus'] as Map?)?['status'] != 'OK') {
+      throw StateError('player not OK');
+    }
+    final master = hlsMasterFromPlayerJson(json);
+    // Playable but no HLS master is permanent: a retry cannot conjure it.
+    if (master == null) return null;
+    // No HEAD probe here: on this path a 10s probe can outlive the UI's
+    // patience and reject a master ExoPlayer would play.
+    return (url: master, artTrack: isArtTrackPlayerJson(json));
   }
 
   /// True when a player response is an auto-generated art track: a still

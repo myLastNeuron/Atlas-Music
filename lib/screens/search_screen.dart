@@ -12,6 +12,7 @@ import '../widgets/artwork.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/friendly_error.dart';
 import '../widgets/play_helper.dart';
+import '../widgets/skeleton_card.dart';
 import '../widgets/song_actions.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -52,13 +53,16 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  Future<void> _search(String q) async {
+  Future<void> _search(String q,
+      {bool spinner = true, bool record = true}) async {
     if (q.trim().isEmpty) return;
     final int gen = ++_searchGen;
     FocusScope.of(context).unfocus();
-    setState(() => _loading = true);
-    await _storage.addSearchQuery(q.trim());
-    await _loadHistory();
+    if (spinner) setState(() => _loading = true);
+    if (record) {
+      await _storage.addSearchQuery(q.trim());
+      await _loadHistory();
+    }
     if (!mounted || gen != _searchGen) return;
     try {
       // 40 per source: one YouTube Music page holds only ~20-30 songs, so a
@@ -81,6 +85,14 @@ class _SearchScreenState extends State<SearchScreen> {
         SnackBar(content: Text('Search didn\'t work. ${friendlyError(e)}')),
       );
     }
+  }
+
+  /// Pull-to-refresh: re-run the current query. No full-screen spinner (the
+  /// pull indicator is the feedback) and no duplicate history entry.
+  Future<void> _refreshResults() async {
+    final q = _ctrl.text.trim();
+    if (q.isEmpty) return;
+    await _search(q, spinner: false, record: false);
   }
 
   Future<void> _play(Song s) async {
@@ -207,7 +219,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                     itemBuilder: (_, i) {
                                       if (i == 0) {
                                         return Padding(
-                                          padding: const EdgeInsets.only(bottom: 8),
+                                          padding:
+                                              const EdgeInsets.only(bottom: 8),
                                           child: Text('Recent searches',
                                               style: TextStyle(
                                                   fontSize: 14,
@@ -250,55 +263,67 @@ class _SearchScreenState extends State<SearchScreen> {
                                       );
                                     },
                                   )
-                        : ListView.separated(
-                            scrollCacheExtent:
-                                const ScrollCacheExtent.pixels(600),
-                            key: const ValueKey('search-results'),
-                            padding: EdgeInsets.only(
-                                left: 12,
-                                right: 12,
-                                bottom: hasSong ? 190 : 120),
-                            physics: const BouncingScrollPhysics(),
-                            addAutomaticKeepAlives: false,
-                            addRepaintBoundaries: true,
-                            itemCount: _results.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 2),
-                            itemBuilder: (_, i) {
-                              final s = _results[i];
-                              return MotionPress(
-                                child: ListTile(
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14)),
-                                  leading: Artwork(
-                                    s.thumbnailUrl,
-                                    size: 48,
-                                    radius: 10,
-                                  ),
-                                  title: Text(s.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500)),
-                                  subtitle: Text(s.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          color: AppColors.inkSoft,
-                                          fontSize: 12)),
-                                  trailing: songTrailing(s, [
-                                    SongMenuButton(
-                                      song: s,
-                                      queue: [s],
-                                      index: 0,
-                                      queueOrigin: 'search',
+                        : RefreshSkeleton(
+                            onRefresh: _refreshResults,
+                            skeletonPadding:
+                                const EdgeInsets.only(left: 12, right: 12),
+                            child: ListView.separated(
+                              scrollCacheExtent:
+                                  const ScrollCacheExtent.pixels(600),
+                              key: const ValueKey('search-results'),
+                              padding: EdgeInsets.only(
+                                  left: 12,
+                                  right: 12,
+                                  bottom: hasSong ? 190 : 120),
+                              physics: const AlwaysScrollableScrollPhysics(
+                                  parent: BouncingScrollPhysics()),
+                              addAutomaticKeepAlives: false,
+                              addRepaintBoundaries: true,
+                              itemCount: _results.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 2),
+                              itemBuilder: (_, i) {
+                                final s = _results[i];
+                                return MotionPress(
+                                  child: SongLongPress(
+                                    song: s,
+                                    queue: _results,
+                                    index: i,
+                                    child: ListTile(
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(14)),
+                                      leading: Artwork(
+                                        s.thumbnailUrl,
+                                        size: 48,
+                                        radius: 10,
+                                      ),
+                                      title: Text(s.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500)),
+                                      subtitle: Text(s.artist,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                              color: AppColors.inkSoft,
+                                              fontSize: 12)),
+                                      trailing: songTrailing(s, [
+                                        SongMenuButton(
+                                          song: s,
+                                          queue: [s],
+                                          index: 0,
+                                          queueOrigin: 'search',
+                                        ),
+                                      ]),
+                                      onTap: () => _play(s),
                                     ),
-                                  ]),
-                                  onTap: () => _play(s),
-                                ),
-                              );
-                            },
+                                  ),
+                                );
+                              },
+                            ),
                           ),
               ),
             ),

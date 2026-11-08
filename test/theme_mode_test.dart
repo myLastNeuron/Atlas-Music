@@ -1,39 +1,55 @@
+import 'dart:ui' show Color;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:atlas_music/services/theme_settings.dart';
 import 'package:atlas_music/theme/app_theme.dart';
 
 /// The palette is global state, so these tests must not leak a mode into each
-/// other: every one sets the mode it needs and restores dark at the end.
+/// other: every one sets the mode it needs and restores grey at the end.
 void main() {
   // The palette swap also sets the status bar style, which needs a binding.
   TestWidgetsFlutterBinding.ensureInitialized();
-  tearDown(() => AppColors.setLight(false));
+  tearDown(() => AppColors.mode = AppPalette.grey);
 
-  test('dark is the default and light flips the ink and the paper', () {
-    AppColors.setLight(false);
-    final darkPaper = AppColors.paper;
-    final darkInk = AppColors.ink;
+  test('each mode swaps the paper and ink, AMOLED is pure black', () {
+    AppColors.mode = AppPalette.grey;
+    final greyPaper = AppColors.paper;
+    final greyInk = AppColors.ink;
 
-    AppColors.setLight(true);
+    AppColors.mode = AppPalette.light;
     expect(AppColors.isLight, isTrue);
-    expect(AppColors.paper, isNot(darkPaper));
-    expect(AppColors.ink, isNot(darkInk));
-    // Ink must stay legible: dark text on the light paper, and the reverse.
+    expect(AppColors.paper, isNot(greyPaper));
+    expect(AppColors.ink, isNot(greyInk));
+    // Ink must stay legible: dark text on the light paper.
     expect(AppColors.paper.computeLuminance(),
         greaterThan(AppColors.ink.computeLuminance()));
+
+    AppColors.mode = AppPalette.amoled;
+    expect(AppColors.isAmoled, isTrue);
+    expect(AppColors.isLight, isFalse);
+    expect(AppColors.paper, const Color(0xFF000000));
+    expect(AppColors.ink, const Color(0xFFFFFFFF));
   });
 
   test('the mode is stored and read back before the first frame', () async {
     SharedPreferences.setMockInitialValues({});
     final settings = ThemeSettings();
-    await settings.setLight(true);
-    expect(settings.isLight, isTrue);
+    await settings.setMode(AppPalette.amoled);
+    expect(settings.mode, AppPalette.amoled);
 
     // A fresh instance (the next launch) reads the stored mode.
     final next = ThemeSettings();
     await next.load();
-    expect(next.isLight, isTrue);
+    expect(next.mode, AppPalette.amoled);
+    expect(AppColors.isAmoled, isTrue);
+  });
+
+  test('a light-only install migrates to the light palette', () async {
+    SharedPreferences.setMockInitialValues({'theme_light': true});
+    final settings = ThemeSettings();
+    await settings.load();
+    expect(settings.mode, AppPalette.light);
     expect(AppColors.isLight, isTrue);
   });
 
@@ -46,7 +62,7 @@ void main() {
     final next = ThemeSettings();
     await next.load();
     expect(next.artworkColor, isTrue);
-    // It must not drag the light mode with it.
-    expect(next.isLight, isFalse);
+    // It must not drag the appearance mode with it.
+    expect(next.mode, AppPalette.grey);
   });
 }

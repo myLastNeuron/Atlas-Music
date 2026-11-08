@@ -10,10 +10,12 @@ import '../services/user_prefs.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_transitions.dart';
 import '../widgets/liquid_background.dart';
+import '../widgets/mode_slider.dart';
+import '../widgets/update_sheet.dart';
 
-/// Advanced settings: light mode, artwork colour in the full player, the
-/// app's transparency ("glass") level, background playback, the profile name
-/// and the about text.
+/// Advanced settings: appearance (Light / Grey / AMOLED), artwork colour in
+/// the full player, the app's transparency ("glass") level, background
+/// playback, the profile name and the about text.
 ///
 /// The level lives in the theme, so moving the slider restyles every glass
 /// surface in the app at once — the preview below is the real panel widget
@@ -29,6 +31,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
     with WidgetsBindingObserver {
   final _prefs = UserPrefs();
   bool _batteryExempt = false;
+  bool _fromFdroid = false;
   String _version = '';
 
   @override
@@ -72,7 +75,12 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
     if (!mounted) return;
-    setState(() => _version = info.version);
+    setState(() {
+      _version = info.version;
+      // F-Droid re-signs the APK, so a GitHub download can never install
+      // over it — the same reason Profile hides the update row.
+      _fromFdroid = info.installerStore == 'org.fdroid.fdroid';
+    });
   }
 
   Future<void> _reset() async {
@@ -218,35 +226,33 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
         body: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
           children: [
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              shape: kRowPressShape,
-              value: context.watch<ThemeSettings>().isLight,
-              onChanged: (v) => context.read<ThemeSettings>().setLight(v),
-              secondary: Icon(
-                AppColors.isLight ? Icons.light_mode : Icons.dark_mode,
-                size: 20,
-                color: AppColors.inkSoft,
-              ),
-              title: const Text('Light mode',
-                  style:
-                      TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-              subtitle: Text(
-                'Paper background with dark text. Off is the dark glass look.',
-                style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
-              ),
+            Text('Appearance',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink)),
+            const SizedBox(height: 4),
+            Text(
+              'Light paper, the grey glass look, or pure black for OLED '
+              'screens.',
+              style: TextStyle(fontSize: 13, color: AppColors.inkSoft),
+            ),
+            const SizedBox(height: 8),
+            ModeSlider(
+              mode: context.watch<ThemeSettings>().mode,
+              onChanged: (m) => context.read<ThemeSettings>().setMode(m),
             ),
             Divider(height: 1, color: AppColors.line),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               shape: kRowPressShape,
               value: context.watch<ThemeSettings>().artworkColor,
-              onChanged: (v) => context.read<ThemeSettings>().setArtworkColor(v),
+              onChanged: (v) =>
+                  context.read<ThemeSettings>().setArtworkColor(v),
               secondary: Icon(Icons.palette_outlined,
                   size: 20, color: AppColors.inkSoft),
               title: const Text('Artwork colour in player',
-                  style:
-                      TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               subtitle: Text(
                 'The full player takes its colour from the current song’s '
                 'artwork. Nothing else changes.',
@@ -335,8 +341,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                       leading: const Icon(Icons.refresh, size: 20),
                       title: const Text('Reset name',
                           style: TextStyle(fontSize: 14)),
-                      trailing: Icon(Icons.chevron_right,
-                          color: AppColors.mute),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.mute),
                       onTap: _reset,
                     ),
                   ),
@@ -347,8 +353,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                       leading: const Icon(Icons.description_outlined, size: 20),
                       title: const Text('Terms and Conditions',
                           style: TextStyle(fontSize: 14)),
-                      trailing: Icon(Icons.chevron_right,
-                          color: AppColors.mute),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.mute),
                       onTap: _showTerms,
                     ),
                   ),
@@ -362,11 +368,29 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                       subtitle: Text(_version.isEmpty ? '' : 'v$_version',
                           style: TextStyle(
                               fontSize: 12, color: AppColors.inkSoft)),
-                      trailing: Icon(Icons.chevron_right,
-                          color: AppColors.mute),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.mute),
                       onTap: _showAbout,
                     ),
                   ),
+                  if (!_fromFdroid) ...[
+                    Divider(height: 1, color: AppColors.line),
+                    MotionPress(
+                      scale: 0.99,
+                      child: ListTile(
+                        leading: const Icon(Icons.settings_backup_restore,
+                            size: 20),
+                        title: const Text('Revert update',
+                            style: TextStyle(fontSize: 14)),
+                        subtitle: Text('Install an earlier version from GitHub',
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.inkSoft)),
+                        trailing:
+                            Icon(Icons.chevron_right, color: AppColors.mute),
+                        onTap: () => showUpdateSheet(context, revert: true),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -116,8 +116,7 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                                         fontWeight: FontWeight.w600,
                                         color: AppColors.ink)),
                                 const SizedBox(height: 6),
-                                Text(
-                                    'Songs Auto listen hears will appear here',
+                                Text('Songs Auto listen hears will appear here',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                         fontSize: 13,
@@ -127,66 +126,74 @@ class _AutoFindsScreenState extends State<AutoFindsScreen> {
                           ),
                         )
                       : ListView.builder(
-                          padding: EdgeInsets.fromLTRB(
-                              8, 8, 8, hasSong ? 190 : 120),
+                          padding:
+                              EdgeInsets.fromLTRB(8, 8, 8, hasSong ? 190 : 120),
                           physics: const ClampingScrollPhysics(),
                           itemCount: _finds.length,
                           itemBuilder: (_, i) {
                             final find = _finds[i];
                             return MotionPress(
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(14),
-                                onTap: () => playSongs(context,
-                                    song: find.song, queue: songs, index: i),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 6, horizontal: 4),
-                                  child: Row(
-                                    children: [
-                                      Artwork(find.song.thumbnailUrl,
-                                          size: 48, radius: 10),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(find.song.title,
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w500,
-                                                    color: AppColors.ink)),
-                                            Text(find.song.artist,
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                    color: AppColors.inkSoft,
-                                                    fontSize: 12)),
-                                            Text(_stamp(find.foundAt),
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                    color: AppColors.mute,
-                                                    fontSize: 11)),
-                                          ],
+                              child: SongLongPress(
+                                song: find.song,
+                                queue: songs,
+                                index: i,
+                                onRemoveFromAutoFinds: () =>
+                                    _storage.removeAutoFind(find),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(14),
+                                  onTap: () => playSongs(context,
+                                      song: find.song, queue: songs, index: i),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 6, horizontal: 4),
+                                    child: Row(
+                                      children: [
+                                        Artwork(find.song.thumbnailUrl,
+                                            size: 48, radius: 10),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(find.song.title,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: AppColors.ink)),
+                                              Text(find.song.artist,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                      color: AppColors.inkSoft,
+                                                      fontSize: 12)),
+                                              Text(_stamp(find.foundAt),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                      color: AppColors.mute,
+                                                      fontSize: 11)),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      songTrailing(find.song, [
-                                        SongMenuButton(
-                                          song: find.song,
-                                          queue: songs,
-                                          index: i,
-                                          onRemoveFromAutoFinds: () =>
-                                              _storage.removeAutoFind(find),
-                                        ),
-                                      ]),
-                                    ],
+                                        const SizedBox(width: 8),
+                                        songTrailing(find.song, [
+                                          SongMenuButton(
+                                            song: find.song,
+                                            queue: songs,
+                                            index: i,
+                                            onRemoveFromAutoFinds: () =>
+                                                _storage.removeAutoFind(find),
+                                          ),
+                                        ]),
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),

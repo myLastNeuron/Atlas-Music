@@ -6,18 +6,22 @@ import '../theme/app_theme.dart';
 import 'liquid_background.dart';
 
 /// Checks GitHub for a newer release and, when one exists, offers to download
-/// and install it. Styled like the app's other translucent-glass sheets.
-Future<void> showUpdateSheet(BuildContext hostContext) {
+/// and install it. With [revert], lists every older release instead so the
+/// user can pick the version to go back to. Styled like the app's other
+/// translucent-glass sheets.
+Future<void> showUpdateSheet(BuildContext hostContext, {bool revert = false}) {
   return showModalBottomSheet<void>(
     context: hostContext,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => const _UpdateSheet(),
+    builder: (_) => _UpdateSheet(revert: revert),
   );
 }
 
 class _UpdateSheet extends StatefulWidget {
-  const _UpdateSheet();
+  const _UpdateSheet({this.revert = false});
+
+  final bool revert;
 
   @override
   State<_UpdateSheet> createState() => _UpdateSheetState();
@@ -32,6 +36,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
   String? _error;
   double? _progress; // 0..1 while downloading
   bool _busy = false; // between "Update" tap and installer handoff
+  AppRelease? _target; // release being downloaded, for the progress label
 
   @override
   void initState() {
@@ -75,6 +80,7 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       _busy = true;
       _progress = 0;
       _error = null;
+      _target = release;
     });
     try {
       final file = await _service.downloadApk(
@@ -150,9 +156,9 @@ class _UpdateSheetState extends State<_UpdateSheet> {
             ),
           ),
           const SizedBox(height: 14),
-          const Text(
-            'Check for updates',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          Text(
+            widget.revert ? 'Revert update' : 'Check for updates',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 12),
           _body(),
@@ -163,13 +169,15 @@ class _UpdateSheetState extends State<_UpdateSheet> {
 
   Widget _body() {
     if (_checking) {
-      return const _StatusRow(
-        leading: SizedBox(
+      return _StatusRow(
+        leading: const SizedBox(
           width: 18,
           height: 18,
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
-        text: 'Checking for updates…',
+        text: widget.revert
+            ? 'Loading previous versions…'
+            : 'Checking for updates…',
       );
     }
 
@@ -181,6 +189,8 @@ class _UpdateSheetState extends State<_UpdateSheet> {
         action: ('Try again', _check),
       );
     }
+
+    if (widget.revert) return _revertBody(result);
 
     if (!result.updateAvailable) {
       return Column(
@@ -281,6 +291,136 @@ class _UpdateSheetState extends State<_UpdateSheet> {
         ),
       ],
     );
+  }
+
+  /// Older releases, newest first, each one installable on tap. Android's
+  /// installer handles the downgrade confirmation itself.
+  Widget _revertBody(UpdateResult result) {
+    if (_busy) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Installing version ${_target?.version ?? ''}',
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 16),
+          LinearProgressIndicator(
+            value: _progress == null || _progress == 0 ? null : _progress,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _progress == null
+                ? 'Preparing…'
+                : 'Downloading… ${(_progress! * 100).toStringAsFixed(0)}%',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: TextStyle(fontSize: 12.5, color: AppColors.danger),
+            ),
+          ],
+          const SizedBox(height: 16),
+          OutlinedButton(
+            // Popping disposes the service, which aborts the download.
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      );
+    }
+
+    final previous =
+        UpdateService.olderThan(result.releases, result.installedVersion);
+    if (previous.isEmpty) {
+      return _message(
+        icon: Icons.history,
+        text: 'No earlier version found on GitHub.',
+        action: ('Close', () => Navigator.of(context).pop()),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Choose a version to install',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'You have ${result.installedVersion}. Android will ask you to '
+          'confirm the downgrade; playlists and settings stay on the device.',
+          style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            _error!,
+            style: TextStyle(fontSize: 12.5, color: AppColors.danger),
+          ),
+        ],
+        const SizedBox(height: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 300),
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: previous.length,
+            separatorBuilder: (_, __) =>
+                // ignore: prefer_const_constructors
+                Divider(height: 1, color: AppColors.line),
+            itemBuilder: (_, i) {
+              final release = previous[i];
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.history,
+                    size: 20, color: AppColors.inkSoft),
+                title: Text('Version ${release.version}',
+                    style: const TextStyle(fontSize: 14)),
+                trailing: Icon(Icons.download_outlined,
+                    size: 20, color: AppColors.mute),
+                onTap: () => _confirmRevert(release),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 16),
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmRevert(AppRelease release) async {
+    final installed = _result?.installedVersion ?? 'the current version';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Install version ${release.version}?'),
+        content: Text(
+            'You are on $installed. Android may warn that this is an older '
+            'version and ask you to confirm. Your playlists and settings stay '
+            'on the device.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Install'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) await _startUpdate(release);
   }
 
   Widget _message({

@@ -27,6 +27,14 @@ class Playlist {
     this.isSystemManaged = false,
   }) : downloadedSongIds = downloadedSongIds ?? {};
 
+  /// Song ids whose audio this playlist holds offline. Older builds could set
+  /// [isDownloaded] without the id set, so fall back to the whole track list.
+  Set<String> get offlineSongIds => downloadedSongIds.isNotEmpty
+      ? downloadedSongIds
+      : isDownloaded
+          ? songs.map((s) => s.id).toSet()
+          : const {};
+
   factory Playlist.fromYouTube(Map<String, dynamic> json) {
     return Playlist(
       id: json['id'] ?? '',

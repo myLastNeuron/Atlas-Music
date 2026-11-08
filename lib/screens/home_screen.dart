@@ -941,43 +941,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (i == shown) return _showAllCard();
           final s = _recent[i];
           return MotionPress(
-            child: GestureDetector(
-              onTap: () => _play(s, _recent, i),
-              child: Container(
-                width: 150,
-                margin: const EdgeInsets.only(right: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Stack(
-                        children: [
-                          Artwork(s.thumbnailUrl,
-                              width: 150, height: 130, radius: 0),
-                          Positioned(
-                            top: 4,
-                            right: 4,
-                            child: SongMenuButton(
-                              compact: true,
-                              song: s,
-                              queue: _recent,
-                              index: i,
+            child: SongLongPress(
+              song: s,
+              queue: _recent,
+              index: i,
+              child: GestureDetector(
+                onTap: () => _play(s, _recent, i),
+                child: Container(
+                  width: 150,
+                  margin: const EdgeInsets.only(right: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Stack(
+                          children: [
+                            Artwork(s.thumbnailUrl,
+                                width: 150, height: 130, radius: 0),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: SongMenuButton(
+                                compact: true,
+                                song: s,
+                                queue: _recent,
+                                index: i,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(s.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: AppColors.ink,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500)),
-                    songArtistLine(s),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(s.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: AppColors.ink,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500)),
+                      songArtistLine(s),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1065,24 +1070,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       itemBuilder: (context, i) {
         final s = items[i];
         return MotionPress(
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-            leading: Artwork(s.thumbnailUrl, size: 48, radius: 10),
-            title: Text(s.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: AppColors.ink,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500)),
-            subtitle: Text(s.artist,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.inkSoft, fontSize: 11)),
-            trailing: songTrailing(s, [
-              SongMenuButton(song: s, queue: items, index: i),
-            ]),
-            onTap: () => _play(s, items, i),
+          child: SongLongPress(
+            song: s,
+            queue: items,
+            index: i,
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              leading: Artwork(s.thumbnailUrl, size: 48, radius: 10),
+              title: Text(s.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: AppColors.ink,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500)),
+              subtitle: Text(s.artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.inkSoft, fontSize: 11)),
+              trailing: songTrailing(s, [
+                SongMenuButton(song: s, queue: items, index: i),
+              ]),
+              onTap: () => _play(s, items, i),
+            ),
           ),
         );
       },

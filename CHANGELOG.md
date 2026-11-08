@@ -6,6 +6,55 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+- **Revert update**: Advanced settings now has a **Revert update** row that
+  lists every earlier APK release on GitHub and installs the one you pick.
+  Android's installer confirms the downgrade; playlists and settings stay on
+  the device.
+- **Pull to refresh**: dragging down at the top of Search results, an artist
+  page, or an artist's album list now shows a refresh indicator and reloads
+  that page's data. Home already had it. Local lists (Library, Profile,
+  History, Liked, Offline, playlist detail, Auto song fetch history) update
+  live, so they deliberately have no pull gesture.
+
+### Changed
+- **Appearance slider**: the light/dark switch is now a three-stop slider —
+  **Light**, **Grey** (the existing dark glass look) and **Dark+**, which keeps
+  the same surfaces on a pure black backdrop for OLED screens. The choice is
+  remembered, and an install from before the slider opens in Grey (or Light if
+  that is what it had chosen).
+
+### Fixed
+- **Tapping the current song no longer restarts it**: playing or pausing a
+  track happened through the same tile, so it reloaded as audio and the full
+  player then switched it back to video. A tap on the song already committed
+  to the player is now a no-op — its position, paused/playing state and
+  audio/video mode stay as they are. A finished track still starts over.
+- **Pull to refresh shows it happened**: a remote reload could resolve within
+  a frame, so the indicator flashed and the pull looked like a no-op. The
+  indicator now stays up long enough to register and the rows swap for the
+  same skeleton placeholders Home shows while it loads, instead of stale
+  content sitting under a floating spinner.
+- **Video opens the official video, every time**: the Video toggle used to
+  rank leftover search rows heuristically, so a label with a name outside a
+  short list (YRF), a fan channel carrying a label word, or an artist credit
+  written with "-" instead of "and" could lose to a plausible-looking upload.
+  One policy now decides for both the catalogue and plain YouTube search:
+  YouTube's official-music-video classification, a label channel, or the
+  artist's own channel; a missing official video says so instead of playing an
+  art track or a reupload. A lookup that outlives its 15 s budget caches
+  nothing, so Retry starts clean instead of replaying the old fallback.
+- **Repeat-one no longer swallows "Play next"**: with repeat-one on, a song
+  queued from a row's menu now plays when the current track ends instead of the
+  track looping forever. The native player applies repeat-one by rewinding
+  without ever reporting completion, so the pinned song is taken at the rewind
+  itself; Video mode does the same at the video's end.
+- **Opening and closing the player repeatedly can no longer black out the app**:
+  tapping the mini bar while the full player was still closing ran "go back to
+  the player" against a route that had already left the navigator, so it popped
+  the home route too and left an empty screen. The mini bar now ignores a tap
+  during the close, and the pop guard always stops at the first route.
+
 ## [2.3.0] - 2026-11-03
 
 ### Added

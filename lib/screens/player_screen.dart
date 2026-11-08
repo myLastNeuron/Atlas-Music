@@ -33,13 +33,31 @@ class PlayerScreen extends StatefulWidget {
   /// stacking (and playing a second video).
   static int openCount = 0;
 
-  static bool get isOpen => openCount > 0;
+  /// The open player's route is already popping. The widget (and
+  /// [openCount]) outlives the pop by the close animation, and during that
+  /// reverse transition the route ignores pointers, so the mini player below
+  /// is tappable while the route is gone from the navigator.
+  static bool _closing = false;
+
+  static bool get isOpen => openCount > 0 && !_closing;
+
+  /// The player is on its way out: a tap on the mini bar must wait for the
+  /// close to finish instead of stacking a second player under it.
+  static bool get isClosing => _closing;
 
   const PlayerScreen({super.key});
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
+
+/// Route predicate for the mini player's "go back to the open player": stop
+/// at the player, or at the first route. The player route is gone from the
+/// navigator while its close animation still runs, and a [popUntil] that kept
+/// looking for it would pop the first route too — leaving an empty (black)
+/// navigator.
+bool isPlayerRouteOrFirst(Route<dynamic> route) =>
+    route.isFirst || route.settings.name == PlayerScreen.routeName;
 
 class _PlayerScreenState extends State<PlayerScreen>
     with SingleTickerProviderStateMixin {
@@ -84,9 +102,13 @@ class _PlayerScreenState extends State<PlayerScreen>
     end: 1.02,
   ).animate(CurvedAnimation(parent: _breath, curve: Curves.easeInOut));
 
+  /// The route whose animation tells us when the player starts closing.
+  ModalRoute<dynamic>? _route;
+
   @override
   void initState() {
     super.initState();
+    PlayerScreen._closing = false;
     PlayerScreen.openCount++;
     final audio = context.read<AudioPlayerService>();
     _audio = audio;
@@ -114,7 +136,10 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   @override
   void dispose() {
+    _route?.animation?.removeStatusListener(_onRouteStatus);
+    _route = null;
     if (PlayerScreen.openCount > 0) PlayerScreen.openCount--;
+    if (PlayerScreen.openCount == 0) PlayerScreen._closing = false;
     _audio?.removeListener(_audioListener!);
     _storageService.removeListener(_onStorageChanged);
     // The mini player may load the current song's video again the next time a
@@ -127,9 +152,27 @@ class _PlayerScreenState extends State<PlayerScreen>
     super.dispose();
   }
 
+  /// The pop starts long before [dispose]: from this moment the route is no
+  /// longer present in the navigator, so [isOpen] must say so. A back gesture
+  /// that is cancelled animates forward again and clears the flag.
+  void _onRouteStatus(AnimationStatus status) {
+    if (status == AnimationStatus.reverse) {
+      PlayerScreen._closing = true;
+    } else if (status == AnimationStatus.forward ||
+        status == AnimationStatus.completed) {
+      PlayerScreen._closing = false;
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != _route) {
+      _route?.animation?.removeStatusListener(_onRouteStatus);
+      _route = route;
+      route?.animation?.addStatusListener(_onRouteStatus);
+    }
     _syncLiked();
     _syncBreath();
   }
@@ -187,6 +230,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   Future<void> _toggleLike() async {
     final audioService = context.read<AudioPlayerService>();
     if (audioService.currentSong != null) {
+      HapticFeedback.lightImpact();
       await _storageService.toggleLikedSong(audioService.currentSong!);
       // Explicit toggle bypasses song-id guard so heart refreshes.
       _likedForId = null;
@@ -198,7 +242,6 @@ class _PlayerScreenState extends State<PlayerScreen>
   /// a thumbs-up. Skips the burst under reduce motion; the like still lands.
   void _doubleTapLike() {
     if (!_isLiked) unawaited(_toggleLike());
-    HapticFeedback.lightImpact();
     if (AppMotion.reduced(context)) return;
     setState(() => _likeBurst++);
     final id = _likeBurst;
@@ -1164,6 +1207,8 @@ class _PlayerSlider extends StatefulWidget {
 class _PlayerSliderState extends State<_PlayerSlider> {
   double? _dragValue;
   String? _dragSongId;
+  int? _lastSeekMinute;
+  DateTime? _lastSeekTick;
 
   String _fmt(Duration d) {
     final m = d.inMinutes;
@@ -1176,7 +1221,11 @@ class _PlayerSliderState extends State<_PlayerSlider> {
     super.didUpdateWidget(oldWidget);
     // The two players are separate clocks; an unfinished drag cannot carry
     // across a mode switch.
-    if (oldWidget.videoMode != widget.videoMode) _dragValue = null;
+    if (oldWidget.videoMode != widget.videoMode) {
+      _dragValue = null;
+      _lastSeekMinute = null;
+      _lastSeekTick = null;
+    }
   }
 
   @override
@@ -1213,6 +1262,8 @@ class _PlayerSliderState extends State<_PlayerSlider> {
       // A track change must not carry an unfinished drag onto the new song.
       _dragSongId = songId;
       _dragValue = null;
+      _lastSeekMinute = null;
+      _lastSeekTick = null;
     }
     final audio = context.read<AudioPlayerService>();
     return _slider(posSec, durSec, audio.seek);
@@ -1238,12 +1289,35 @@ class _PlayerSliderState extends State<_PlayerSlider> {
           child: Slider(
             value: value,
             max: max,
-            onChanged:
-                seek == null ? null : (v) => setState(() => _dragValue = v),
+            onChangeStart: seek == null
+                ? null
+                : (v) {
+                    _lastSeekMinute = v ~/ 60;
+                    _lastSeekTick = null;
+                  },
+            onChanged: seek == null
+                ? null
+                : (v) {
+                    final minute = v ~/ 60;
+                    if (minute != _lastSeekMinute) {
+                      _lastSeekMinute = minute;
+                      final now = DateTime.now();
+                      final last = _lastSeekTick;
+                      if (last == null ||
+                          now.difference(last) >=
+                              const Duration(milliseconds: 100)) {
+                        _lastSeekTick = now;
+                        HapticFeedback.selectionClick();
+                      }
+                    }
+                    setState(() => _dragValue = v);
+                  },
             onChangeEnd: seek == null
                 ? null
                 : (v) {
                     seek(Duration(seconds: v.toInt()));
+                    _lastSeekMinute = null;
+                    _lastSeekTick = null;
                     setState(() => _dragValue = null);
                   },
           ),

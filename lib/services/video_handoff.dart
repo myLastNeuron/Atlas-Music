@@ -223,8 +223,9 @@ class VideoHandoff extends ChangeNotifier {
     }
     if (!_advanced && _owned && controller.value.isCompleted) {
       // Repeat-one is the audio player's job, and it is paused in Video mode:
-      // the parked video is the playback, so it repeats itself.
-      if (_audio?.repeatOne ?? false) {
+      // the parked video is the playback, so it repeats itself. A pinned
+      // "Play next" is an explicit user choice and beats the loop.
+      if ((_audio?.repeatOne ?? false) && _audio?.pinnedNext == null) {
         _songStart = Duration.zero;
         _videoStart = Duration.zero;
         unawaited(controller
@@ -400,7 +401,7 @@ class MiniVideo {
       if (!_alive(gen, song) || !online) return;
 
       final source =
-          await audio.videoSource(song).timeout(const Duration(seconds: 20));
+          await audio.videoSource(song).timeout(audio.videoSourceTimeout);
       if (!_alive(gen, song) || source == null) return;
 
       controller = VideoPlayerController.networkUrl(

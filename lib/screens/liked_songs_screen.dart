@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/song_actions.dart';
@@ -25,7 +26,10 @@ class LikedSongsScreen extends StatelessWidget {
           IconButton(
             icon: Icon(Icons.favorite, size: 20, color: AppColors.ink),
             tooltip: 'Unlike',
-            onPressed: () => storage.toggleLikedSong(s),
+            onPressed: () {
+              HapticFeedback.lightImpact();
+              storage.toggleLikedSong(s);
+            },
           ),
           SongMenuButton(song: s, queue: queue, index: i),
         ],

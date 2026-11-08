@@ -6,21 +6,34 @@ import '../media/resolve_failure.dart';
 import '../models/artist.dart';
 import '../models/song.dart';
 
-/// A "Videos" search row: the id to play plus YouTube's classification, so a
-/// caller can tell an official music video (MUSIC_VIDEO_TYPE_OMV) from an
-/// upload (MUSIC_VIDEO_TYPE_UGC) or an art track (_ATV).
+/// A video row: the id to play plus YouTube's classification, so a caller can
+/// tell an official music video (MUSIC_VIDEO_TYPE_OMV) from an upload
+/// (MUSIC_VIDEO_TYPE_UGC) or an art track (_ATV). [channel] is the uploader
+/// on plain YouTube and the credited artist on catalogue rows; the policy
+/// only needs one identity it can test for "label" and "artist".
 class VideoCandidate {
   final String videoId;
   final String musicVideoType;
   final String title;
-  final String artist;
+  final String channel;
 
   const VideoCandidate({
     required this.videoId,
     required this.musicVideoType,
     required this.title,
-    required this.artist,
+    required this.channel,
   });
+
+  /// A plain youtube.com row, which carries no YouTube classification.
+  factory VideoCandidate.fromSong(Song song) => VideoCandidate(
+        videoId: song.videoId ?? song.id,
+        musicVideoType: '',
+        title: song.title,
+        channel: song.channel.isEmpty ? song.artist : song.channel,
+      );
+
+  /// YouTube's own "official music video" classification.
+  bool get official => musicVideoType == 'MUSIC_VIDEO_TYPE_OMV';
 }
 
 /// Searches the YouTube Music catalogue directly (InnerTube `WEB_REMIX`
@@ -82,7 +95,7 @@ class YouTubeMusicSearch {
   /// Real music videos (and uploads) for [query] with YouTube's own
   /// classification, one page only: this feeds the Video toggle's fallback
   /// for songs whose catalogue entry is a still art track, and must answer
-  /// fast. Ranked by [bestMusicVideo].
+  /// fast. Ranked by [pickOfficialVideo].
   Future<List<VideoCandidate>> searchVideos(
     String query, {
     int limit = 20,
@@ -106,58 +119,64 @@ class YouTubeMusicSearch {
         videoId: videoId,
         musicVideoType: type,
         title: song.title,
-        artist: song.artist,
+        channel: song.channel,
       ));
     }
     return out;
   }
 
-  /// Best real music video among [candidates], or null when none is usable.
-  /// Official videos (OMV) beat uploads (UGC), which beat rows YouTube left
-  /// unclassified; a row whose title is the song is the only kind considered
-  /// (a video for a different song is worse than the still art track); the
-  /// artist name breaks the type tie. Rows of the song's own art track
-  /// [excludeId] are skipped. Pure for the test.
-  static String? bestMusicVideo(
-    List<VideoCandidate> candidates, {
+  /// The official video for [title] by [artist] among [videos], or null.
+  ///
+  /// One policy for catalogue rows and plain youtube.com search alike:
+  /// YouTube's OMV classification, a label channel, or the artist's own
+  /// channel. Topic channels, art tracks, lyric/audio uploads, other songs
+  /// and fan reuploads are rejected; a missing official video is null, never
+  /// the nearest plausible upload. Accepted rows rank OMV, then label, then
+  /// artist channel; the artist being named breaks a tie. The song's own id
+  /// [excludeId] is skipped. Pure for the test.
+  static VideoCandidate? pickOfficialVideo(
+    List<VideoCandidate> videos, {
     required String title,
     required String artist,
     required String excludeId,
-    bool officialOnly = false,
   }) {
-    final wantArtist = _matchKey(artist);
-    String? best;
+    VideoCandidate? best;
     var bestScore = 0;
-    for (final c in candidates) {
+    for (final c in videos) {
       if (c.videoId == excludeId) continue;
-      final omv = c.musicVideoType == 'MUSIC_VIDEO_TYPE_OMV';
+      // Auto-generated Topic channels are not the artist's own upload, and
+      // ATV/podcast rows are not the song's video at all.
+      if (c.channel.trim().toLowerCase().endsWith(' - topic')) continue;
+      final omv = c.official;
       final ugc = c.musicVideoType == 'MUSIC_VIDEO_TYPE_UGC';
-      // Known non-music classifications (ATV / podcast) are never a match;
-      // an empty type is a row YouTube did not classify, so keep it low.
       if (!omv && !ugc && c.musicVideoType.isNotEmpty) continue;
-      if (officialOnly && !omv) continue;
       // The row must be THIS song: a title that merely contains the wanted
-      // one picked a different track ("Stay" → "Stay With Me"), and a slowed,
-      // lo-fi or remix upload is not the song the user is playing.
+      // one is a different track, and a slowed/remix upload is another
+      // recording. Only YouTube's OMV classification vouches for a channel
+      // that is neither the label nor the artist.
       if (!isSameSong(
         candidate: c.title,
         wantTitle: title,
         artist: artist,
-        channel: c.artist,
-        requireArtist: true,
-        // Only YouTube's own OMV classification vouches for an upload from a
-        // channel that is neither the label nor the artist.
+        channel: c.channel,
+        requireArtist: !omv,
         originalChannel: !omv,
         realVideo: true,
       )) {
         continue;
       }
-      final have = _matchKey('${c.title} ${c.artist}');
-      final score = (omv ? 4 : (ugc ? 2 : 1)) +
-          (wantArtist.isNotEmpty && have.contains(wantArtist) ? 1 : 0);
+      final label = _isLabelChannel(c.channel);
+      final own = _namesArtist(c.channel, artist);
+      final named = own || _namesArtist('${c.title} ${c.channel}', artist);
+      // Separate bands keep OMV above every label upload and the label above
+      // the artist's own channel; the classification and a named artist only
+      // break ties inside a band.
+      final score = (omv ? 100 : (label ? 50 : 10)) +
+          (ugc ? 1 : 0) +
+          (named ? 1 : 0);
       if (score > bestScore) {
         bestScore = score;
-        best = c.videoId;
+        best = c;
       }
     }
     return best;
@@ -227,9 +246,10 @@ class YouTubeMusicSearch {
   /// title is normal there, while a personal channel with extra words is
   /// another version of the song.
   static final RegExp _labelChannel = RegExp(
-    r'(vevo|records|recordings|entertainment|tseries|sony|universal|warner|'
+    r'(vevo|records|recordings|tseries|sony|universal|warner|'
     r'atlantic|interscope|republic|capitol|columbia|island|defjam|spinnin|'
-    r'ultra|saregama|zeemusic|tips|speedrecords|adityamusic|believe)',
+    r'ultra|saregama|zeemusic|tips|speedrecords|adityamusic|believe|'
+    r'yrf|yashraj)',
   );
 
   static bool _isLabelChannel(String channel) =>
@@ -306,6 +326,22 @@ class YouTubeMusicSearch {
     return out.toString();
   }
 
+  /// True when [artist] is named in [text]. Credit strings disagree on
+  /// separators and spelling ("Vishal and Sheykhar" vs "Vishal - Shekhar"),
+  /// so the whole string rarely matches; one full artist name is enough.
+  static bool _namesArtist(String text, String artist) {
+    final have = _matchKey(text);
+    final key = _matchKey(artist);
+    if (key.isEmpty) return false;
+    if (have.contains(key)) return true;
+    for (final name in artist.split(
+        RegExp(r'[,&/;]|\band\b|\bwith\b|\bfeat\b|\bft\b', unicode: true))) {
+      final k = _matchKey(name);
+      if (k.length >= 4 && have.contains(k)) return true;
+    }
+    return false;
+  }
+
   /// True when [candidate] is [wantTitle] by [artist] (or [channel]): the
   /// wanted words appear in it as a run, and every other word is release
   /// noise, part of the artist name, or a featured artist. A title that only
@@ -339,13 +375,11 @@ class YouTubeMusicSearch {
     // video, it is as good as none.
     if (realVideo && rest.any(_notVideo.contains)) return false;
     if (_variantCompact.hasMatch(rest.join(''))) return false;
-    final artistKey = _matchKey(artist);
     final label = _isLabelChannel(channel);
     // The label's upload and the artist's own channel speak for the song:
     // extra words there are release context (album, year, "Long Version"),
     // not another recording. A fan channel has to earn the title instead.
-    final ownChannel = label ||
-        (artistKey.isNotEmpty && _matchKey(channel).contains(artistKey));
+    final ownChannel = label || _namesArtist(channel, artist);
     // A bracketed segment names a version unless it is release noise:
     // "Kesariya (Synthwave)" is a remix, "Blinding Lights (Official Video)"
     // is not, and "Ek Din Pyaar (Tadipaar)" is the song's own album.
@@ -368,8 +402,7 @@ class YouTubeMusicSearch {
       if (artistWords.contains(w) || _titleNoise.contains(w)) continue;
       content.add(w);
     }
-    final named =
-        artistKey.isNotEmpty && _matchKey('$candidate $channel').contains(artistKey);
+    final named = _namesArtist('$candidate $channel', artist);
     // The video of a song is the song's own: the label's upload or the
     // artist's channel. A fan reupload that merely names the artist (a slowed
     // or reverb version with a clean title) is some other recording.
@@ -404,41 +437,6 @@ class YouTubeMusicSearch {
       if (hit) return i;
     }
     return -1;
-  }
-
-  /// Best plain-YouTube upload among [rows] (already in YouTube's own
-  /// relevance order), or null. Used when the YT Music Videos filter has no
-  /// official video: label channels publish there, not in the catalogue.
-  /// Skips Topic art-track channels and the song's own id; prefers a row
-  /// whose title/channel names the artist.
-  static String? bestPlainVideo(
-    List<Song> rows, {
-    required String title,
-    required String artist,
-    required String excludeId,
-  }) {
-    if (_matchKey(_baseTitle(title)).isEmpty) return null;
-    for (final row in rows) {
-      final id = row.videoId ?? row.id;
-      if (id == excludeId) continue;
-      if (row.channel.trim().toLowerCase().endsWith(' - topic')) continue;
-      // Only an upload that is this song *by this artist*: a random channel
-      // reposting a clean-titled slowed remix is the failure this guards.
-      if (isSameSong(
-        candidate: row.title,
-        wantTitle: title,
-        artist: artist,
-        channel: row.channel,
-        requireArtist: true,
-        // Plain YouTube has no classification: only the label's or the
-        // artist's own upload can be this song's video.
-        originalChannel: true,
-        realVideo: true,
-      )) {
-        return id;
-      }
-    }
-    return null;
   }
 
   /// Song title without its "(From "…")"/"[Remastered]" suffixes: catalogue
@@ -1236,7 +1234,7 @@ class YouTubeMusicSearch {
   static String _normalize(String value) =>
       value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
 
-  /// Unicode-aware match key for [bestMusicVideo]: ASCII-only [_normalize]
+  /// Unicode-aware match key for the video policy: ASCII-only [_normalize]
   /// erases Japanese/Korean/Cyrillic titles and rejects every candidate.
   static String _matchKey(String value) => _fold(value)
       .toLowerCase()

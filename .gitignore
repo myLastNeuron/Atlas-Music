@@ -93,4 +93,5 @@ fastlane/Preview.html
 # Agent / tool scratch output (regenerable)
 .bug-hunter/
 .claude/
+BUG-FIX-INSTRUCTION.md
 

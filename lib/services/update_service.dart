@@ -34,11 +34,16 @@ class UpdateResult {
   /// Newest release found, or null when GitHub could not be reached.
   final AppRelease? latest;
 
+  /// Every published release carrying an APK, newest first. Used by the
+  /// revert list, so the check call is reused instead of hitting GitHub twice.
+  final List<AppRelease> releases;
+
   final bool updateAvailable;
 
   const UpdateResult({
     required this.installedVersion,
     required this.latest,
+    required this.releases,
     required this.updateAvailable,
   });
 }
@@ -54,8 +59,10 @@ class UpdateResult {
 class UpdateService {
   static const _owner = 'myLastNeuron';
   static const _repo = 'Atlas-Music';
+  // 100 per page: the revert picker shows older releases, and one page keeps
+  // the check to a single request. More than 100 releases would be truncated.
   static const _releasesUrl =
-      'https://api.github.com/repos/$_owner/$_repo/releases';
+      'https://api.github.com/repos/$_owner/$_repo/releases?per_page=100';
   static const _ua = 'AtlasMusic (https://github.com/$_owner/$_repo)';
   static const _timeout = Duration(seconds: 15);
 
@@ -76,7 +83,7 @@ class UpdateService {
   /// so the UI can say that instead of claiming the app is up to date.
   Future<UpdateResult?> check() async {
     final installed = await installedVersion();
-    AppRelease? latest;
+    List<AppRelease>? releases;
     try {
       final res = await _http.get(
         Uri.parse(_releasesUrl),
@@ -86,16 +93,19 @@ class UpdateService {
         },
       ).timeout(_timeout);
       if (res.statusCode != 200) return null;
-      latest = parseNewestRelease(res.body);
+      releases = parseReleases(res.body);
     } catch (_) {
       // Offline / rate-limited / malformed body.
       return null;
     }
+    if (releases == null) return null;
+    final latest = releases.isEmpty ? null : releases.first;
     final available =
         latest != null && (compareVersions(latest.version, installed) ?? 0) > 0;
     return UpdateResult(
       installedVersion: installed,
       latest: latest,
+      releases: releases,
       updateAvailable: available,
     );
   }
@@ -179,14 +189,14 @@ class UpdateService {
     return out;
   }
 
-  /// Picks the newest published (non-draft) release that carries an `.apk`
-  /// asset from the GitHub `/releases` list JSON. Prereleases are included on
-  /// purpose. The asset is matched by extension, not filename: releases have
-  /// shipped the APK under different names.
-  static AppRelease? parseNewestRelease(String jsonBody) {
+  /// Every published (non-draft) release that carries an `.apk` asset, in the
+  /// order GitHub returned them (newest first). Null when the body is not the
+  /// releases JSON.
+  static List<AppRelease>? parseReleases(String jsonBody) {
     try {
       final decoded = jsonDecode(jsonBody);
       if (decoded is! List) return null;
+      final out = <AppRelease>[];
       for (final raw in decoded) {
         if (raw is! Map) continue;
         if (raw['draft'] == true) continue;
@@ -207,16 +217,37 @@ class UpdateService {
         }
         if (apkUrl == null) continue;
 
-        return AppRelease(
+        out.add(AppRelease(
           version: tag.startsWith('v') ? tag.substring(1) : tag,
           notes: (raw['body'] as String?)?.trim() ?? '',
           apkUrl: apkUrl,
           pageUrl: (raw['html_url'] as String?) ?? '',
-        );
+        ));
       }
+      return out;
     } catch (_) {
-      // Malformed body → no release.
+      // Malformed body → no releases.
+      return null;
     }
-    return null;
+  }
+
+  /// Picks the newest published release; null when there is none.
+  static AppRelease? parseNewestRelease(String jsonBody) {
+    final releases = parseReleases(jsonBody);
+    return releases == null || releases.isEmpty ? null : releases.first;
+  }
+
+  /// Releases strictly older than [installedVersion], newest first. Releases
+  /// with a version that cannot be compared are left out.
+  static List<AppRelease> olderThan(
+    List<AppRelease> releases,
+    String installedVersion,
+  ) {
+    final out = <AppRelease>[];
+    for (final r in releases) {
+      final c = compareVersions(r.version, installedVersion);
+      if (c != null && c < 0) out.add(r);
+    }
+    return out;
   }
 }

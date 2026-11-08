@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../media/cache_service.dart';
+import '../models/song.dart';
 import '../services/storage_service.dart';
 import '../widgets/song_actions.dart';
 import 'song_collection_screen.dart';
@@ -13,6 +14,15 @@ class OfflineMusicScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final storage = StorageService.instance;
     final cache = CacheService();
+    Future<void> removeDownload(Song song) async {
+      await storage.removeDownloadedSong(song.id);
+      try {
+        await cache.invalidate(song);
+      } catch (_) {
+        // Non-fatal: the file is orphaned but no longer listed.
+      }
+    }
+
     return SongCollectionScreen(
       title: 'Offline Music',
       listKey: 'offline_list',
@@ -24,15 +34,9 @@ class OfflineMusicScreen extends StatelessWidget {
         song: s,
         queue: queue,
         index: i,
-        onRemoveFromDownloads: () async {
-          await storage.removeDownloadedSong(s.id);
-          try {
-            await cache.invalidate(s);
-          } catch (_) {
-            // Non-fatal: the file is orphaned but no longer listed.
-          }
-        },
+        onRemoveFromDownloads: () => removeDownload(s),
       ),
+      onRemoveFromDownloads: (s, i, queue) => () => removeDownload(s),
     );
   }
 }

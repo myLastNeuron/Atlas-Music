@@ -321,10 +321,10 @@ class _VideoSurfaceState extends State<VideoSurface>
       if (mounted) setState(() => _message = 'Finding video…');
       final source = await audio
           .videoSource(widget.song, refresh: refresh)
-          .timeout(const Duration(seconds: 20));
+          .timeout(audio.videoSourceTimeout);
       if (_closed) return;
       if (source == null) {
-        _fail('No music video for this track');
+        _fail('No official video for this track. Tap Retry.');
         return;
       }
 
@@ -414,8 +414,9 @@ class _VideoSurfaceState extends State<VideoSurface>
     if (c == null || !c.value.isCompleted) return;
     final audio = _audio;
     // Repeat-one is the audio player's job, and it is paused in Video mode:
-    // here the video is the playback, so it repeats itself.
-    if (audio != null && audio.repeatOne) {
+    // here the video is the playback, so it repeats itself. A pinned
+    // "Play next" is an explicit user choice and beats the loop.
+    if (audio != null && audio.repeatOne && audio.pinnedNext == null) {
       _audioStart = Duration.zero;
       _videoStart = Duration.zero;
       unawaited(

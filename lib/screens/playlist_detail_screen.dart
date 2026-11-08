@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../widgets/dialog_helpers.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -88,6 +89,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       _applyIds(_storage.getLikedSongs, _likedIds, (ids) => _likedIds = ids);
 
   Future<void> _toggleLike(Song song) async {
+    HapticFeedback.lightImpact();
     await _storage.toggleLikedSong(song);
     await _loadLiked();
   }
@@ -116,6 +118,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final audioService = context.read<AudioPlayerService>();
     final downloadedIds = Set<String>.from(_playlist.downloadedSongIds);
+    final before = downloadedIds.length;
     final overall = ValueNotifier<double?>(0);
     var finished = _songs.where((s) => downloadedIds.contains(s.id)).length;
     void tick() => overall.value =
@@ -146,6 +149,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       await close();
     }
     if (!mounted) return;
+    if (downloadedIds.length > before) HapticFeedback.mediumImpact();
     // Protect only while offline content exists. Empty (all failed) stays normal.
     final updated = _playlist.copyWith(
       isDownloaded:
@@ -330,7 +334,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     await _syncPlaylistDownloads();
   }
 
-  void _startSelection(int i) => setState(() => _sel.start(i));
+  void _startSelection(int i) {
+    HapticFeedback.vibrate();
+    setState(() => _sel.start(i));
+  }
 
   void _toggle(int i) => setState(() => _sel.toggle(i));
 
@@ -361,6 +368,7 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       await close();
     }
     if (!mounted) return;
+    if (done > 0) HapticFeedback.mediumImpact();
     _exitSelection();
     await _syncPlaylistDownloads();
     messenger.showSnackBar(
@@ -588,13 +596,19 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 });
                               }
                             } else if (value == 'delete') {
+                              final offlineIds = playlist.offlineSongIds;
                               final confirm = await showDialog<bool>(
                                 context: context,
                                 builder: (context) => AlertDialog(
                                   title: const Text('Delete Playlist?'),
-                                  content: Text(
-                                    'Delete "${playlist.name}"? This cannot be undone.',
-                                  ),
+                                  content: Text(offlineIds.isEmpty
+                                      ? 'Delete "${playlist.name}"? This cannot be undone.'
+                                      : 'Are you sure you want to delete '
+                                          '"${playlist.name}"? Its '
+                                          '${offlineIds.length} downloaded '
+                                          '${offlineIds.length == 1 ? 'song' : 'songs'} '
+                                          'will also be removed from this '
+                                          'phone. This cannot be undone.'),
                                   actions: [
                                     TextButton(
                                       onPressed: () =>
@@ -613,18 +627,25 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 ),
                               );
                               if (confirm == true) {
+                                final downloaded =
+                                    (await _storage.getDownloadedSongs())
+                                        .where((s) => offlineIds.contains(s.id))
+                                        .toList();
                                 final deleted =
                                     await _storage.deletePlaylist(playlist.id);
+                                // The list state is gone either way; free the
+                                // audio files the playlist held.
+                                for (final s in downloaded) {
+                                  try {
+                                    await CacheService().invalidate(s);
+                                  } catch (_) {}
+                                }
                                 if (!context.mounted) return;
                                 if (!deleted) {
-                                  // Storage refuses to drop a playlist that still
-                                  // holds offline tracks: say so instead of
-                                  // closing the page as if it were gone.
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
                                       content: Text(
-                                          'Remove this playlist\'s downloads '
-                                          'first, then delete it.'),
+                                          'This playlist can\'t be deleted.'),
                                     ),
                                   );
                                   return;

@@ -2,69 +2,88 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-/// Mono glass palette: two modes, one set of names. Dark is the app's
-/// original look; light is a paper-and-ink reading of the same surfaces.
+/// The three palettes: paper-and-ink, the original grey glass, and pure
+/// black for OLED screens.
+enum AppPalette { light, grey, amoled }
+
+/// Mono glass palette: three modes, one set of names. Grey is the app's
+/// original look; light is a paper-and-ink reading of the same surfaces;
+/// AMOLED is the same dark look on a pure black backdrop.
 ///
 /// The values are getters, not consts: a const colour freezes the mode it was
 /// compiled with. [ThemeSettings] swaps the mode and the app rebuilds from the
 /// root, so every surface re-reads them.
 class AppColors {
-  static bool _light = false;
-
-  static bool get isLight => _light;
-
   /// Switches the palette. The caller owns the rebuild.
-  static void setLight(bool value) => _light = value;
+  static AppPalette mode = AppPalette.grey;
+
+  static bool get isLight => mode == AppPalette.light;
+
+  static bool get isAmoled => mode == AppPalette.amoled;
 
   /// Page backdrop.
-  static Color get paper =>
-      _light ? const Color(0xFFF6F6F8) : const Color(0xFF0E0E12);
+  static Color get paper => switch (mode) {
+        AppPalette.light => const Color(0xFFF6F6F8),
+        AppPalette.grey => const Color(0xFF0E0E12),
+        AppPalette.amoled => const Color(0xFF000000),
+      };
 
   /// Recessed fill: inputs, placeholder tiles.
-  static Color get mist =>
-      _light ? const Color(0xFFECECF0) : const Color(0xFF17171C);
+  static Color get mist => switch (mode) {
+        AppPalette.light => const Color(0xFFECECF0),
+        AppPalette.grey => const Color(0xFF17171C),
+        AppPalette.amoled => const Color(0xFF0A0A0A),
+      };
 
-  static Color get card =>
-      _light ? const Color(0xFFFFFFFF) : const Color(0xFF1A1A20);
+  static Color get card => switch (mode) {
+        AppPalette.light => const Color(0xFFFFFFFF),
+        AppPalette.grey => const Color(0xFF1A1A20),
+        AppPalette.amoled => const Color(0xFF0D0D0D),
+      };
 
   /// Hairline.
   static Color get line =>
-      _light ? const Color(0x1F000000) : const Color(0x24FFFFFF);
+      mode == AppPalette.light ? const Color(0x1F000000) : const Color(0x24FFFFFF);
 
   /// Primary text and icon.
   static Color get ink =>
-      _light ? const Color(0xFF13131A) : const Color(0xFFFFFFFF);
+      mode == AppPalette.light ? const Color(0xFF13131A) : const Color(0xFFFFFFFF);
 
   static Color get inkSoft =>
-      _light ? const Color(0xFF4C4C57) : const Color(0xFFC6C6CE);
+      mode == AppPalette.light ? const Color(0xFF4C4C57) : const Color(0xFFC6C6CE);
 
   static Color get mute =>
-      _light ? const Color(0xFF7E7E89) : const Color(0xFF9A9AA3);
+      mode == AppPalette.light ? const Color(0xFF7E7E89) : const Color(0xFF9A9AA3);
 
   /// The one filled primary action surface (buttons, selected chips).
   static Color get action =>
-      _light ? const Color(0xFF16161D) : const Color(0xFFFFFFFF);
+      mode == AppPalette.light ? const Color(0xFF16161D) : const Color(0xFFFFFFFF);
 
   /// Content drawn on [action].
   static Color get charcoal =>
-      _light ? const Color(0xFFFFFFFF) : const Color(0xFF18181B);
+      mode == AppPalette.light ? const Color(0xFFFFFFFF) : const Color(0xFF18181B);
 
   /// Glass base for menus, dialogs, sheets, cards and panels. The transparency
   /// level (see [GlassSettings]) decides how much of the backdrop shows
   /// through; this is the solid colour behind it.
-  static Color get glass =>
-      _light ? const Color(0xFFFFFFFF) : const Color(0xFF191921);
+  static Color get glass => switch (mode) {
+        AppPalette.light => const Color(0xFFFFFFFF),
+        AppPalette.grey => const Color(0xFF191921),
+        AppPalette.amoled => const Color(0xFF0A0A0A),
+      };
 
   /// Frosted-glass rim, kept low so no hard edge shows.
   static Color get glassBorder =>
-      (_light ? Colors.black : Colors.white).withValues(alpha: 0.10);
+      (mode == AppPalette.light ? Colors.black : Colors.white).withValues(alpha: 0.10);
 
   /// Errors and destructive text.
-  static Color get danger =>
-      _light ? const Color(0xFFB3261E) : const Color(0xFFFF8A80);
+  static Color get danger => mode == AppPalette.light
+      ? const Color(0xFFB3261E)
+      : const Color(0xFFFF8A80);
 
   /// Soft shadow under floating panels: deep on dark, faint on light.
-  static Color get shadow => Colors.black.withValues(alpha: _light ? 0.12 : 0.35);
+  static Color get shadow =>
+      Colors.black.withValues(alpha: mode == AppPalette.light ? 0.12 : 0.35);
 }
 
 /// Status/nav bar icons follow the palette: dark icons on the light one.

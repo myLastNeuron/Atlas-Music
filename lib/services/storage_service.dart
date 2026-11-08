@@ -104,9 +104,11 @@ class StorageService extends ChangeNotifier {
     });
   }
 
-  /// Returns false when the playlist is protected — the system Downloaded
-  /// Music playlist, or one that still holds offline tracks — so the caller
-  /// can say why nothing was deleted instead of pretending it worked.
+  /// Deletes a user playlist. Its offline tracks go with it: every downloaded
+  /// song is dropped from the global download list and from every playlist's
+  /// offline set, so the caller can delete the cached files afterwards.
+  /// Returns false only for the system Downloaded Music playlist (or a missing
+  /// id), which is managed by downloads itself.
   Future<bool> deletePlaylist(String playlistId) {
     return _serialized(() async {
       final playlists = await getPlaylists();
@@ -120,16 +122,13 @@ class StorageService extends ChangeNotifier {
       if (target == null) return false;
       // System Downloaded Music is managed separately.
       if (target.id == downloadedPlaylistId) return false;
-      // Protected while it still holds offline content. Must be cleared via
-      // Offline Content first. Once downloadedSongIds is empty and
-      // isDownloaded is false, it behaves normally again (deletable), even
-      // if a stale isSystemManaged flag lingered from an older build.
-      if (target.isDownloaded || target.downloadedSongIds.isNotEmpty) {
-        return false;
+      for (final songId in target.offlineSongIds) {
+        await _removeDownloadEverywhere(songId);
       }
-      playlists.removeWhere((p) => p.id == playlistId);
+      final remaining = await getPlaylists();
+      remaining.removeWhere((p) => p.id == playlistId);
       final prefs = await SharedPreferences.getInstance();
-      final jsonList = playlists.map((p) => p.toJson()).toList();
+      final jsonList = remaining.map((p) => p.toJson()).toList();
       await prefs.setString(_playlistsKey, json.encode(jsonList));
       notifyListeners();
       return true;

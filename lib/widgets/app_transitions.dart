@@ -1,6 +1,15 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
+/// Pull-to-refresh on local data resolves within a frame, so the indicator
+/// never spins and the pull reads as a no-op. Keep it up long enough to see;
+/// a slower reload still runs to completion because the hold overlaps it.
+Future<void> minRefresh(Future<void> Function() reload) async {
+  final hold = Future<void>.delayed(const Duration(milliseconds: 700));
+  await reload();
+  await hold;
+}
+
 /// Shared page route: fade + slide + scale for normal pushes, and for the
 /// full player (`slideUp: true`) a quick fade whose cover [Hero] flies from
 /// the mini player. Framework-driven (no controllers to leak), back gesture

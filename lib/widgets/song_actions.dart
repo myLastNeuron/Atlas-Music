@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_service.dart';
@@ -227,6 +228,54 @@ class SongMenuButton extends StatelessWidget {
   }
 }
 
+/// Wraps a song row or tile so holding it opens the same actions menu as
+/// [SongMenuButton], anchored at the press point.
+class SongLongPress extends StatelessWidget {
+  final Song song;
+  final List<Song>? queue;
+  final int? index;
+  final String? queueOrigin;
+  final Future<void> Function()? onRemoveFromPlaylist;
+  final Future<void> Function()? onRemoveFromDownloads;
+  final Future<void> Function()? onRemoveFromAutoFinds;
+  final Widget child;
+
+  const SongLongPress({
+    super.key,
+    required this.song,
+    required this.child,
+    this.queue,
+    this.index,
+    this.queueOrigin,
+    this.onRemoveFromPlaylist,
+    this.onRemoveFromDownloads,
+    this.onRemoveFromAutoFinds,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: (details) {
+        HapticFeedback.vibrate();
+        showSongActions(
+          context,
+          song: song,
+          queue: queue,
+          index: index,
+          queueOrigin: queueOrigin,
+          anchor: Rect.fromCenter(
+              center: details.globalPosition, width: 0, height: 0),
+          onRemoveFromPlaylist: onRemoveFromPlaylist,
+          onRemoveFromDownloads: onRemoveFromDownloads,
+          onRemoveFromAutoFinds: onRemoveFromAutoFinds,
+        );
+      },
+      child: child,
+    );
+  }
+}
+
 class _SongActionsCard extends StatefulWidget {
   final BuildContext hostContext;
   final Song song;
@@ -310,6 +359,7 @@ class _SongActionsCardState extends State<_SongActionsCard> {
   }
 
   Future<void> _toggleLike() async {
+    HapticFeedback.lightImpact();
     final next = !_liked;
     setState(() => _liked = next);
     try {
@@ -371,6 +421,8 @@ class _SongActionsCardState extends State<_SongActionsCard> {
 
   @override
   Widget build(BuildContext context) {
+    // The song already playing can't be queued to play after itself.
+    final currentId = context.read<AudioPlayerService>().currentSong?.id;
     return SizedBox(
       width: 250,
       child: GlassSurface(
@@ -406,7 +458,8 @@ class _SongActionsCardState extends State<_SongActionsCard> {
             Divider(color: AppColors.line, height: 1),
             const SizedBox(height: 4),
             _tile(Icons.play_arrow_rounded, 'Play now', _playNow),
-            _tile(Icons.queue_play_next, 'Play next', _playNext),
+            if (currentId != widget.song.id)
+              _tile(Icons.queue_play_next, 'Play next', _playNext),
             _tile(Icons.playlist_add, 'Add to playlist', _addToPlaylist),
             _tile(
               _liked ? Icons.favorite : Icons.favorite_border,
@@ -555,6 +608,7 @@ Future<void> downloadSongFlow(BuildContext context, Song song) async {
   final ok = await audio.downloadCurrentSongForSong(song);
   await close();
   if (!context.mounted) return;
+  if (ok) HapticFeedback.mediumImpact();
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(ok ? 'Download completed' : 'Download failed')),
   );

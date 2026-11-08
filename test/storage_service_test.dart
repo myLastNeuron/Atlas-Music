@@ -225,6 +225,38 @@ void main() {
     expect(await storage.getDownloadedSongs(), isEmpty);
   });
 
+  test('deleting a downloaded playlist removes its local downloads', () async {
+    final storage = StorageService();
+    final song = songFor('del_dl');
+    await storage.addDownloadedSong(song);
+    await storage.addSongToDownloadedPlaylist(song);
+    await storage.savePlaylist(Playlist(
+      id: 'p_delete',
+      name: 'Delete Me',
+      songs: [song],
+      createdAt: DateTime.now(),
+      downloadedSongIds: {song.id},
+      isDownloaded: true,
+      isSystemManaged: true,
+    ));
+
+    expect(await storage.deletePlaylist('p_delete'), isTrue);
+
+    final playlists = await storage.getPlaylists();
+    expect(playlists.any((p) => p.id == 'p_delete'), isFalse);
+    expect(await storage.getDownloadedSongs(), isEmpty);
+    for (final p in playlists) {
+      expect(p.downloadedSongIds.contains(song.id), isFalse);
+    }
+    final sys = playlists
+        .firstWhere((p) => p.id == StorageService.downloadedPlaylistId);
+    expect(sys.songs.any((s) => s.id == song.id), isFalse);
+
+    // The system playlist is still protected.
+    expect(await storage.deletePlaylist(StorageService.downloadedPlaylistId),
+        isFalse);
+  });
+
   test('addSongToPlaylist edits a downloaded playlist but not the system one',
       () async {
     final storage = StorageService();

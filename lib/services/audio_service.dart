@@ -410,6 +410,27 @@ class AudioPlayerService extends ChangeNotifier {
   Duration get position => _position;
   Song? get currentSong => _currentSong;
 
+  /// A tap on the song already committed to the player is not a new play:
+  /// it must keep its position, paused/playing state and audio/video mode.
+  /// A finished track can start over, and a load that never committed is
+  /// still allowed through so retries keep working.
+  bool isCurrent(Song song) => isSameSongTap(
+        songId: song.id,
+        currentSongId: _currentSong?.id,
+        activeSongId: _activeSongId,
+        completed: _processingState == ProcessingState.completed,
+      );
+
+  /// The rule behind [isCurrent], kept pure so it can be tested without a
+  /// live audio player.
+  static bool isSameSongTap({
+    required String songId,
+    required String? currentSongId,
+    required String? activeSongId,
+    required bool completed,
+  }) =>
+      currentSongId == songId && activeSongId == songId && !completed;
+
   /// Video for [song]: the song's own video when it is a real video (same
   /// media as the audio, so it may seek to the audio position), otherwise a
   /// music video found through the catalogue (different media, starts at 0).
@@ -420,50 +441,49 @@ class AudioPlayerService extends ChangeNotifier {
         song,
         refresh: refresh,
         findMusicVideo: (s) async {
-          // Every stage is best-effort: one dead catalogue call must not
-          // cancel the plain-search fallback or leak out to the UI.
-          List<VideoCandidate> rows = const [];
+          final title = s.title;
+          final artist = s.artist;
+          final excludeId = s.videoId ?? s.id;
+          // Every stage is best-effort: one dead search must not cancel the
+          // other or leak out to the UI.
+          final videos = <VideoCandidate>[];
           try {
-            rows = await _ytMusic.searchVideos('${s.title} ${s.artist}');
+            videos.addAll(await _ytMusic.searchVideos('$title $artist'));
           } catch (_) {}
-          // An official catalogue video is the best answer.
-          final official = YouTubeMusicSearch.bestMusicVideo(
-            rows,
-            title: s.title,
-            artist: s.artist,
-            excludeId: s.videoId ?? s.id,
-            officialOnly: true,
+          var pick = YouTubeMusicSearch.pickOfficialVideo(
+            videos,
+            title: title,
+            artist: artist,
+            excludeId: excludeId,
           );
-          if (official != null) return official;
-          // Otherwise label uploads that the catalogue omits (Sony Music
-          // India's Kesariya) are ranked first by plain youtube.com search.
-          List<Song> plain = const [];
-          try {
-            // Wider than the first screen: the real video is often a few rows
-            // below lyric/audio uploads that are rejected now.
-            plain = await _youtubeService.searchVideos('${s.title} ${s.artist}',
-                limit: 20);
-          } catch (_) {}
-          final fromPlain = YouTubeMusicSearch.bestPlainVideo(
-            plain,
-            title: s.title,
-            artist: s.artist,
-            excludeId: s.videoId ?? s.id,
-          );
-          if (fromPlain != null) return fromPlain;
-          // Last resort: a catalogue upload (lyric/cover) is still a real
-          // moving picture, unlike the art track this fallback exists for.
-          return YouTubeMusicSearch.bestMusicVideo(
-            rows,
-            title: s.title,
-            artist: s.artist,
-            excludeId: s.videoId ?? s.id,
-          );
+          // The catalogue omits some label uploads (Sony Music India's
+          // Kesariya) that plain youtube.com ranks first. An OMV needs no
+          // help; anything else may still lose to a better plain row.
+          if (pick == null || !pick.official) {
+            try {
+              final plain = await _youtubeService.searchVideos('$title $artist',
+                  limit: 20);
+              videos.addAll(plain.map(VideoCandidate.fromSong));
+            } catch (_) {}
+            pick = YouTubeMusicSearch.pickOfficialVideo(
+              videos,
+              title: title,
+              artist: artist,
+              excludeId: excludeId,
+            );
+          }
+          return pick?.videoId;
         },
       );
 
   /// Headers the video player must send: the UA the resolver's probe proved.
   Map<String, String> get videoHeaders => YouTubeProvider.videoHeaders;
+
+  /// Safety net for every video lookup: a few seconds longer than the
+  /// provider's own budget, so the provider always answers first and the
+  /// caller timeout only guards against a truly hung lookup.
+  Duration get videoSourceTimeout =>
+      YouTubeProvider.videoSourceBudget + const Duration(seconds: 5);
 
   /// True when the device can actually reach the internet (DNS-proved).
   Future<bool> get hasInternet => _hasConnectivity();
@@ -573,9 +593,11 @@ class AudioPlayerService extends ChangeNotifier {
       _isPlaying =
           state.playing && state.processingState != ProcessingState.completed;
       if (state.processingState == ProcessingState.completed) {
-        if (_loopMode == LoopMode.one) {
-          // Witness: repeat-one replays are user intent, logged so a 1->1
-          // loop is distinguishable from an automatic advance.
+        // A pinned "Play next" is an explicit user choice: it beats the
+        // loop. Native repeat-one never reports completed (it rewinds in
+        // place, see the discontinuity listener), so this only matters
+        // when the platform repeat failed to apply.
+        if (_loopMode == LoopMode.one && _playNextOverride == null) {
           notifyListeners();
           return;
         }
@@ -589,6 +611,47 @@ class AudioPlayerService extends ChangeNotifier {
       // all, leaving a silent player that looks like a live process.
       // Log only; recovery stays owned by the stall watchdog / background
       // heal paths.
+    }));
+
+    // Repeat-one rewinds natively, so the player never reports `completed`
+    // (ExoPlayer stays READY and seeks back in place). The wrap itself is
+    // the end-of-track signal: a pinned "Play next" is an explicit user
+    // choice and must beat the loop. Only a wrap from the end of the track
+    // counts: replacing the source (skip/reload) also drops the position to
+    // 0 with the same index while loop mode is one.
+    _subs.add(_player.positionDiscontinuityStream.listen((d) {
+      // Native playback events are sparse (state changes only), so the
+      // previous event's raw position can be 0 from the start of the song.
+      // Extrapolate it from updateTime the way just_audio does; the wrap is
+      // only real when that position is at the end of the track.
+      final prev = d.previousEvent;
+      final elapsed = DateTime.now().difference(prev.updateTime);
+      // Same condition just_audio uses for its own position extrapolation.
+      final speed = _player.playing &&
+              _player.processingState == ProcessingState.ready
+          ? _player.speed
+          : 0.0;
+      if (!isRepeatOneWrap(
+        reason: d.reason,
+        trackDuration:
+            prev.duration ?? (_duration.inSeconds > 0 ? _duration : null),
+        previousPosition: prev.updatePosition + elapsed * speed,
+      )) {
+        return;
+      }
+      if (_loopMode != LoopMode.one || _playNextOverride == null) return;
+      // Ownership: only the song holding the native source may complete.
+      final cur = _currentSong;
+      if (cur == null || cur.id != _activeSongId) return;
+      _markCompleted();
+      // Off-listener: never run the load inside the stream callback.
+      unawaited(Future.microtask(() async {
+        try {
+          await playNext(0, false, null, true);
+        } catch (_) {
+          // Advance failure falls back to the completion guard.
+        }
+      }));
     }));
 
     // Connectivity trigger (no polling): preload unblock and offline
@@ -3411,6 +3474,21 @@ class AudioPlayerService extends ChangeNotifier {
     }
     return out;
   }
+
+  /// Whether a position discontinuity is a repeat-one wrap from the end of
+  /// the track. Native repeat-one rewinds in place instead of reporting
+  /// `completed`; a source swap (skip/reload) also drops the position to 0
+  /// with the same index while loop mode is one, so only a wrap from the
+  /// last two seconds counts. Pure, unit-tested.
+  static bool isRepeatOneWrap({
+    required PositionDiscontinuityReason reason,
+    required Duration? trackDuration,
+    required Duration previousPosition,
+  }) =>
+      reason == PositionDiscontinuityReason.autoAdvance &&
+      trackDuration != null &&
+      trackDuration.inSeconds > 0 &&
+      previousPosition >= trackDuration - const Duration(seconds: 2);
 
   final List<Song> _reserve = [];
 

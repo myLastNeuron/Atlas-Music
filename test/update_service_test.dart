@@ -83,4 +83,58 @@ void main() {
       expect(UpdateService.parseNewestRelease('{"a":1}'), isNull);
     });
   });
+
+  group('UpdateService.parseReleases', () {
+    const body = '''
+    [
+      {"tag_name":"2.3.1","draft":false,
+       "assets":[{"name":"Atlas.Music.apk","browser_download_url":"a231"}]},
+      {"tag_name":"v2.3.0","draft":false,
+       "assets":[{"name":"Atlas.Music.apk","browser_download_url":"a230"}]},
+      {"tag_name":"v9.0.0","draft":true,
+       "assets":[{"name":"Atlas.Music.apk","browser_download_url":"draft"}]},
+      {"tag_name":"v2.2.0","draft":false,
+       "assets":[{"name":"src.zip","browser_download_url":"zip"}]}
+    ]''';
+
+    test('keeps every APK release in API order and skips drafts', () {
+      final r = UpdateService.parseReleases(body)!;
+      expect(r.map((e) => e.version), ['2.3.1', '2.3.0']);
+      expect(r.map((e) => e.apkUrl), ['a231', 'a230']);
+    });
+
+    test('returns an empty list when there are no releases', () {
+      expect(UpdateService.parseReleases('[]'), isEmpty);
+    });
+
+    test('returns null on malformed input', () {
+      expect(UpdateService.parseReleases('not json'), isNull);
+      expect(UpdateService.parseReleases('{"a":1}'), isNull);
+    });
+  });
+
+  group('UpdateService.olderThan', () {
+    AppRelease rel(String v) =>
+        AppRelease(version: v, notes: '', apkUrl: 'url', pageUrl: 'page');
+
+    test('keeps only releases strictly older than the installed version', () {
+      final all = [rel('2.3.1'), rel('2.3.0'), rel('2.2.0'), rel('2.1.0')];
+      expect(
+        UpdateService.olderThan(all, '2.3.0').map((e) => e.version),
+        ['2.2.0', '2.1.0'],
+      );
+    });
+
+    test('ignores a leading v and incomparable versions', () {
+      final all = [rel('v2.3.0'), rel('2.2.0'), rel('nightly')];
+      expect(
+        UpdateService.olderThan(all, '2.3.0').map((e) => e.version),
+        ['2.2.0'],
+      );
+    });
+
+    test('returns empty when nothing older exists', () {
+      expect(UpdateService.olderThan([rel('2.3.1')], '2.3.1'), isEmpty);
+    });
+  });
 }

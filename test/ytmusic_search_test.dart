@@ -235,6 +235,27 @@ Map<String, dynamic> radioPage(List<Map<String, dynamic>> items) => {
       }
     };
 
+/// The policy's answer as the id tests assert on.
+String? pickVideo(
+  List<VideoCandidate> videos, {
+  required String title,
+  required String artist,
+  required String excludeId,
+}) =>
+    YouTubeMusicSearch.pickOfficialVideo(videos,
+            title: title, artist: artist, excludeId: excludeId)
+        ?.videoId;
+
+/// Same policy over plain youtube.com rows (no classification).
+String? pickPlain(
+  List<Song> rows, {
+  required String title,
+  required String artist,
+  required String excludeId,
+}) =>
+    pickVideo(rows.map(VideoCandidate.fromSong).toList(),
+        title: title, artist: artist, excludeId: excludeId);
+
 void main() {
   test('search follows the continuation token to later pages', () async {
     var calls = 0;
@@ -374,18 +395,18 @@ void main() {
     expect(videos.map((v) => v.videoId), ['omv', 'ugc', 'untyped']);
     expect(videos.map((v) => v.musicVideoType),
         ['MUSIC_VIDEO_TYPE_OMV', 'MUSIC_VIDEO_TYPE_UGC', '']);
-    expect(videos.first.artist, 'The Weeknd');
+    expect(videos.first.channel, 'The Weeknd');
   });
 
-  group('bestMusicVideo', () {
+  group('pickOfficialVideo', () {
     VideoCandidate c(String id, String type, String title,
-            [String artist = '']) =>
+            [String channel = '']) =>
         VideoCandidate(
-            videoId: id, musicVideoType: type, title: title, artist: artist);
+            videoId: id, musicVideoType: type, title: title, channel: channel);
 
     test('an official video beats a better-titled upload', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('ugc', 'MUSIC_VIDEO_TYPE_UGC', 'Blinding Lights', 'The Weeknd'),
             c('omv', 'MUSIC_VIDEO_TYPE_OMV', 'Blinding Lights (Official Video)',
@@ -401,7 +422,7 @@ void main() {
 
     test('the artist name breaks the OMV tie', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('cover', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Cover)', 'Raag Band'),
             c('real', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh'),
@@ -416,7 +437,7 @@ void main() {
 
     test('the art track itself and videos of other songs are skipped', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('atv', 'MUSIC_VIDEO_TYPE_ATV', 'Kesariya'),
             c('other', 'MUSIC_VIDEO_TYPE_OMV', 'Perfect', 'Ed Sheeran'),
@@ -432,7 +453,7 @@ void main() {
 
     test('no title match returns null instead of an unrelated video', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [c('other', 'MUSIC_VIDEO_TYPE_OMV', 'Apna Bana Le', 'Arijit Singh')],
           title: 'Kesariya',
           artist: 'Arijit Singh',
@@ -444,7 +465,7 @@ void main() {
 
     test('a non-Latin title still matches its video', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [c('mv', 'MUSIC_VIDEO_TYPE_OMV', '夜に駆ける', 'YOASOBI')],
           title: '夜に駆ける',
           artist: 'YOASOBI',
@@ -456,7 +477,7 @@ void main() {
 
     test('a fully bracketed title falls back to the original title', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [c('mv', 'MUSIC_VIDEO_TYPE_OMV', '(Intro)', 'Arijit Singh')],
           title: '(Intro)',
           artist: 'Arijit Singh',
@@ -471,7 +492,7 @@ void main() {
       final ugc = c('ugc', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Arijit Singh');
       final omv = c('omv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh');
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [untyped, ugc],
           title: 'Kesariya',
           artist: 'Arijit Singh',
@@ -480,7 +501,7 @@ void main() {
         'ugc',
       );
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [untyped, omv],
           title: 'Kesariya',
           artist: 'Arijit Singh',
@@ -489,7 +510,7 @@ void main() {
         'omv',
       );
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [untyped],
           title: 'Kesariya',
           artist: 'Arijit Singh',
@@ -501,7 +522,7 @@ void main() {
 
     test("the song's own id is skipped even when it arrives unclassified", () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('atv', '', 'Kesariya', 'Arijit Singh'),
             c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh'),
@@ -514,7 +535,7 @@ void main() {
       );
       // An unclassified echo of the song itself must not pass as its video.
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [c('atv', '', 'Kesariya', 'Arijit Singh')],
           title: 'Kesariya',
           artist: 'Arijit Singh',
@@ -524,9 +545,9 @@ void main() {
       );
     });
 
-    test('officialOnly skips a UGC upload', () {
+    test('a fan UGC upload is skipped even with a clean title', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('lofi', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Chillouts'),
             c('mv', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya', 'Arijit Singh'),
@@ -534,17 +555,15 @@ void main() {
           title: 'Kesariya',
           artist: 'Arijit Singh',
           excludeId: 'atv',
-          officialOnly: true,
         ),
         'mv',
       );
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [c('lofi', 'MUSIC_VIDEO_TYPE_UGC', 'Kesariya', 'Chillouts')],
           title: 'Kesariya',
           artist: 'Arijit Singh',
           excludeId: 'atv',
-          officialOnly: true,
         ),
         isNull,
       );
@@ -552,7 +571,7 @@ void main() {
 
     test('a lyric or audio upload is not the video', () {
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('lyric', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Lyric Video)',
                 'Arijit Singh'),
@@ -566,7 +585,7 @@ void main() {
         'mv',
       );
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [c('audio', 'MUSIC_VIDEO_TYPE_OMV', 'Kesariya (Official Audio)',
               'Arijit Singh')],
           title: 'Kesariya',
@@ -632,7 +651,7 @@ void main() {
       // Live: Eminem's "Stan (Long Version)" is the real video; every other row
       // is a lyric channel.
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('lyrics', 'MUSIC_VIDEO_TYPE_UGC', 'Eminem - Stan (Lyrics)',
                 '7clouds'),
@@ -652,7 +671,7 @@ void main() {
       // artist; only YouTube's OMV tag or an own/label channel can stand for
       // the song.
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('fan', 'MUSIC_VIDEO_TYPE_UGC',
                 'Blinding Lights - The Weeknd', 'ButenkoDV'),
@@ -665,7 +684,7 @@ void main() {
         'mv',
       );
       expect(
-        YouTubeMusicSearch.bestMusicVideo(
+        pickVideo(
           [
             c('fan', 'MUSIC_VIDEO_TYPE_UGC',
                 'Blinding Lights - The Weeknd', 'ButenkoDV'),
@@ -673,6 +692,69 @@ void main() {
           title: 'Blinding Lights',
           artist: 'The Weeknd',
           excludeId: 'atv',
+        ),
+        isNull,
+      );
+    });
+  });
+
+  group('the real Falak Tak rows', () {
+    const songTitle = 'Falak Tak (From "Tashan")';
+    const songArtist = 'Vishal and Sheykhar, Udit Narayan & Mahalaxmi Iyer';
+    const ownId = 'PfcwlfCm7fc';
+
+    test('the official OMV wins when credits use "-" instead of "and"', () {
+      expect(
+        pickVideo(
+          const [
+            VideoCandidate(
+              videoId: 'RHK3G4dvHIw',
+              musicVideoType: 'MUSIC_VIDEO_TYPE_UGC',
+              title: 'Falak Tak Chal Saath Mere',
+              channel: 'Hindi Party Song',
+            ),
+            VideoCandidate(
+              videoId: 'vr8RaNuWjWc',
+              musicVideoType: 'MUSIC_VIDEO_TYPE_OMV',
+              title: 'Falak Tak (From "Tashan")',
+              channel: 'Vishal - Shekhar, Mahalakshmi Iyer & Udit Narayan',
+            ),
+          ],
+          title: songTitle,
+          artist: songArtist,
+          excludeId: ownId,
+        ),
+        'vr8RaNuWjWc',
+      );
+    });
+
+    test('the label upload beats a fan "Entertainment" reupload', () {
+      Song row(String id, String channel) => Song(
+            id: id,
+            title:
+                'Falak Tak Song | Tashan | Akshay Kumar, Kareena Kapoor, Udit Narayan, Mahalaxmi Iyer, Vishal-Shekhar',
+            artist: channel,
+            thumbnailUrl: '',
+            duration: const Duration(minutes: 4),
+            videoId: id,
+            channel: channel,
+          );
+      final rows = [row('vr8RaNuWjWc', 'YRF'), row('mc69o7D-VXs', 'The House of Entertainment')];
+      expect(
+        pickPlain(
+          rows,
+          title: songTitle,
+          artist: songArtist,
+          excludeId: ownId,
+        ),
+        'vr8RaNuWjWc',
+      );
+      expect(
+        pickPlain(
+          [row('mc69o7D-VXs', 'The House of Entertainment')],
+          title: songTitle,
+          artist: songArtist,
+          excludeId: ownId,
         ),
         isNull,
       );
@@ -827,7 +909,7 @@ void main() {
     });
   });
 
-  group('bestPlainVideo', () {
+  group('pickOfficialVideo on plain rows', () {
     Song v(String id, String title, String channel) => Song(
           id: id,
           title: title,
@@ -840,7 +922,7 @@ void main() {
 
     test('prefers the artist-matched upload over a cover', () {
       expect(
-        YouTubeMusicSearch.bestPlainVideo(
+        pickPlain(
           [
             v('cover', 'Kesariya (Cover)', 'Raag Band'),
             v('official', 'Kesariya - Brahmastra | Arijit Singh',
@@ -856,7 +938,7 @@ void main() {
 
     test('skips Topic art tracks and the song itself', () {
       expect(
-        YouTubeMusicSearch.bestPlainVideo(
+        pickPlain(
           [
             v('atv', 'Kesariya', 'Arijit Singh - Topic'),
             v('self', 'Kesariya', 'Arijit Singh'),
@@ -872,7 +954,7 @@ void main() {
 
     test('a label lyric upload is skipped for the real video', () {
       expect(
-        YouTubeMusicSearch.bestPlainVideo(
+        pickPlain(
           [
             v('lyric', 'Kesariya - Official Lyric | Brahmastra',
                 'Sony Music India'),
@@ -888,7 +970,7 @@ void main() {
 
     test('a fan reupload with the plain title is skipped', () {
       expect(
-        YouTubeMusicSearch.bestPlainVideo(
+        pickPlain(
           [
             v('fan', 'Blinding Lights - The Weeknd', 'ButenkoDV'),
             v('real', 'The Weeknd - Blinding Lights (Official Video)',
@@ -901,7 +983,7 @@ void main() {
         'real',
       );
       expect(
-        YouTubeMusicSearch.bestPlainVideo(
+        pickPlain(
           [v('fan', 'Blinding Lights - The Weeknd', 'ButenkoDV')],
           title: 'Blinding Lights',
           artist: 'The Weeknd',
@@ -913,7 +995,7 @@ void main() {
 
     test('no title match returns null', () {
       expect(
-        YouTubeMusicSearch.bestPlainVideo(
+        pickPlain(
           [v('other', 'Apna Bana Le', 'Sony Music India')],
           title: 'Kesariya',
           artist: 'Arijit Singh',

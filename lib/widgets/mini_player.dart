@@ -24,10 +24,16 @@ class MiniPlayer extends StatelessWidget {
     // A player is already open (an artist page keeps a mini bar above it):
     // go back to it instead of stacking a second page with a second video.
     if (PlayerScreen.isOpen) {
-      Navigator.of(context)
-          .popUntil((route) => route.settings.name == PlayerScreen.routeName);
+      // Never pop past the first route: the predicate can only miss while the
+      // player is mid-close, and popUntil would then pop the home route too,
+      // leaving an empty (black) navigator.
+      Navigator.of(context).popUntil(isPlayerRouteOrFirst);
       return;
     }
+    // The player's close animation is still running, and a popping route
+    // ignores pointers, so this bar received the tap. Let the close finish;
+    // pushing now would stack a second player under the dying one.
+    if (PlayerScreen.isClosing) return;
     // The player's cover shares this bar's per-route Hero tag, so only the bar
     // that was tapped flies it.
     playerHeroTag = heroTag;

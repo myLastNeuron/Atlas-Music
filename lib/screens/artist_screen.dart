@@ -10,6 +10,7 @@ import '../widgets/artwork.dart';
 import '../widgets/liquid_background.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/play_helper.dart';
+import '../widgets/skeleton_card.dart';
 import '../widgets/song_actions.dart';
 import 'song_collection_screen.dart';
 
@@ -48,10 +49,10 @@ class _ArtistScreenState extends State<ArtistScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool showSpinner = true}) async {
     final gen = ++_gen;
     setState(() {
-      _loading = true;
+      if (showSpinner) _loading = true;
       _error = null;
     });
     try {
@@ -176,8 +177,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
                   textAlign: TextAlign.center,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.inkSoft)),
+                  style: TextStyle(fontSize: 13, color: AppColors.inkSoft)),
               const SizedBox(height: 16),
               OutlinedButton(onPressed: _load, child: const Text('Retry')),
             ],
@@ -212,25 +212,117 @@ class _ArtistScreenState extends State<ArtistScreen> {
     }
     final hasAlbums = page.albums.isNotEmpty;
     final hasSongs = page.songs.isNotEmpty;
-    final count = 1 +
-        (hasAlbums ? 2 : 0) +
-        (hasSongs ? 1 + page.songs.length : 0);
-    return ListView.builder(
-      key: const ValueKey('artist_content'),
-      physics: const BouncingScrollPhysics(),
+    final count =
+        1 + (hasAlbums ? 2 : 0) + (hasSongs ? 1 + page.songs.length : 0);
+    return RefreshSkeleton(
+      onRefresh: () => _load(showSpinner: false),
+      skeleton: _skeletonPage(),
+      child: ListView.builder(
+        key: const ValueKey('artist_content'),
+        physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics()),
+        padding: const EdgeInsets.only(top: 8, bottom: 190),
+        itemCount: count,
+        itemBuilder: (context, i) {
+          if (i == 0) return _header(page);
+          var idx = i - 1;
+          if (hasAlbums) {
+            if (idx == 0) return _albumsTitle();
+            if (idx == 1) return _albumsRail(page.albums);
+            idx -= 2;
+          }
+          if (idx == 0) return _songsTitle();
+          return _songTile(page.songs[idx - 1], idx - 1, page.songs);
+        },
+      ),
+    );
+  }
+
+  Widget _bar(double width, double height) => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: AppColors.line,
+          borderRadius: BorderRadius.circular(4),
+        ),
+      );
+
+  /// Mirrors the header, album rail and song tiles so a pull does not collapse
+  /// the page into unrelated rows.
+  Widget _skeletonPage() {
+    final hasAlbums = _page?.albums.isNotEmpty ?? false;
+    return ListView(
+      physics:
+          const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       padding: const EdgeInsets.only(top: 8, bottom: 190),
-      itemCount: count,
-      itemBuilder: (context, i) {
-        if (i == 0) return _header(page);
-        var idx = i - 1;
-        if (hasAlbums) {
-          if (idx == 0) return _albumsTitle();
-          if (idx == 1) return _albumsRail(page.albums);
-          idx -= 2;
-        }
-        if (idx == 0) return _songsTitle();
-        return _songTile(page.songs[idx - 1], idx - 1, page.songs);
-      },
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+          child: Column(
+            children: [
+              Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: AppColors.line,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _bar(180, 26),
+              const SizedBox(height: 4),
+              _bar(46, 16),
+            ],
+          ),
+        ),
+        if (hasAlbums) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _bar(150, 22),
+            ),
+          ),
+          SizedBox(
+            height: 196,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: 4,
+              itemBuilder: (_, __) => Container(
+                width: 140,
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 140,
+                      height: 140,
+                      decoration: BoxDecoration(
+                        color: AppColors.line,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _bar(140, 15),
+                    const SizedBox(height: 6),
+                    _bar(50, 13),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: _bar(60, 22),
+          ),
+        ),
+        for (var i = 0; i < 6; i++) const SkeletonListItem(),
+      ],
     );
   }
 
@@ -265,8 +357,7 @@ class _ArtistScreenState extends State<ArtistScreen> {
             ],
           ),
           const SizedBox(height: 4),
-          Text('Artist',
-              style: TextStyle(fontSize: 13, color: AppColors.mute)),
+          Text('Artist', style: TextStyle(fontSize: 13, color: AppColors.mute)),
         ],
       ),
     );
@@ -337,30 +428,37 @@ class _ArtistScreenState extends State<ArtistScreen> {
 
   Widget _songTile(Song song, int i, List<Song> songs) {
     return MotionPress(
-      child: ListTile(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        leading: Artwork(song.thumbnailUrl, size: 48, radius: 10),
-        title: Text(song.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: AppColors.ink)),
-        subtitle: Text(
-            song.duration.inSeconds > 0
-                ? formatClock(song.duration)
-                : song.artist,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
-        trailing: SongMenuButton(
-          song: song,
-          queue: songs,
-          index: i,
-          queueOrigin: 'artist',
+      child: SongLongPress(
+        song: song,
+        queue: songs,
+        index: i,
+        queueOrigin: 'artist',
+        child: ListTile(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+          leading: Artwork(song.thumbnailUrl, size: 48, radius: 10),
+          title: Text(song.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.ink)),
+          subtitle: Text(
+              song.duration.inSeconds > 0
+                  ? formatClock(song.duration)
+                  : song.artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: AppColors.inkSoft, fontSize: 12)),
+          trailing: SongMenuButton(
+            song: song,
+            queue: songs,
+            index: i,
+            queueOrigin: 'artist',
+          ),
+          onTap: () => _playSong(song, songs),
         ),
-        onTap: () => _playSong(song, songs),
       ),
     );
   }
