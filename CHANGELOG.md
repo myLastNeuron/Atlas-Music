@@ -4,6 +4,38 @@ All notable changes to Atlas Music are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Full-screen video controls**: the landscape video now has a tap-to-show
+  overlay with a timeline, previous/next song and play/pause. Double-tapping
+  the left or right half seeks 10 seconds back or forward, and the controls
+  fade after three seconds while the video plays. The square video and the
+  player's own controls are unchanged.
+
+### Changed
+- **The player grows out of the mini bar**: tapping the bar now turns the bar
+  itself into the full player. The card starts as the bar's own rectangle and
+  its edges morph into the player's — the top sweeps up, the bottom down and
+  the sides out to the window — while the corners unfurl from the bar's 22 px
+  to square. The card's surface fades in over the first third, the page behind
+  it is fully visible by four fifths, and the cover artwork flies from the
+  thumbnail into the big cover on the same curve over the same 260 ms. Closing
+  is that trip in reverse: the card collapses and
+  lands back on the bar before the route goes. The screen below stays put the
+  whole way, so the bar never dissolves under the card, and the page keeps the
+  window's size while only the card's edges move — nothing is rebuilt or
+  re-rasterised per frame. The rows that tick on their own (seek, transport,
+  video, stats) and the blocks that change when the held updates land (heart,
+  up-next) carry their own repaint boundaries, the cover art is decoded once at
+  the same size the flight and the mini bar use (a layout change rescales that
+  bitmap instead of decoding it again), and the held updates are applied on the
+  frame after the card lands — so the frame that closes the flight does no page
+  work and the card's edges meet the screen cleanly. Quicker and smoother than
+  the container transform it
+  replaces (and the 420 ms cross-fade before that, which read as a separate
+  page fading in over the player).
+
 ## [2.3.2] - 2026-11-08
 
 ### Added

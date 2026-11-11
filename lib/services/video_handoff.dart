@@ -27,6 +27,15 @@ Duration mappedSongPosition({
   return target;
 }
 
+/// Target for a relative seek (the full-screen ±10 s double tap), kept inside
+/// the video. An unknown duration leaves a forward seek unclamped.
+Duration videoSeekTarget(Duration position, Duration delta, Duration duration) {
+  final target = position + delta;
+  if (target < Duration.zero) return Duration.zero;
+  if (duration > Duration.zero && target > duration) return duration;
+  return target;
+}
+
 /// The video of the moment, wherever it is on screen.
 ///
 /// One controller is rendered by whichever surface shows it — the mini player's

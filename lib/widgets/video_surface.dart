@@ -10,6 +10,7 @@ import '../models/song.dart';
 import '../services/audio_service.dart';
 import '../services/video_handoff.dart';
 import '../theme/app_theme.dart';
+import 'app_transitions.dart';
 import 'artwork.dart';
 
 /// The current track's video, rendered in the same square the artwork uses.
@@ -595,6 +596,14 @@ class _VideoSurfaceState extends State<VideoSurface>
         pageBuilder: (_, __, ___) => _FullscreenVideo(
           controller: c,
           onToggle: _toggle,
+          onPrevious: () {
+            final audio = _audio;
+            if (audio != null) unawaited(audio.playPrevious());
+          },
+          onNext: () {
+            final audio = _audio;
+            if (audio != null) unawaited(audio.playNext(0, true));
+          },
           onChromeRestore: _restoreChrome,
         ),
         transitionsBuilder: (_, __, ___, child) => child,
@@ -624,12 +633,21 @@ class _VideoSurfaceState extends State<VideoSurface>
       // mini player was still showing. Here only the stateless frame is swapped.
       child: Hero(
         tag: playerHeroTag,
-        createRectTween: (begin, end) =>
-            PlayerRectTween(begin: begin, end: end),
+        // Linear: the player's curve is applied by the rect tween instead, so
+        // the video and the card around it move as one.
+        curve: Curves.linear,
+        // Opening, this frame is the flight's destination, so it settles onto
+        // the full player on the open curve.
+        createRectTween: (b, e) => PlayerFlightRectTween(
+          begin: b,
+          end: e,
+          curve: AppMotion.playerOpenCurve,
+        ),
         flightShuttleBuilder: (ctx, anim, dir, from, to) => CoverFlightShuttle(
           widget.song.thumbnailUrl,
           songId: widget.song.id,
           animation: anim,
+          curve: playerFlightCurve(dir),
         ),
         placeholderBuilder: (context, size, child) => SizedBox(
           width: size.width,
@@ -726,11 +744,15 @@ class _VideoSurfaceState extends State<VideoSurface>
 class _FullscreenVideo extends StatefulWidget {
   final VideoPlayerController controller;
   final VoidCallback onToggle;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
   final VoidCallback onChromeRestore;
 
   const _FullscreenVideo({
     required this.controller,
     required this.onToggle,
+    required this.onPrevious,
+    required this.onNext,
     required this.onChromeRestore,
   });
 
@@ -739,19 +761,192 @@ class _FullscreenVideo extends StatefulWidget {
 }
 
 class _FullscreenVideoState extends State<_FullscreenVideo> {
+  static const _hideAfter = Duration(seconds: 3);
+  static const _skip = Duration(seconds: 10);
+
+  Timer? _hideTimer;
+  Timer? _hintTimer;
+  bool _controls = true;
+  bool _wasPlaying = false;
+  Offset? _doubleTapAt;
+  String? _hint;
+  double? _dragValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _wasPlaying = widget.controller.value.isPlaying;
+    widget.controller.addListener(_onValue);
+    _scheduleHide();
+  }
+
   @override
   void dispose() {
+    _hideTimer?.cancel();
+    _hintTimer?.cancel();
+    widget.controller.removeListener(_onValue);
     widget.onChromeRestore();
     super.dispose();
   }
 
+  /// Pausing keeps the controls up; resuming lets them fade again.
+  void _onValue() {
+    if (!mounted) return;
+    final playing = widget.controller.value.isPlaying;
+    if (playing == _wasPlaying) return;
+    _wasPlaying = playing;
+    if (playing) {
+      _showControls();
+    } else {
+      _hideTimer?.cancel();
+      if (!_controls) setState(() => _controls = true);
+    }
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    if (!_controls || !widget.controller.value.isPlaying) return;
+    _hideTimer = Timer(_hideAfter, () {
+      if (mounted) setState(() => _controls = false);
+    });
+  }
+
+  void _showControls() {
+    _hideTimer?.cancel();
+    if (!_controls) setState(() => _controls = true);
+    _scheduleHide();
+  }
+
+  void _onTap() {
+    if (!_controls) {
+      _showControls();
+      return;
+    }
+    // A paused video keeps its controls: hiding them would hide the only way
+    // back into playback.
+    if (widget.controller.value.isPlaying) {
+      _hideTimer?.cancel();
+      setState(() => _controls = false);
+    }
+  }
+
+  void _onDoubleTap() {
+    final at = _doubleTapAt;
+    if (at == null) return;
+    final forward = at.dx >= MediaQuery.sizeOf(context).width / 2;
+    _seekBy(forward ? _skip : -_skip);
+  }
+
+  void _seekBy(Duration delta) {
+    final value = widget.controller.value;
+    final target = videoSeekTarget(value.position, delta, value.duration);
+    unawaited(widget.controller.seekTo(target).catchError((_) {}));
+    _showHint(delta.isNegative ? '-10s' : '+10s');
+    _showControls();
+  }
+
+  void _showHint(String text) {
+    _hintTimer?.cancel();
+    setState(() => _hint = text);
+    _hintTimer = Timer(const Duration(milliseconds: 650), () {
+      if (mounted) setState(() => _hint = null);
+    });
+  }
+
+  Widget _controlsBar(VideoPlayerValue value) {
+    final duration = value.duration;
+    final max =
+        duration.inMilliseconds > 0 ? duration.inMilliseconds.toDouble() : 1.0;
+    final position = _dragValue ?? value.position.inMilliseconds.toDouble();
+    final shown = Duration(milliseconds: (_dragValue ?? position).round());
+    const clock = TextStyle(color: Colors.white70, fontSize: 12);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              activeTrackColor: Colors.white,
+              inactiveTrackColor: Colors.white24,
+              thumbColor: Colors.white,
+              overlayColor: Colors.white24,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+            ),
+            child: Slider(
+              value: position.clamp(0.0, max),
+              max: max,
+              onChangeStart: (_) => _hideTimer?.cancel(),
+              onChanged: (v) => setState(() => _dragValue = v),
+              onChangeEnd: (v) {
+                unawaited(widget.controller
+                    .seekTo(Duration(milliseconds: v.round()))
+                    .catchError((_) {}));
+                setState(() => _dragValue = null);
+                _scheduleHide();
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(formatClock(shown), style: clock),
+                Text(formatClock(duration), style: clock),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                key: const ValueKey('video_fullscreen_previous'),
+                tooltip: 'Previous song',
+                iconSize: 32,
+                color: Colors.white,
+                onPressed: widget.onPrevious,
+                icon: const Icon(Icons.skip_previous),
+              ),
+              const SizedBox(width: 24),
+              IconButton(
+                key: const ValueKey('video_fullscreen_play'),
+                tooltip: value.isPlaying ? 'Pause' : 'Play',
+                iconSize: 46,
+                color: Colors.white,
+                onPressed: widget.onToggle,
+                icon: Icon(value.isPlaying
+                    ? Icons.pause_circle_filled
+                    : Icons.play_circle_filled),
+              ),
+              const SizedBox(width: 24),
+              IconButton(
+                key: const ValueKey('video_fullscreen_next'),
+                tooltip: 'Next song',
+                iconSize: 32,
+                color: Colors.white,
+                onPressed: widget.onNext,
+                icon: const Icon(Icons.skip_next),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final fade = AppMotion.dur(context, AppMotion.micro);
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: widget.onToggle,
+        onTap: _onTap,
+        onDoubleTapDown: (details) => _doubleTapAt = details.localPosition,
+        onDoubleTap: _onDoubleTap,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -765,18 +960,84 @@ class _FullscreenVideoState extends State<_FullscreenVideo> {
                 child: VideoPlayer(widget.controller),
               ),
             ),
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topRight,
-                child: IconButton(
-                  key: const ValueKey('video_fullscreen_exit'),
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.fullscreen_exit),
-                  color: Colors.white,
-                  tooltip: 'Exit full screen',
+            // Scrims only: never take a tap away from the gesture layer.
+            IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: _controls ? 1 : 0,
+                duration: fade,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0x99000000),
+                        Color(0x00000000),
+                        Color(0x00000000),
+                        Color(0xB3000000),
+                      ],
+                      stops: [0, 0.22, 0.68, 1],
+                    ),
+                  ),
                 ),
               ),
             ),
+            IgnorePointer(
+              ignoring: !_controls,
+              child: AnimatedOpacity(
+                opacity: _controls ? 1 : 0,
+                duration: fade,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    SafeArea(
+                      child: Align(
+                        alignment: Alignment.topRight,
+                        child: IconButton(
+                          key: const ValueKey('video_fullscreen_exit'),
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.fullscreen_exit),
+                          color: Colors.white,
+                          tooltip: 'Exit full screen',
+                        ),
+                      ),
+                    ),
+                    SafeArea(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: ValueListenableBuilder<VideoPlayerValue>(
+                          valueListenable: widget.controller,
+                          builder: (context, value, _) => _controlsBar(value),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_hint != null)
+              IgnorePointer(
+                child: Center(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      child: Text(
+                        _hint!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

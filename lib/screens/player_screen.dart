@@ -59,6 +59,50 @@ class PlayerScreen extends StatefulWidget {
 bool isPlayerRouteOrFirst(Route<dynamic> route) =>
     route.isFirst || route.settings.name == PlayerScreen.routeName;
 
+/// Holds player-page updates that land while the open flight is running.
+///
+/// The like, the artwork colour and the up-next peek all arrive a few frames
+/// after the page mounts — inside the 260 ms card flight. Each one rebuilds the
+/// page, and the gradient / heart / peek rows change render objects inside the
+/// page's RepaintBoundary, so its window-sized layer is re-rasterised for the
+/// rest of the flight. Holding them and applying them together, once the route
+/// settles, leaves the end state identical; only the moment changes.
+///
+/// Pure (no plugins), unit-tested in test/player_screen_transition_cost_test.dart.
+class FlightHold {
+  FlightHold(this._rebuild);
+
+  /// Rebuilds the player with [update] applied.
+  final void Function(VoidCallback update) _rebuild;
+  final List<VoidCallback> _held = [];
+
+  /// Whether updates are held. True while the route animation runs; set from
+  /// the route so a page opened without a flight applies updates immediately.
+  bool holding = true;
+
+  /// Applies [update] now, or holds it until [release].
+  void apply(VoidCallback update) {
+    if (holding) {
+      _held.add(update);
+      return;
+    }
+    _rebuild(update);
+  }
+
+  /// Applies every held update in a single rebuild.
+  void release() {
+    holding = false;
+    if (_held.isEmpty) return;
+    final held = List<VoidCallback>.of(_held);
+    _held.clear();
+    _rebuild(() {
+      for (final update in held) {
+        update();
+      }
+    });
+  }
+}
+
 class _PlayerScreenState extends State<PlayerScreen>
     with SingleTickerProviderStateMixin {
   final StorageService _storageService = StorageService();
@@ -104,6 +148,13 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   /// The route whose animation tells us when the player starts closing.
   ModalRoute<dynamic>? _route;
+
+  /// Holds the async results that land while the open flight is still running:
+  /// each one rebuilds the whole page, and a changed render object inside it
+  /// (the accent gradient, the heart) re-rasterises the page's window-sized
+  /// layer on every remaining frame of the flight. Released in one rebuild when
+  /// the route settles.
+  late final FlightHold _flightHold = FlightHold((update) => setState(update));
 
   @override
   void initState() {
@@ -162,6 +213,15 @@ class _PlayerScreenState extends State<PlayerScreen>
         status == AnimationStatus.completed) {
       PlayerScreen._closing = false;
     }
+    // The card has landed: apply what was held for the flight, once. On the
+    // frame *after* the landing, not on it: the last frame of the flight is
+    // the one that must not do any page work, or the animation stalls exactly
+    // as its edges meet the screen.
+    if (status == AnimationStatus.completed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _flightHold.release();
+      });
+    }
   }
 
   @override
@@ -172,6 +232,12 @@ class _PlayerScreenState extends State<PlayerScreen>
       _route?.animation?.removeStatusListener(_onRouteStatus);
       _route = route;
       route?.animation?.addStatusListener(_onRouteStatus);
+      // The first frame of an entrance builds the route offstage, where it
+      // reports a completed animation: that frame is the start of the flight,
+      // not its end. A player with no route animation applies updates at once.
+      final animation = route?.animation;
+      _flightHold.holding =
+          animation != null && (route!.offstage || !animation.isCompleted);
     }
     _syncLiked();
     _syncBreath();
@@ -202,7 +268,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     final key = _audio?.upcoming.take(2).map((s) => s.id).join('|') ?? '';
     if (key == _upcomingKey) return;
     _upcomingKey = key;
-    if (mounted) setState(() {});
+    if (mounted) _flightHold.apply(() {});
   }
 
   /// Song/Video is a saved choice, so it also survives a track change: the
@@ -223,7 +289,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _likedForId = cur.id;
     final liked = await _storageService.isSongLiked(cur.id);
     if (mounted && _likedForId == cur.id) {
-      setState(() => _isLiked = liked);
+      _flightHold.apply(() => _isLiked = liked);
     }
   }
 
@@ -434,16 +500,19 @@ class _PlayerScreenState extends State<PlayerScreen>
                               // The Hero is inside the surface: it must not
                               // wrap an owning widget, or the flight would
                               // recreate it and re-park the video
-                              // mid-transition.
-                              ? VideoSurface(
-                                  key: ValueKey('video_${song.id}'),
-                                  song: song,
-                                  size: side,
-                                  // The page keeps Video as the saved mode: a
-                                  // close parks the video instead of handing
-                                  // playback back to the audio.
-                                  keepPlayingOnDetach: () => _videoMode,
-                                  controller: _videoController,
+                              // mid-transition. The boundary keeps its
+                              // per-frame frame updates off the page raster.
+                              ? RepaintBoundary(
+                                  child: VideoSurface(
+                                    key: ValueKey('video_${song.id}'),
+                                    song: song,
+                                    size: side,
+                                    // The page keeps Video as the saved mode: a
+                                    // close parks the video instead of handing
+                                    // playback back to the audio.
+                                    keepPlayingOnDetach: () => _videoMode,
+                                    controller: _videoController,
+                                  ),
                                 )
                               : _cover(song, artPath, side),
                         );
@@ -451,35 +520,58 @@ class _PlayerScreenState extends State<PlayerScreen>
                     ),
                   ),
                   const SizedBox(height: 18),
-                  _titleBlock(song, canOpenArtist),
+                  // Own boundary: the heart lands a few frames into the open
+                  // (see FlightHold). Without one, that tiny swap repaints the
+                  // whole window-sized page at the very frame the card lands.
+                  RepaintBoundary(child: _titleBlock(song, canOpenArtist)),
                   const SizedBox(height: 10),
                   // The video may be a different music video: these stats
                   // belong to the song's own art-track id.
+                  // Own boundary: the stats land from the network after the
+                  // page is up. Inside the page's single boundary their
+                  // setState would re-raster the window-sized page.
                   if (!_videoMode)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: VideoStatsBar(videoId: song.videoId ?? song.id),
+                    RepaintBoundary(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: VideoStatsBar(videoId: song.videoId ?? song.id),
+                      ),
                     ),
+                  // Own boundary on both states, so the peek landing (a few
+                  // frames into the open, see FlightHold) and the skeleton's
+                  // pulse repaint this strip only, not the window-sized page.
                   if (upcoming.isNotEmpty) ...[
                     const SizedBox(height: 12),
-                    _upNextBlock(upcoming),
+                    RepaintBoundary(child: _upNextBlock(upcoming)),
                     const SizedBox(height: 12),
                   ] else if (isLoading || upNextLoading) ...[
                     // The queue grows asynchronously, so "nothing next" while a
                     // load or a refill is running means "not known yet", not
-                    // "the queue ended".
+                    // "the queue ended". A refill only starts while nothing is
+                    // queued, and this placeholder is exactly as tall as the two
+                    // real rows it stands in for, so the cover keeps its size
+                    // when they land. Never reserve without a load running: a
+                    // placeholder that no rows replace would collapse after the
+                    // flight and resize (and re-decode) the cover right there.
                     const SizedBox(height: 12),
-                    const _UpNextSkeleton(),
+                    const RepaintBoundary(child: _UpNextSkeleton()),
                     const SizedBox(height: 12),
                   ],
-                  _PlayerSlider(
-                    accent: accent,
-                    videoMode: _videoMode,
-                    video: _videoController,
+                  // Own boundary: this row repaints on every position tick (and
+                  // on every video tick in Video mode). Inside the page's single
+                  // boundary that would re-raster the whole window each time.
+                  RepaintBoundary(
+                    child: _PlayerSlider(
+                      accent: accent,
+                      videoMode: _videoMode,
+                      video: _videoController,
+                    ),
                   ),
                   const SizedBox(height: 4),
-                  _transport(audioService, isPlaying, shuffle, loop, accent,
-                      isLoading),
+                  RepaintBoundary(
+                    child: _transport(audioService, isPlaying, shuffle, loop,
+                        accent, isLoading),
+                  ),
                   const SizedBox(height: 16),
                   _actionRow(song, audioService),
                 ] else ...[
@@ -506,7 +598,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     _accent = null;
     dominantArtworkColor(song.thumbnailUrl, filePath: artPath).then((color) {
       if (!mounted || _accentFor != song.id) return;
-      setState(() => _accent = color);
+      _flightHold.apply(() => _accent = color);
     });
   }
 
@@ -538,17 +630,28 @@ class _PlayerScreenState extends State<PlayerScreen>
                   // Same per-route tag the tapping mini bar stored: the cover only
                   // flies when that exact bar is the source.
                   tag: playerHeroTag,
-                  createRectTween: (begin, end) =>
-                      PlayerRectTween(begin: begin, end: end),
+                  // Linear: the player's curve is applied by the rect tween
+                  // instead, so the cover and the card around it move as one.
+                  curve: Curves.linear,
+                  // Opening, this cover is the flight's destination, so it
+                  // settles onto the full player on the open curve.
+                  createRectTween: (b, e) => PlayerFlightRectTween(
+                    begin: b,
+                    end: e,
+                    curve: AppMotion.playerOpenCurve,
+                  ),
                   // The cover morphs into the big cover on open and back onto the
                   // thumb on close.
                   flightShuttleBuilder: (ctx, anim, dir, from, to) =>
                       CoverFlightShuttle(song.thumbnailUrl,
-                          filePath: artPath, songId: song.id, animation: anim),
+                          filePath: artPath,
+                          songId: song.id,
+                          animation: anim,
+                          curve: playerFlightCurve(dir)),
                   // The landing spot stays empty while the shuttle flies. It is
                   // still mounted (Offstage) so it is already decoded when the
                   // shuttle lands instead of blinking in. Hiding it on close too
-                  // keeps a second copy from sitting under the shrinking page.
+                  // keeps a second copy from sitting there under the shuttle.
                   placeholderBuilder: (context, size, child) => SizedBox(
                     width: size.width,
                     height: size.height,
@@ -585,6 +688,12 @@ class _PlayerScreenState extends State<PlayerScreen>
                         size: size,
                         radius: 22,
                         fit: BoxFit.cover,
+                        // One bitmap for the whole player: the same size the
+                        // cover flight and the mini bar decode. The cover's box
+                        // is whatever the fixed rows leave over, so keying the
+                        // cache on it meant the artwork decoded again (and
+                        // blinked) whenever the up-next peek changed the height.
+                        decodeWidth: coverLogicalSize(context),
                       ),
                     ),
                   ),

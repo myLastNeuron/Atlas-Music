@@ -23,6 +23,13 @@ class Artwork extends StatelessWidget {
   final BoxFit fit;
   final bool fillWidth;
 
+  /// Decode width in logical pixels, when the rendered box is the wrong thing
+  /// to key the cache on. The player's cover passes the window-derived size the
+  /// cover flight and the mini player already use, so the artwork is decoded
+  /// once and a layout change (the up-next peek landing, a rotation) rescales
+  /// that bitmap instead of decoding a new one.
+  final double? decodeWidth;
+
   const Artwork(
     this.url, {
     super.key,
@@ -33,6 +40,7 @@ class Artwork extends StatelessWidget {
     this.height,
     this.fit = BoxFit.cover,
     this.fillWidth = false,
+    this.decodeWidth,
   });
 
   @override
@@ -41,7 +49,8 @@ class Artwork extends StatelessWidget {
     final computedSize = size ?? (mq.size.width * 0.4).clamp(100, 300);
     final w = width ?? computedSize;
     final h = height ?? (width ?? computedSize);
-    final px = ((width ?? computedSize) * mq.devicePixelRatio).round();
+    final px =
+        ((decodeWidth ?? width ?? computedSize) * mq.devicePixelRatio).round();
     // Prefer a downloaded high-res cover (the notification's file) when
     // present; it is validated at 480px+ so large renderings stay sharp.
     final local = filePath;
@@ -167,17 +176,6 @@ ImageProvider playerCoverProvider(
       px, null, CachedNetworkImageProvider(url, cacheKey: url));
 }
 
-/// Hero rect tween for the full-player cover. Heroes are animated by the raw
-/// route animation, skipping the curve [buildPlayerTransition] applies, so
-/// the rect is curved here with the same constant. Without it the cover
-/// travels linearly while its page eases and visibly lags behind.
-class PlayerRectTween extends MaterialRectArcTween {
-  PlayerRectTween({super.begin, super.end});
-
-  @override
-  Rect lerp(double t) => super.lerp(AppMotion.player.transform(t));
-}
-
 /// Full-bleed cover for a Hero flight between the mini player and the full
 /// player. It fills whatever rect the flight animates, so the thumb can morph
 /// into the large cover without [Artwork]'s fixed-size layout clipping or
@@ -186,11 +184,16 @@ class PlayerRectTween extends MaterialRectArcTween {
 /// One image, always the player's cover bitmap. The square is an opaque card
 /// from the first frame, so nothing of the page behind it can show through and
 /// nothing is scaled up from the thumb. The corner radius rides the flight too,
-/// instead of snapping 10 → 20 on landing.
+/// instead of snapping 10 → 20 on landing, eased on the same clock as the rect.
 class CoverFlightShuttle extends StatelessWidget {
   final String url;
   final String? filePath;
   final Animation<double> animation;
+
+  /// The curve the flight runs on. The Hero's own animation is linear (the
+  /// player's curve lives in its rect tween), so the radius has to ease itself
+  /// to stay glued to the rect instead of running ahead of it.
+  final Curve curve;
 
   /// The song whose video may be the thing that should fly. When Video mode has
   /// a live video for it, the flight carries the running video instead of the
@@ -207,6 +210,7 @@ class CoverFlightShuttle extends StatelessWidget {
     this.filePath,
     this.songId,
     required this.animation,
+    required this.curve,
     this.beginRadius = 10,
     this.endRadius = 22,
   });
@@ -234,9 +238,10 @@ class CoverFlightShuttle extends StatelessWidget {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, child) => ClipRRect(
+        // Eased on the flight's own clock, so the corners and the square never
+        // drift apart.
         borderRadius: BorderRadius.circular(beginRadius +
-            (endRadius - beginRadius) *
-                AppMotion.player.transform(animation.value)),
+            (endRadius - beginRadius) * curve.transform(animation.value)),
         child: child,
       ),
       // Listens, so a video that is dropped mid-flight (the audio took over)

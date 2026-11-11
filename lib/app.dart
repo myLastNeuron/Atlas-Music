@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import 'screens/auto_finds_screen.dart';
+import 'screens/player_screen.dart';
 import 'screens/welcome_flow.dart';
 import 'services/auto_listen.dart';
 import 'services/identify_bridge.dart';
@@ -13,6 +14,28 @@ import 'services/theme_settings.dart';
 import 'services/user_prefs.dart';
 import 'widgets/app_transitions.dart';
 import 'widgets/identify_sheet.dart';
+
+/// Keeps [playerRouteAbove] in step with the navigator. The route below the
+/// player must not fade while the player's card grows over it: the card grows
+/// out of the mini bar, so that bar has to stay put and visible.
+class _PlayerRouteObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    playerRouteAbove = route.settings.name == PlayerScreen.routeName;
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    // Still true while the player pops: the card shrinks back into the bar,
+    // which must not fade in beneath it.
+    playerRouteAbove = route.settings.name == PlayerScreen.routeName;
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    playerRouteAbove = previousRoute?.settings.name == PlayerScreen.routeName;
+  }
+}
 
 class AtlasMusicApp extends StatefulWidget {
   const AtlasMusicApp({super.key});
@@ -23,6 +46,7 @@ class AtlasMusicApp extends StatefulWidget {
 
 class _AtlasMusicAppState extends State<AtlasMusicApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
+  final _playerRouteObserver = _PlayerRouteObserver();
   StreamSubscription<void>? _identifySub;
   StreamSubscription<void>? _historySub;
   StreamSubscription<void>? _autoStartSub;
@@ -136,6 +160,7 @@ class _AtlasMusicAppState extends State<AtlasMusicApp> {
       title: 'Atlas Music',
       debugShowCheckedModeBanner: false,
       navigatorKey: _navigatorKey,
+      navigatorObservers: [_playerRouteObserver],
       theme: AppTheme.build(),
       home: const WelcomeScreen(),
     );

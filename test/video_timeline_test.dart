@@ -66,6 +66,35 @@ void main() {
     );
   });
 
+  test('a relative seek moves from the current position', () {
+    expect(
+      videoSeekTarget(const Duration(seconds: 30), const Duration(seconds: 10),
+          const Duration(minutes: 3)),
+      const Duration(seconds: 40),
+    );
+  });
+
+  test('a relative seek never goes below zero or past the end', () {
+    expect(
+      videoSeekTarget(const Duration(seconds: 4), const Duration(seconds: -10),
+          const Duration(minutes: 3)),
+      Duration.zero,
+    );
+    expect(
+      videoSeekTarget(const Duration(seconds: 175), const Duration(seconds: 10),
+          const Duration(minutes: 3)),
+      const Duration(minutes: 3),
+    );
+  });
+
+  test('an unknown duration leaves a forward seek unclamped', () {
+    expect(
+      videoSeekTarget(const Duration(seconds: 4), const Duration(seconds: 10),
+          Duration.zero),
+      const Duration(seconds: 14),
+    );
+  });
+
   test('video loading is scoped to the song being loaded', () {
     final handoff = VideoHandoff();
     handoff.loading('a');

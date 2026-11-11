@@ -16,8 +16,31 @@ import 'song_actions.dart';
 /// Floating glass mini player. Thumb+text navigate; transport buttons sit
 /// strictly outside the nav InkWell so skip taps never push routes. The bar
 /// follows the app's transparency setting.
-class MiniPlayer extends StatelessWidget {
+class MiniPlayer extends StatefulWidget {
   const MiniPlayer({super.key});
+
+  @override
+  State<MiniPlayer> createState() => _MiniPlayerState();
+}
+
+class _MiniPlayerState extends State<MiniPlayer> {
+  /// The track whose full-size cover is already decoded. The flight inside the
+  /// player uses a ~936 px bitmap, so decoding it after the tap lands mid-
+  /// flight and the first frames paint the fallback card: warm it when the
+  /// track changes instead. Guarded here because the bar rebuilds on every
+  /// transport change.
+  String? _warmedCover;
+
+  void _warmCover(Song song, String? artPath) {
+    final key = '${song.id}\u0000${artPath ?? ''}';
+    if (key == _warmedCover) return;
+    _warmedCover = key;
+    unawaited(precacheImage(
+      playerCoverProvider(context, song.thumbnailUrl, filePath: artPath),
+      context,
+      onError: (_, __) {},
+    ));
+  }
 
   void _openPlayer(
       BuildContext context, String heroTag, Song song, String? artPath) {
@@ -37,6 +60,12 @@ class MiniPlayer extends StatelessWidget {
     // The player's cover shares this bar's per-route Hero tag, so only the bar
     // that was tapped flies it.
     playerHeroTag = heroTag;
+    // Where this bar is on screen right now: the player's transition collapses
+    // into exactly this rect on the way back, so the card lands on the bar.
+    final box = context.findRenderObject();
+    playerCardFrom = box is RenderBox && box.hasSize
+        ? box.localToGlobal(Offset.zero) & box.size
+        : null;
     // Warm the exact bitmap the flight and the player's cover use: decoded
     // before the route builds, the shuttle's first frame is the artwork.
     unawaited(precacheImage(
@@ -153,6 +182,8 @@ class MiniPlayer extends StatelessWidget {
     }
 
     final loading = isLoading && !playing;
+    // The cover the flight needs, decoded before the tap instead of during it.
+    _warmCover(song, artPath);
     // Route-scoped Hero tag: only a bar on the route this player is pushed from
     // can be the flight source. One global tag let any other MiniPlayer in the
     // stack (an artist page) grab the full-size cover.
@@ -192,8 +223,21 @@ class MiniPlayer extends StatelessWidget {
                       children: [
                         Hero(
                           tag: heroTag,
-                          createRectTween: (begin, end) =>
-                              PlayerRectTween(begin: begin, end: end),
+                          // Linear: the player's curve is applied by the rect
+                          // tween instead, so the cover and the card around it
+                          // move as one.
+                          curve: Curves.linear,
+                          // Closing, this bar is the flight's destination, so
+                          // the cover settles back into it on the close curve.
+                          // The flight rect's own clock still runs forward on a
+                          // close (Flutter reverses the route for the tween),
+                          // so the curve is mirrored to keep the cover on the
+                          // same motion as the card collapsing around it.
+                          createRectTween: (b, e) => PlayerFlightRectTween(
+                            begin: b,
+                            end: e,
+                            curve: AppMotion.playerCloseCurve.flipped,
+                          ),
                           // The square morphs thumb -> big cover (or the live
                           // video, in Video mode) on open and back on close;
                           // nothing else moves.
@@ -201,11 +245,12 @@ class MiniPlayer extends StatelessWidget {
                               CoverFlightShuttle(song.thumbnailUrl,
                                   filePath: artPath,
                                   songId: song.id,
-                                  animation: anim),
+                                  animation: anim,
+                                  curve: playerFlightCurve(dir)),
                           // Hidden, but still mounted so it is decoded when the
-                          // shuttle lands. The player page fades in over this
-                          // bar, so a thumb left painting here would show as a
-                          // second artwork behind the flying cover.
+                          // shuttle lands. Closing reveals this bar while the
+                          // cover is still flying, so a thumb left painting
+                          // here would show as a second artwork beside it.
                           placeholderBuilder: (context, size, child) =>
                               SizedBox(
                             width: size.width,

@@ -42,26 +42,32 @@ class AppColors {
       };
 
   /// Hairline.
-  static Color get line =>
-      mode == AppPalette.light ? const Color(0x1F000000) : const Color(0x24FFFFFF);
+  static Color get line => mode == AppPalette.light
+      ? const Color(0x1F000000)
+      : const Color(0x24FFFFFF);
 
   /// Primary text and icon.
-  static Color get ink =>
-      mode == AppPalette.light ? const Color(0xFF13131A) : const Color(0xFFFFFFFF);
+  static Color get ink => mode == AppPalette.light
+      ? const Color(0xFF13131A)
+      : const Color(0xFFFFFFFF);
 
-  static Color get inkSoft =>
-      mode == AppPalette.light ? const Color(0xFF4C4C57) : const Color(0xFFC6C6CE);
+  static Color get inkSoft => mode == AppPalette.light
+      ? const Color(0xFF4C4C57)
+      : const Color(0xFFC6C6CE);
 
-  static Color get mute =>
-      mode == AppPalette.light ? const Color(0xFF7E7E89) : const Color(0xFF9A9AA3);
+  static Color get mute => mode == AppPalette.light
+      ? const Color(0xFF7E7E89)
+      : const Color(0xFF9A9AA3);
 
   /// The one filled primary action surface (buttons, selected chips).
-  static Color get action =>
-      mode == AppPalette.light ? const Color(0xFF16161D) : const Color(0xFFFFFFFF);
+  static Color get action => mode == AppPalette.light
+      ? const Color(0xFF16161D)
+      : const Color(0xFFFFFFFF);
 
   /// Content drawn on [action].
-  static Color get charcoal =>
-      mode == AppPalette.light ? const Color(0xFFFFFFFF) : const Color(0xFF18181B);
+  static Color get charcoal => mode == AppPalette.light
+      ? const Color(0xFFFFFFFF)
+      : const Color(0xFF18181B);
 
   /// Glass base for menus, dialogs, sheets, cards and panels. The transparency
   /// level (see [GlassSettings]) decides how much of the backdrop shows
@@ -74,7 +80,8 @@ class AppColors {
 
   /// Frosted-glass rim, kept low so no hard edge shows.
   static Color get glassBorder =>
-      (mode == AppPalette.light ? Colors.black : Colors.white).withValues(alpha: 0.10);
+      (mode == AppPalette.light ? Colors.black : Colors.white)
+          .withValues(alpha: 0.10);
 
   /// Errors and destructive text.
   static Color get danger => mode == AppPalette.light
@@ -121,16 +128,22 @@ class AppMotion {
   static const emphasized = Cubic(0.2, 0.0, 0.0, 1.0);
   static const spring = Curves.easeOutBack;
 
-  /// Full-player morph curve. The surface and the cover travel together, so a
-  /// hard ease-out start snaps; this one eases in, glides, then settles.
-  /// Shared by the reveal window, the Hero rect and the cover radius.
-  static const player = Curves.fastOutSlowIn;
   static const page = Duration(milliseconds: 240);
-  // Full player, both directions: the cover flight is driven by the route
-  // animation, so these two also set how long it travels. Kept equal so open
-  // and close feel the same; kept slow so the cover morph reads as one glide.
-  static const playerOpen = Duration(milliseconds: 700);
-  static const playerClose = Duration(milliseconds: 700);
+
+  /// Full player, both directions: the card growth and the cover flight share
+  /// this window and the same curve, so they start and finish together and
+  /// read as one motion. Kept equal so open and close feel the same, and short:
+  /// the page is fully on screen at ~80% of this, so the rest is just the
+  /// cover settling.
+  static const playerOpen = Duration(milliseconds: 260);
+  static const playerClose = Duration(milliseconds: 260);
+
+  /// The player's motion. Both directions leave fast and settle into their
+  /// destination: the open decelerates onto the full player, the close
+  /// decelerates back into the mini bar. The two are mirrors, so the card and
+  /// the cover flight always move as one.
+  static const playerOpenCurve = Curves.easeOutCubic;
+  static const playerCloseCurve = Curves.easeInCubic;
 
   static const modal = Duration(milliseconds: 220);
   static const micro = Duration(milliseconds: 180);
@@ -391,6 +404,9 @@ Widget buildAppTransition(
   Widget child,
 ) {
   if (AppMotion.reduced(context)) return child;
+  // The player's card grows out of the mini bar; fading the route below would
+  // dissolve the very bar the card is growing from.
+  if (playerRouteAbove) return child;
   // drive() instead of a CurvedAnimation: the latter registers a status
   // listener on the route controller and is never disposed when built in
   // build(), leaking one listener per frame of every transition.
@@ -417,33 +433,24 @@ Widget buildAppTransition(
 /// page) flew the big cover down into the 42 px thumb.
 String playerHeroTag = 'player_cover';
 
-/// Full-player route motion: the page cross-fades while the artwork flies
-/// between the mini thumb and the big cover via a [Hero] (see MiniPlayer /
-/// PlayerScreen). Nothing else moves — growing and collapsing a surface
-/// around the content dragged the header and the transport row up and down
-/// with the cover.
-///
-/// [AppMotion.player] is shared with the Hero's rect tween ([PlayerRectTween])
-/// so the cover and the page fade stay in step. Respects reduce-motion.
-Widget buildPlayerTransition(
-  BuildContext context,
-  Animation<double> animation,
-  Animation<double> secondaryAnimation,
-  Widget child,
-) {
-  if (AppMotion.reduced(context)) return child;
-  // drive() instead of a CurvedAnimation: the latter registers a status
-  // listener on the route controller and is never disposed when built here,
-  // so every frame of every player transition leaked one.
-  final curved = animation.drive(CurveTween(curve: AppMotion.player));
-  return FadeTransition(
-    opacity: curved,
-    // Cache the page raster for the fade. Without this the full-screen
-    // opacity layer re-rasterises the whole player (cover shadow, glass,
-    // gradient) every frame, which is what made the close stutter.
-    child: RepaintBoundary(child: child),
-  );
-}
+/// The mini bar's rectangle at the moment it was tapped, in global coordinates.
+/// The player's card grows out of exactly this rectangle and collapses back
+/// into it, so the card lands on the bar instead of shrinking somewhere above
+/// it. Null until a bar has been tapped (the player can also be opened from a
+/// song row; the transition then reports its own default).
+Rect? playerCardFrom;
+
+/// The curve a player cover flight follows, by direction: the flight leaves
+/// fast and settles into its destination, exactly like the card around it.
+Curve playerFlightCurve(HeroFlightDirection dir) =>
+    dir == HeroFlightDirection.push
+        ? AppMotion.playerOpenCurve
+        : AppMotion.playerCloseCurve;
+
+/// True while a player route sits directly above this one. The route below
+/// must stay put and visible: the player's card grows out of the mini bar,
+/// so the bar cannot fade away under it.
+bool playerRouteAbove = false;
 
 class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   const AppPageTransitionsBuilder();

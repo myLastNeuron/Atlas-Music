@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +12,24 @@ Future<void> _pump(WidgetTester tester, Artwork art) {
       home: Scaffold(body: Center(child: art)),
     ),
   );
+}
+
+/// A real PNG on disk, so the decode path runs for real.
+Future<File> _coverFile(WidgetTester tester) async {
+  late File file;
+  await tester.runAsync(() async {
+    final recorder = ui.PictureRecorder();
+    Canvas(recorder).drawRect(
+      const Rect.fromLTWH(0, 0, 16, 16),
+      Paint()..color = const Color(0xFF3060A0),
+    );
+    final image = await recorder.endRecording().toImage(16, 16);
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    final dir = await Directory.systemTemp.createTemp('artwork_decode');
+    file = File('${dir.path}/cover.png')
+      ..writeAsBytesSync(data!.buffer.asUint8List());
+  });
+  return file;
 }
 
 Size _fallbackSize(WidgetTester tester) {
@@ -54,4 +75,45 @@ void main() {
     await _pump(tester, const Artwork('http://127.0.0.1:9/x.jpg', size: 42));
     expect(find.byType(CachedNetworkImage), findsOneWidget);
   });
+
+  testWidgets('decodeWidth keeps one decode when the box changes size',
+      (tester) async {
+    final file = await _coverFile(tester);
+    addTearDown(() => file.deleteSync());
+    final cache = PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+
+    // The player's cover: the box is whatever the fixed rows leave over, the
+    // decode is always the flight's bitmap size.
+    await _pump(
+        tester, Artwork('', filePath: file.path, size: 100, decodeWidth: 200));
+    await _settle(tester);
+    final decoded = cache.currentSize;
+    expect(decoded, greaterThan(0), reason: 'the cover decoded');
+
+    await _pump(
+        tester, Artwork('', filePath: file.path, size: 300, decodeWidth: 200));
+    await _settle(tester);
+    expect(cache.currentSize, decoded,
+        reason: 'a bigger box rescales the same bitmap, no second decode');
+
+    // Without it the box is the cache key: the up-next peek landing would
+    // decode the artwork again, which is the blink this guards against.
+    await _pump(tester, Artwork('', filePath: file.path, size: 100));
+    await _settle(tester);
+    await _pump(tester, Artwork('', filePath: file.path, size: 300));
+    await _settle(tester);
+    expect(cache.currentSize, greaterThan(decoded));
+  });
+}
+
+/// Lets the real event loop finish the decode: image loading is real async
+/// work, and the test's fake clock never runs it.
+Future<void> _settle(WidgetTester tester) async {
+  for (var round = 0; round < 6; round++) {
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.pump();
+  }
 }

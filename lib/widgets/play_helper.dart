@@ -84,8 +84,10 @@ Future<void> openSongPaused(BuildContext context, Song song) async {
   await audio.pause();
   if (!context.mounted) return;
   // Not opened from a mini bar: use a tag no bar shares, so the cover has no
-  // flight source and the player simply fades in.
+  // flight source and the player simply fades in. No bar rect either, or the
+  // card would grow out of a stale bar left by an earlier tap.
   playerHeroTag = 'player_cover';
+  playerCardFrom = null;
   pushAppPage(context, const PlayerScreen(),
       routeName: PlayerScreen.routeName, slideUp: true);
 }
