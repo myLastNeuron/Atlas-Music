@@ -60,6 +60,9 @@ class AudioPlayerService extends ChangeNotifier {
   int _currentIndex = -1;
   bool _isPlaying = false;
   bool _isLoading = false;
+  /// Pause was pressed while a load was in flight: its autoplay must not
+  /// start the track behind the user's back.
+  bool _pausedDuringLoad = false;
   bool _shuffle = false;
   LoopMode _loopMode = LoopMode.off;
   // Sleep timer: after the countdown the current song is allowed to finish,
@@ -108,6 +111,17 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   Song? _currentSong;
+  // Song ids the load-time precheck proved have no video. Shared by the full
+  // player and the mini player so the answer survives a player close/reopen.
+  final Set<String> _noVideo = <String>{};
+  final Set<String> _videoChecking = <String>{};
+  // Songs a real resolve already proved have a video. A slower precheck must
+  // not dim one of those on a timeout.
+  final Set<String> _videoSeen = <String>{};
+  // One lookup per song at a time: the load-time precheck and a player opened
+  // straight after it must share the same answer instead of checking twice.
+  final Map<String, Future<VideoSource?>> _videoLookups =
+      <String, Future<VideoSource?>>{};
   // Committed player ownership: the song id + gen that actually holds the
   // native source. _currentSong only changes on commit (setAudioSource
   // success), so miniplayer never flickers to a track that failed to load.
@@ -405,6 +419,50 @@ class AudioPlayerService extends ChangeNotifier {
     return true;
   }
 
+  /// False once the load-time precheck (or a video open) proved [song] has no
+  /// video. Unknown tracks stay available, so the option is never removed on a
+  /// guess.
+  bool hasVideo(Song song) => !_noVideo.contains(song.id);
+
+  /// Records a surface's answer for [songId]; a later success re-enables it.
+  void setVideoAvailability(String songId, bool available) {
+    if (available) {
+      _videoSeen.add(songId);
+    } else if (_videoSeen.contains(songId)) {
+      // A slower timeout cannot override a video that really resolved.
+      return;
+    }
+    final changed = available ? _noVideo.remove(songId) : _noVideo.add(songId);
+    if (changed) notifyListeners();
+  }
+
+  /// Starts the video lookup while [song]'s audio loads, so the Video option
+  /// is already decided when the player opens and the answer outlives the
+  /// page. One answer per song per run: reopening or reloading it must not
+  /// check again. Best-effort: offline or a resolver error leaves the option
+  /// enabled.
+  void _precheckVideo(Song song) {
+    if (_disposed ||
+        _noVideo.contains(song.id) ||
+        _videoSeen.contains(song.id)) {
+      return;
+    }
+    if (!_videoChecking.add(song.id)) return;
+    unawaited(() async {
+      try {
+        if (!await _hasConnectivity()) return;
+        // The user skipped before the lookup started: not worth the network.
+        if (_disposed || _currentSong?.id != song.id) return;
+        final source = await videoSource(song);
+        if (!_disposed) setVideoAvailability(song.id, source != null);
+      } catch (_) {
+        // Unknown stays enabled: only a proven miss dims Video.
+      } finally {
+        _videoChecking.remove(song.id);
+      }
+    }());
+  }
+
   AudioPlayer get player => _player;
   List<Song> get queue => _queue;
   int get currentIndex => _currentIndex;
@@ -527,6 +585,23 @@ class AudioPlayerService extends ChangeNotifier {
         completed: _processingState == ProcessingState.completed,
       );
 
+  /// True when a load for the same song should be absorbed instead of
+  /// reloading it. `playing` stays true at `ProcessingState.completed` in
+  /// just_audio, so a finished track must reload (tapping it restarts it), and
+  /// [forceReload] is the premature-completion recovery.
+  static bool absorbsLoad({
+    required bool sameSong,
+    required bool playing,
+    required ProcessingState state,
+    required Duration position,
+    required bool forceReload,
+  }) =>
+      !forceReload &&
+      sameSong &&
+      playing &&
+      state != ProcessingState.completed &&
+      position.inSeconds > 5;
+
   /// The rule behind [isCurrent], kept pure so it can be tested without a
   /// live audio player.
   static bool isSameSongTap({
@@ -542,7 +617,28 @@ class AudioPlayerService extends ChangeNotifier {
   /// music video found through the catalogue (different media, starts at 0).
   /// Keeps providers out of the UI layer. Null when nothing is usable.
   /// [refresh] ignores the cached answer so Retry can get a fresh URL.
-  Future<VideoSource?> videoSource(Song song, {bool refresh = false}) =>
+  Future<VideoSource?> videoSource(Song song, {bool refresh = false}) {
+    // Retry wants a fresh URL; it must not join an older answer.
+    if (refresh) return _resolveVideo(song, refresh: true);
+    final key = song.videoId ?? song.id;
+    final pending = _videoLookups[key];
+    if (pending != null) return pending;
+    final lookup = _resolveVideo(song);
+    _videoLookups[key] = lookup;
+    // Drop the in-flight entry once it settles; onError keeps the ignored
+    // chain from surfacing an unhandled error of its own.
+    unawaited(lookup.then<void>(
+      (_) {
+        if (identical(_videoLookups[key], lookup)) _videoLookups.remove(key);
+      },
+      onError: (Object _) {
+        if (identical(_videoLookups[key], lookup)) _videoLookups.remove(key);
+      },
+    ));
+    return lookup;
+  }
+
+  Future<VideoSource?> _resolveVideo(Song song, {bool refresh = false}) =>
       _youTube.videoSource(
         song,
         refresh: refresh,
@@ -1066,6 +1162,8 @@ class AudioPlayerService extends ChangeNotifier {
     // re-checks it, so a superseded load can never command the player.
     _lastFailure = null;
     _released = false;
+    // A new load is new intent: a pause aimed at the previous one is spent.
+    _pausedDuringLoad = false;
     final int gen = ++_playGen;
     // Newest load claims the network: provider work still running for an
     // older load now reports stale and aborts.
@@ -1134,10 +1232,12 @@ class AudioPlayerService extends ChangeNotifier {
     // setSource would reset position to 0 and cause the 17 s restart.
     // [forceReload] is the recovery path for a false `completed` event, where
     // the same song is deliberately reloaded at that position.
-    if (!forceReload &&
-        _activeSongId == song.id &&
-        _player.playing &&
-        _position.inSeconds > 5) {
+    if (absorbsLoad(
+        sameSong: _activeSongId == song.id,
+        playing: _player.playing,
+        state: _player.processingState,
+        position: _position,
+        forceReload: forceReload)) {
       return true;
     }
     // Fresh song => reset retry budgets. Same-song retry (from
@@ -1180,6 +1280,8 @@ class AudioPlayerService extends ChangeNotifier {
     }
 
     _isLoading = true;
+    // First thing a new track does: find out whether Video can be offered.
+    _precheckVideo(song);
     notifyListeners();
     // Watchdog (safety net): if this load never reaches setSource, log
     // which stage it died in and restart once. Root safety comes from the
@@ -1227,7 +1329,8 @@ class AudioPlayerService extends ChangeNotifier {
       }
       if (cached != null) {
         try {
-          await _playFile(cached.path, song, stale, gen);
+          await _playFile(cached.path, song, stale, gen,
+              forceReload: forceReload);
           if (stale()) {
             return false;
           }
@@ -1403,7 +1506,8 @@ class AudioPlayerService extends ChangeNotifier {
       }
       if (audioFile != null) {
         try {
-          await _playFile(audioFile.path, song, stale, gen);
+          await _playFile(audioFile.path, song, stale, gen,
+              forceReload: forceReload);
           if (stale()) {
             return false;
           }
@@ -2292,11 +2396,20 @@ class AudioPlayerService extends ChangeNotifier {
 
   void _finishPlaying() {
     _isLoading = false;
-    _isPlaying = true;
+    // A pause pressed during the load wins over its autoplay: report paused
+    // and never arm the stall timer for audio that stayed silent.
+    final paused = _pausedDuringLoad;
+    _pausedDuringLoad = false;
+    _isPlaying = !paused;
     _bgRetryCount = 0;
     _bgRetrySince = null;
     _cancelBackgroundRetry('playing');
     notifyListeners();
+    if (paused) {
+      // play() may already have been in flight when the pause landed.
+      unawaited(_player.pause().catchError((Object _) {}));
+      return;
+    }
     _startStallTimer();
     // Synchronous warmup: await first 2 songs' cache so background
     // playback survives immediate app-close. Subsequent songs fire async.
@@ -2938,12 +3051,15 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
-  Future<void> _playFile(
-      String path, Song song, bool Function() stale, int gen) async {
+  Future<void> _playFile(String path, Song song, bool Function() stale, int gen,
+      {bool forceReload = false}) async {
     // If the SAME song is already playing past 5 s, absorb this load.
-    if (_currentSong?.id == song.id &&
-        _player.playing &&
-        _position.inSeconds > 5) {
+    if (absorbsLoad(
+        sameSong: _currentSong?.id == song.id,
+        playing: _player.playing,
+        state: _player.processingState,
+        position: _position,
+        forceReload: forceReload)) {
       return;
     }
     // Reset pos/dur BEFORE setAudioSource so no downstream event ever reads
@@ -2983,6 +3099,8 @@ class AudioPlayerService extends ChangeNotifier {
             '(${actual.inSeconds}s vs ${expectedSec}s) rejected');
       }
     }
+    // The user paused while this load was running: the pause wins.
+    if (_pausedDuringLoad) return;
     // just_audio's play() future completes when playback STOPS, not when
     // it starts â€” never await it to confirm start. Fire it, derive "is
     // playing" from playerStateStream, and treat a slow/missing ack as
@@ -3416,7 +3534,12 @@ class AudioPlayerService extends ChangeNotifier {
     _queueEndRetryTimer = Timer(Duration(seconds: attempt == 1 ? 2 : 4), () {
       _queueEndRetryTimer = null;
       if (_currentSong == null) return;
-      if (_player.playing) return; // a new source owns playback
+      // `playing` stays true at `completed`, so it only proves a new source
+      // owns playback while that source is not finished.
+      if (_player.playing &&
+          _player.processingState != ProcessingState.completed) {
+        return;
+      }
       if (_pausedForOffline) return; // offline pause owns recovery
       if (_sleepPending) return; // sleep timer owns the stop
       if (retryGen != _playGen) return; // newer load superseded
@@ -3441,7 +3564,10 @@ class AudioPlayerService extends ChangeNotifier {
     _completionGuard = Timer(const Duration(seconds: 3), () {
       _completionGuard = null;
       if (guardGen != _playGen) return; // newer load owns playback
-      if (_player.playing) return; // audio actually started
+      final st = _player.processingState;
+      // `playing` stays true at `completed` in just_audio, so it only proves
+      // audio actually started while the source is not finished.
+      if (_player.playing && st != ProcessingState.completed) return;
       if (_isLoading) return; // a load is in flight
       if (_advancing) return; // an advance chain is running
       if (_queueEndRetryTimer != null) return; // queue-end retry pending
@@ -3454,7 +3580,6 @@ class AudioPlayerService extends ChangeNotifier {
       if (_globalAdvanceFailures >= _maxGlobalAdvanceFailures) {
         return;
       }
-      final st = _player.processingState;
       if (st != ProcessingState.completed && st != ProcessingState.idle) {
         return; // not a terminal/empty state; something else is happening
       }
@@ -3843,6 +3968,8 @@ class AudioPlayerService extends ChangeNotifier {
   /// from the real player state.
   Future<void> pause() async {
     try {
+      // A load that is still running would autoplay when it commits.
+      if (_isLoading) _pausedDuringLoad = true;
       _cancelStallTimer();
       _cancelQueueEndRetry();
       _cancelCompletionGuard();
@@ -3880,6 +4007,8 @@ class AudioPlayerService extends ChangeNotifier {
   Future<void> resume() async {
     // The user pressed play: a finished sleep timer no longer stops anything.
     clearSleepStop();
+    // Play outranks an earlier pause of the load in flight.
+    _pausedDuringLoad = false;
     // play() completes when playback STOPS, so awaiting it here wedged
     // resume for up to 20s on "open app to restart music". Fire it and
     // sync from the state stream instead.
@@ -4040,6 +4169,9 @@ class AudioPlayerService extends ChangeNotifier {
       _queueOrigin = (saved['origin'] as String?) ?? 'default';
       _autoplayOnEnd = (saved['autoplayOnEnd'] as bool?) ?? true;
       _commitSong(song, gen);
+      // Restored paused, but Video mode may open this song: start its check
+      // now, so the full player joins this answer instead of checking again.
+      _precheckVideo(song);
       _position = pos;
       _lastNotifiedSecond = pos.inSeconds;
       _duration = _player.duration ?? song.duration;

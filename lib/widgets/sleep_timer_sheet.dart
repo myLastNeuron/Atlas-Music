@@ -216,7 +216,6 @@ class _SleepTimerSheetState extends State<_SleepTimerSheet> {
         child: GlassSurface(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           border: Border(top: BorderSide(color: AppColors.line)),
-          blur: true,
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius:

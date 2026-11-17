@@ -25,18 +25,6 @@ Future<void> showSongActions(
   Future<void> Function()? onRemoveFromDownloads,
   Future<void> Function()? onRemoveFromAutoFinds,
 }) async {
-  final storage = StorageService.instance;
-  bool liked = false;
-  bool downloaded = false;
-  try {
-    liked = await storage.isSongLiked(song.id);
-    downloaded =
-        (await storage.getDownloadedSongs()).any((s) => s.id == song.id);
-  } catch (_) {
-    // Best-effort: menu still works with default state.
-  }
-  if (!context.mounted) return;
-
   final media = MediaQuery.of(context);
   final size = media.size;
   final safe = media.padding;
@@ -72,8 +60,6 @@ Future<void> showSongActions(
               queue: queue,
               index: index,
               queueOrigin: queueOrigin,
-              initialLiked: liked,
-              downloaded: downloaded,
               onRemoveFromPlaylist: onRemoveFromPlaylist,
               onRemoveFromDownloads: onRemoveFromDownloads,
               onRemoveFromAutoFinds: onRemoveFromAutoFinds,
@@ -282,8 +268,6 @@ class _SongActionsCard extends StatefulWidget {
   final List<Song>? queue;
   final int? index;
   final String? queueOrigin;
-  final bool initialLiked;
-  final bool downloaded;
   final Future<void> Function()? onRemoveFromPlaylist;
   final Future<void> Function()? onRemoveFromDownloads;
   final Future<void> Function()? onRemoveFromAutoFinds;
@@ -294,8 +278,6 @@ class _SongActionsCard extends StatefulWidget {
     this.queue,
     this.index,
     this.queueOrigin,
-    required this.initialLiked,
-    required this.downloaded,
     this.onRemoveFromPlaylist,
     this.onRemoveFromDownloads,
     this.onRemoveFromAutoFinds,
@@ -306,7 +288,32 @@ class _SongActionsCard extends StatefulWidget {
 }
 
 class _SongActionsCardState extends State<_SongActionsCard> {
-  late bool _liked = widget.initialLiked;
+  bool _liked = false;
+  bool _downloaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFlags();
+  }
+
+  /// Both reads decode a whole stored list, so they run here — after the menu
+  /// is already on screen — instead of holding up the tap that opened it.
+  Future<void> _loadFlags() async {
+    final storage = StorageService.instance;
+    try {
+      final liked = await storage.isSongLiked(widget.song.id);
+      final downloaded = (await storage.getDownloadedSongs())
+          .any((s) => s.id == widget.song.id);
+      if (!mounted) return;
+      setState(() {
+        _liked = liked;
+        _downloaded = downloaded;
+      });
+    } catch (_) {
+      // Best-effort: menu still works with default state.
+    }
+  }
 
   void _pop() {
     if (mounted) Navigator.pop(context);
@@ -427,7 +434,6 @@ class _SongActionsCardState extends State<_SongActionsCard> {
       width: 250,
       child: GlassSurface(
         borderRadius: BorderRadius.circular(18),
-        blur: true,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -467,16 +473,16 @@ class _SongActionsCardState extends State<_SongActionsCard> {
               _toggleLike,
             ),
             _tile(Icons.block, 'Not interested', _notInterested),
-            if (!widget.downloaded)
+            if (!_downloaded)
               _tile(Icons.download_outlined, 'Download', _download),
             if (widget.onRemoveFromPlaylist != null)
               // A downloaded track leaves the app with its local file, so the
               // action reads "Delete" rather than "Remove".
               _tile(
-                  widget.downloaded
+                  _downloaded
                       ? Icons.delete_outline
                       : Icons.remove_circle_outline,
-                  widget.downloaded
+                  _downloaded
                       ? 'Delete from Playlist'
                       : 'Remove from Playlist',
                   _removeFromPlaylist),

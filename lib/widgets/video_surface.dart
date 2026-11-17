@@ -29,12 +29,17 @@ class VideoSurface extends StatefulWidget {
   /// the mini bar), false when the page itself dropped back to Song.
   final bool Function() keepPlayingOnDetach;
 
+  /// The resolver found no video for this track (not a load failure): the page
+  /// dims the Video option for it. A later successful open clears that again.
+  final ValueChanged<bool>? onVideoAvailability;
+
   const VideoSurface({
     super.key,
     required this.song,
     required this.size,
     required this.controller,
     required this.keepPlayingOnDetach,
+    this.onVideoAvailability,
   });
 
   @override
@@ -266,6 +271,10 @@ class _VideoSurfaceState extends State<VideoSurface>
       // handoff advertising this controller, so the mini player kept painting
       // the dead video's last frame instead of the song's artwork.
       if (c != null) {
+        // The page must stop reading this controller before it dies: a stale
+        // one leaves play/seek dead until the next video's first frame
+        // (Video + Next).
+        _clearPageController(c);
         videoHandoff.release(c);
         // The audio comes back only once the video player is gone: it gives
         // its audio focus back on dispose, and a resume that races that is
@@ -325,9 +334,12 @@ class _VideoSurfaceState extends State<VideoSurface>
           .timeout(audio.videoSourceTimeout);
       if (_closed) return;
       if (source == null) {
+        widget.onVideoAvailability?.call(false);
         _fail('No official video for this track. Tap Retry.');
         return;
       }
+      // A Retry may have found one after a failed attempt: re-enable Video.
+      widget.onVideoAvailability?.call(true);
 
       final c = VideoPlayerController.networkUrl(
         Uri.parse(source.url),
@@ -509,18 +521,26 @@ class _VideoSurfaceState extends State<VideoSurface>
     _controller = null;
     if (c != null) videoHandoff.release(c);
     if (c != null) {
-      // The page must stop reading this controller. That write is deferred when
-      // the tree is locked (this also runs from dispose): marking a listener
-      // dirty then throws out of the middle of dispose.
-      final notifier = widget.controller;
-      if (SchedulerBinding.instance.schedulerPhase ==
-          SchedulerPhase.persistentCallbacks) {
-        SchedulerBinding.instance
-            .addPostFrameCallback((_) => notifier.value = null);
-      } else {
-        notifier.value = null;
-      }
+      _clearPageController(c);
       unawaited(c.dispose());
+    }
+  }
+
+  /// Clears the page's notifier once [c] is disposed. Deferred when the tree
+  /// is locked (this also runs from dispose): marking a listener dirty then
+  /// throws out of the middle of dispose. The identity check keeps a newer
+  /// controller that already replaced this one.
+  void _clearPageController(VideoPlayerController c) {
+    final notifier = widget.controller;
+    void clear() {
+      if (identical(notifier.value, c)) notifier.value = null;
+    }
+
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => clear());
+    } else {
+      clear();
     }
   }
 
@@ -733,19 +753,16 @@ class _VideoSurfaceState extends State<VideoSurface>
       };
 
   Widget _playing(VideoPlayerController c) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _toggle,
-      child: Center(
-        child: ValueListenableBuilder<VideoPlayerValue>(
-          valueListenable: c,
-          builder: (context, value, child) => AspectRatio(
-            // Letterbox: never crop or stretch the frame.
-            aspectRatio: value.size.isEmpty ? 16 / 9 : value.aspectRatio,
-            child: child,
-          ),
-          child: VideoPlayer(c),
+    // No tap-to-pause here: the full player's transport is the only control.
+    return Center(
+      child: ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: c,
+        builder: (context, value, child) => AspectRatio(
+          // Letterbox: never crop or stretch the frame.
+          aspectRatio: value.size.isEmpty ? 16 / 9 : value.aspectRatio,
+          child: child,
         ),
+        child: VideoPlayer(c),
       ),
     );
   }

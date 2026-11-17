@@ -317,6 +317,13 @@ class _PlayerScreenState extends State<PlayerScreen>
     UserPrefs().setVideoMode(on);
   }
 
+  /// Live check for dispose paths: the surface must not park a video the
+  /// precheck has since proven does not exist.
+  bool _currentHasVideo() {
+    final cur = _audio?.currentSong;
+    return cur == null || (_audio?.hasVideo(cur) ?? true);
+  }
+
   Future<void> _syncLiked({bool force = false}) async {
     final audioService = context.read<AudioPlayerService>();
     final cur = audioService.currentSong;
@@ -394,6 +401,14 @@ class _PlayerScreenState extends State<PlayerScreen>
     final audioService = context.read<AudioPlayerService>();
     final song =
         context.select<AudioPlayerService, Song?>((s) => s.currentSong);
+    // The load-time precheck keeps this answer in the service, so closing the
+    // player and opening it again cannot re-enable a Video option this track
+    // does not have.
+    final videoAvailable = context.select<AudioPlayerService, bool>((s) {
+      final cur = s.currentSong;
+      return cur == null || s.hasVideo(cur);
+    });
+    final showVideo = _videoMode && videoAvailable;
     // Resolved high-res cover (same file the notification uses); null until
     // the download finishes, in which case the network thumbnail is shown.
     final artPath = context.select<AudioPlayerService, String?>(
@@ -527,7 +542,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                   // player has to work in landscape.
                   Center(
                     child: _ModeToggle(
-                      video: _videoMode,
+                      video: showVideo,
+                      videoAvailable: videoAvailable,
                       onChanged: _setVideoMode,
                     ),
                   ),
@@ -543,7 +559,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                           // even before a controller exists, so opening or
                           // closing mid-load still flies — the shuttle carries
                           // VideoSurface's loading screen instead of a cover.
-                          child: _videoMode
+                          child: showVideo
                               // The Hero is inside the surface: it must not
                               // wrap an owning widget, or the flight would
                               // recreate it and re-park the video
@@ -554,10 +570,16 @@ class _PlayerScreenState extends State<PlayerScreen>
                                     key: ValueKey('video_${song.id}'),
                                     song: song,
                                     size: side,
-                                    // The page keeps Video as the saved mode: a
-                                    // close parks the video instead of handing
-                                    // playback back to the audio.
-                                    keepPlayingOnDetach: () => _videoMode,
+                                    // The surface's answer feeds the same
+                                    // service the precheck writes to.
+                                    onVideoAvailability: (has) => audioService
+                                        .setVideoAvailability(song.id, has),
+                                    // Read live: if the precheck proves this
+                                    // song has no video while the surface is
+                                    // mounted, the auto-switch must hand the
+                                    // audio back instead of parking a video.
+                                    keepPlayingOnDetach: () =>
+                                        _videoMode && _currentHasVideo(),
                                     controller: _videoController,
                                   ),
                                 )
@@ -577,7 +599,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                   // Own boundary: the stats land from the network after the
                   // page is up. Inside the page's single boundary their
                   // setState would re-raster the window-sized page.
-                  if (!_videoMode)
+                  if (!showVideo)
                     RepaintBoundary(
                       child: Align(
                         alignment: Alignment.centerLeft,
@@ -610,17 +632,26 @@ class _PlayerScreenState extends State<PlayerScreen>
                   RepaintBoundary(
                     child: _PlayerSlider(
                       accent: accent,
-                      videoMode: _videoMode,
+                      videoMode: showVideo,
                       video: _videoController,
                     ),
                   ),
                   const SizedBox(height: 4),
                   RepaintBoundary(
                     child: _transport(audioService, isPlaying, shuffle, loop,
-                        accent, isLoading),
+                        accent, isLoading, showVideo),
                   ),
                   const SizedBox(height: 16),
-                  _actionRow(song, audioService),
+                  // Own Material inside a boundary: a ripple is painted by the
+                  // nearest Material, which here is the Scaffold's and spans
+                  // the whole page — so these taps would otherwise redraw the
+                  // window on every frame of the ripple.
+                  RepaintBoundary(
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: _actionRow(song, audioService),
+                    ),
+                  ),
                 ] else ...[
                   const Spacer(),
                   Icon(Icons.music_note, size: 88, color: AppColors.mute),
@@ -932,8 +963,14 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   /// One row, no pill: play is the only heavy element, shuffle and repeat
   /// are demoted to quiet glyphs at the edges.
-  Widget _transport(AudioPlayerService audioService, bool isPlaying,
-      bool shuffle, LoopMode loop, Color? accent, bool loading) {
+  Widget _transport(
+      AudioPlayerService audioService,
+      bool isPlaying,
+      bool shuffle,
+      LoopMode loop,
+      Color? accent,
+      bool loading,
+      bool videoMode) {
     final iconColor = accent == null ? AppColors.charcoal : _onColor(accent);
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -959,7 +996,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             onPressed: () => _skip(audioService.playPrevious),
           ),
         ),
-        if (_videoMode)
+        if (videoMode)
           // Video mode: the button toggles the video once it is on screen.
           // Until then (resolving, initializing, failed) the audio is still
           // the playback, so the same button drives it — otherwise the song
@@ -1301,42 +1338,56 @@ class _UpNextSkeletonState extends State<_UpNextSkeleton>
 
 /// Two-option Song/Video pill above the cover: the only entry point to video.
 class _ModeToggle extends StatelessWidget {
-  const _ModeToggle({required this.video, required this.onChanged});
+  const _ModeToggle({
+    required this.video,
+    required this.videoAvailable,
+    required this.onChanged,
+  });
 
   final bool video;
+
+  /// False when the app proved the song has no video: that half is dimmed and
+  /// cannot be selected.
+  final bool videoAvailable;
   final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
     // Each half sets its own target: deriving it from `selected` inverted the
     // Song half, so tapping Song while in Video re-selected Video.
-    Widget half(String label, bool selected, bool value, Key key) =>
-        MotionPress(
-          scale: 0.94,
-          child: InkWell(
-            key: key,
+    Widget half(String label, bool selected, bool value, Key key,
+        {bool enabled = true}) {
+      final pill = InkWell(
+        key: key,
+        borderRadius: BorderRadius.circular(14),
+        onTap: !enabled || selected ? null : () => onChanged(value),
+        child: AnimatedContainer(
+          duration: AppMotion.dur(context, AppMotion.micro),
+          curve: AppMotion.curve,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.action : Colors.transparent,
             borderRadius: BorderRadius.circular(14),
-            onTap: selected ? null : () => onChanged(value),
-            child: AnimatedContainer(
-              duration: AppMotion.dur(context, AppMotion.micro),
-              curve: AppMotion.curve,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-              decoration: BoxDecoration(
-                color: selected ? AppColors.action : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  letterSpacing: 0.4,
-                  fontWeight: FontWeight.w600,
-                  color: selected ? AppColors.charcoal : AppColors.mute,
-                ),
-              ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              letterSpacing: 0.4,
+              fontWeight: FontWeight.w600,
+              color: !enabled
+                  ? AppColors.mute.withValues(alpha: 0.35)
+                  : selected
+                      ? AppColors.charcoal
+                      : AppColors.mute,
             ),
           ),
-        );
+        ),
+      );
+      // A disabled half must not even react to a press: MotionPress has its own
+      // pointer listener, independent of InkWell's onTap.
+      return enabled ? MotionPress(scale: 0.94, child: pill) : pill;
+    }
 
     return Container(
       height: 32,
@@ -1349,7 +1400,8 @@ class _ModeToggle extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           half('Song', !video, false, const ValueKey('player_mode_song')),
-          half('Video', video, true, const ValueKey('player_mode_video')),
+          half('Video', video, true, const ValueKey('player_mode_video'),
+              enabled: videoAvailable),
         ],
       ),
     );

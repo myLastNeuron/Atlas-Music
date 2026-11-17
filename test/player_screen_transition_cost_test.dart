@@ -12,11 +12,13 @@ import 'package:atlas_music/screens/player_screen.dart';
 import 'package:atlas_music/services/audio_service.dart';
 import 'package:atlas_music/services/glass_settings.dart';
 import 'package:atlas_music/services/theme_settings.dart';
+import 'package:atlas_music/services/user_prefs.dart';
 import 'package:atlas_music/theme/app_theme.dart';
 import 'package:atlas_music/widgets/app_transitions.dart';
 import 'package:atlas_music/widgets/floating_glass_nav.dart';
 import 'package:atlas_music/widgets/liquid_background.dart';
 import 'package:atlas_music/widgets/mini_player.dart';
+import 'package:atlas_music/widgets/video_surface.dart';
 
 // Regression: the player's async state (like, artwork colour, up-next peek)
 // used to land a few frames into the 360 ms card flight, rebuilding the whole
@@ -168,6 +170,65 @@ void main() {
         isNotNull);
     expect(find.text('UP NEXT'), findsOneWidget);
     expect(find.text('Song B'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a song with no video keeps the Video half dimmed and inert',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final song = Song(
+      id: 'song-no-video',
+      title: 'No Video',
+      artist: 'Artist',
+      thumbnailUrl: '',
+      duration: const Duration(seconds: 200),
+    );
+    final theme = ThemeSettings();
+    await theme.load();
+    // Video is the saved choice: a song without one must still open on audio.
+    await UserPrefs().setVideoMode(true);
+    addTearDown(() => UserPrefs().setVideoMode(false));
+    final audio = _NoVideoAudio(song);
+    addTearDown(audio.dispose);
+
+    await tester.pumpWidget(_harness(audio, theme, _openButton()));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(find.byType(VideoSurface), findsNothing,
+        reason: 'Video is saved, but this song has none: stay on audio');
+
+    final videoHalf = find.byKey(const ValueKey('player_mode_video'));
+    expect(videoHalf, findsOneWidget);
+    final label = tester.widget<Text>(
+        find.descendant(of: videoHalf, matching: find.byType(Text)));
+    expect(label.style!.color!.a, closeTo(0.35, 0.01),
+        reason: 'no video reads as a dimmed option');
+
+    await tester.tap(videoHalf);
+    await tester.pump();
+    expect(find.byType(VideoSurface), findsNothing,
+        reason: 'the Video half must not open a video that does not exist');
+
+    // Close to the mini player and reopen: the answer belongs to the service,
+    // so the option cannot become clickable again.
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    final reopenedLabel = tester.widget<Text>(find.descendant(
+        of: find.byKey(const ValueKey('player_mode_video')),
+        matching: find.byType(Text)));
+    expect(reopenedLabel.style!.color!.a, closeTo(0.35, 0.01),
+        reason: 'reopening the player must not re-enable Video');
     expect(tester.takeException(), isNull);
   });
 
@@ -513,6 +574,12 @@ class _FakeAudio extends ChangeNotifier implements AudioPlayerService {
   LoopMode get loopMode => LoopMode.off;
 
   @override
+  bool hasVideo(Song song) => true;
+
+  @override
+  void setVideoAvailability(String songId, bool available) {}
+
+  @override
   Duration get position => Duration.zero;
 
   @override
@@ -520,6 +587,14 @@ class _FakeAudio extends ChangeNotifier implements AudioPlayerService {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Online, but the precheck found no video for the song.
+class _NoVideoAudio extends _FakeAudio {
+  _NoVideoAudio(super.song);
+
+  @override
+  bool hasVideo(Song song) => false;
 }
 
 Widget _harness(_FakeAudio audio, ThemeSettings theme, Widget home) {

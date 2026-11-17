@@ -339,6 +339,13 @@ class MiniVideo {
     if (audio == null) return;
     final song = audio.currentSong;
     if (song == null) return;
+    // The load-time precheck says this track has no video: cancel an attempt
+    // already racing it, so the song is not paused for a video that will
+    // never arrive.
+    if (_loadingSongId == song.id && !audio.hasVideo(song)) {
+      _cancelLoading();
+      return;
+    }
     // Video is the playback: a play request made while this loader is still
     // resolving must not be heard. The pause is ours, so a failed load gives
     // the song back (see the finally in [_start]).
@@ -360,6 +367,9 @@ class MiniVideo {
     if (audio.isLoading || !audio.isPlaying) return;
     _attemptedSongId = song.id;
     if (!UserPrefs.videoMode) return;
+    // The load-time precheck already answered: do not pause the audio for a
+    // video this track does not have.
+    if (!audio.hasVideo(song)) return;
     if (videoHandoff.isLiveFor(song.id) || videoHandoff.isLoadingFor(song.id)) {
       return;
     }
@@ -377,6 +387,7 @@ class MiniVideo {
   }) {
     _audio ??= audio;
     if (audio.currentSong?.id != song.id) return;
+    if (!audio.hasVideo(song)) return;
     if (videoHandoff.isLiveFor(song.id) || videoHandoff.isLoadingFor(song.id)) {
       return;
     }
@@ -398,6 +409,15 @@ class MiniVideo {
     VideoPlayerController? controller;
     var pausedAudio = audioAlreadyPaused;
     var handedOff = false;
+    // A precheck that landed while this load was starting says there is no
+    // video: hand the song back instead of pausing it for nothing.
+    if (!audio.hasVideo(song)) {
+      _loadingSongId = null;
+      videoHandoff.loaded(song.id);
+      // The closed player may have paused the song for this video already.
+      if (audioAlreadyPaused) unawaited(audio.resume());
+      return;
+    }
     // Video mode is the choice: the song goes quiet while its video starts,
     // instead of playing for the two or three seconds of the lookup and then
     // being cut off when the video takes over.
@@ -415,10 +435,14 @@ class MiniVideo {
 
       final online = await audio.hasInternet;
       if (!_alive(gen, song) || !online) return;
+      // The precheck may have answered while connectivity was resolving.
+      if (!audio.hasVideo(song)) return;
 
       final source =
           await audio.videoSource(song).timeout(audio.videoSourceTimeout);
       if (!_alive(gen, song) || source == null) return;
+      // A real resolve beats a precheck that timed out.
+      audio.setVideoAvailability(song.id, true);
 
       controller = VideoPlayerController.networkUrl(
         Uri.parse(source.url),

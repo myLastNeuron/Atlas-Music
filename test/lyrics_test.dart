@@ -201,6 +201,20 @@ void main() {
       final rows = lyricRows([at(5, 'A')], Duration.zero);
       expect(rows.length, 1);
     });
+
+    // Translations are indexed by row: a raw LRC line list would shift every
+    // line after an inserted ♫ or a dropped "...".
+    test('translation texts line up with the rows the sheet draws', () {
+      final lines = parseLrc('[00:00.00] ...\n'
+          '[00:32.02] Manwa laage\n'
+          '[00:36.99] Laage re sanware');
+      final rows = lyricRows(lines, const Duration(seconds: 60));
+      final texts = lyricRowTexts(lines, const Duration(seconds: 60));
+      expect(texts.length, rows.length);
+      expect(texts, rows.map((r) => r.text).toList());
+      expect(texts.length, greaterThan(lines.length));
+      expect(texts.first, '');
+    });
   });
 
   group('LyricsService.fetch', () {

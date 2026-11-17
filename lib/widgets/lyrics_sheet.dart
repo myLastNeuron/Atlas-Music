@@ -7,8 +7,8 @@ import '../services/lyrics_service.dart';
 import 'app_transitions.dart';
 import 'liquid_background.dart';
 
-/// Bottom-sheet synced lyrics. Listens to ExoPlayer positionStream
-/// directly (smooth tick), highlights current line, auto-scrolls
+/// Bottom-sheet synced lyrics. Follows the service's position, which it
+/// publishes once per whole second, highlights the current line, auto-scrolls
 /// with ensureVisible, tap any line to seek. Plain fallback when
 /// no timestamps exist; honest empty states otherwise.
 class LyricsSheet extends StatefulWidget {
@@ -100,7 +100,6 @@ class _LyricsSheetState extends State<LyricsSheet> {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         border: Border(top: BorderSide(color: AppColors.line)),
         shadow: false,
-        blur: true,
         child: Column(
         // Center is Column's default, and a shrink-wrapping child (the
         // unsynced lyrics block) then floats to the middle of the sheet
@@ -145,8 +144,11 @@ class _LyricsSheetState extends State<LyricsSheet> {
                     if (d == null || d.instrumental) {
                       return const SizedBox.shrink();
                     }
+                    // Translate the rows the sheet actually draws, not the raw
+                    // LRC lines: lyricRows adds ♫ markers and drops filler, so
+                    // a raw index would land translations on the wrong lines.
                     final lines = d.isSynced
-                        ? d.lines.map((l) => l.text).toList()
+                        ? lyricRowTexts(d.lines, song.duration)
                         : (d.plain ?? '').split('\n');
                     if (lines.every((l) => l.trim().isEmpty)) {
                       return const SizedBox.shrink();
@@ -256,11 +258,13 @@ class _LyricsSheetState extends State<LyricsSheet> {
                 for (var i = 0; i < rows.length; i++) {
                   _keys.putIfAbsent(i, () => GlobalKey());
                 }
-                return StreamBuilder<Duration>(
-                  stream: widget.audio.player.positionStream,
-                  initialData: widget.audio.position,
-                  builder: (context, posSnap) {
-                    final pos = posSnap.data ?? Duration.zero;
+                return ListenableBuilder(
+                  listenable: widget.audio,
+                  // The service publishes the position once per whole second
+                  // and only then notifies, so the list rebuilds at that rate
+                  // instead of on every raw position tick.
+                  builder: (context, _) {
+                    final pos = widget.audio.position;
                     final idx = timed.indexFor(pos);
                     _maybeScroll(idx);
                     return ListView.builder(

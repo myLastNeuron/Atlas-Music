@@ -130,6 +130,11 @@ List<LyricLine> lyricRows(List<LyricLine> lines, Duration songLength) {
   return out;
 }
 
+/// The text list a translation is indexed against: exactly the rows
+/// [lyricRows] draws, so `translated[i]` belongs to the row at index `i`.
+List<String> lyricRowTexts(List<LyricLine> lines, Duration songLength) =>
+    lyricRows(lines, songLength).map((l) => l.text).toList();
+
 /// Parses an LRC string into sorted lines. Ignores metadata tags
 /// ([ti:]/[ar:]/[al:]/[length:]/[by:]), expands multiple timestamps
 /// on one line into separate entries, and keeps a timed line with no
