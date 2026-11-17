@@ -61,6 +61,11 @@ class PlayerFlightRectTween extends MaterialRectArcTween {
   Rect? transform(double t) => super.transform(curve.transform(t));
 }
 
+/// The part of the player flight where the card's paper is fully opaque over
+/// whatever sits under it. Below this the paper fades away and the mini bar is
+/// visible again, so the bar's frost flips while it is still covered.
+const double kPlayerCardOpaqueFrom = 0.30;
+
 /// The player's motion: the mini bar's card grows into the full player. The
 /// card's rect is interpolated from the bar's rectangle to the window in both
 /// directions, so the top edge sweeps up from the bar's top and the bottom
@@ -120,7 +125,7 @@ Widget buildPlayerPageCard(
       // The page is opaque (its own LiquidBackground), which is what lets the
       // paper be a plain colour with alpha instead of an [Opacity] layer.
       final double paper = v < 0.42
-          ? (v / 0.30).clamp(0.0, 1.0)
+          ? (v / kPlayerCardOpaqueFrom).clamp(0.0, 1.0)
           : 1 - ((v - 0.42) / 0.38).clamp(0.0, 1.0);
       return Stack(
         children: [

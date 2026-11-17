@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
 import '../models/artist.dart';
 import '../models/song.dart';
@@ -237,7 +238,37 @@ class YouTubeService {
   /// fails (network, rate limit, gone) so callers can show "N/A" instead of
   /// inventing numbers. Dislikes are usually null (YouTube removed them) —
   /// see [VideoStats].
-  Future<VideoStats?> getVideoStats(String videoId) async {
+  ///
+  /// One lookup per video: the full player is a fresh route on every open, so
+  /// closing and reopening it (or tapping the mini bar twice quickly) used to
+  /// fetch and parse the same watch page again each time — work that lands
+  /// right in the middle of the open flight. A read that is still running is
+  /// shared, and a failure is dropped so the next open retries.
+  Future<VideoStats?> getVideoStats(String videoId) {
+    if (videoId.isEmpty) return Future.value(null);
+    final pending = _statsCache[videoId];
+    if (pending != null) return pending;
+    if (_statsCache.length >= _statsCacheMax) {
+      _statsCache.remove(_statsCache.keys.first);
+    }
+    final read = _readVideoStats(videoId).then((stats) {
+      if (stats == null) _statsCache.remove(videoId);
+      return stats;
+    });
+    _statsCache[videoId] = read;
+    return read;
+  }
+
+  static final Map<String, Future<VideoStats?>> _statsCache = {};
+  static const _statsCacheMax = 24;
+
+  /// Test seam: the network lookup, so the cache can be checked offline.
+  @visibleForTesting
+  static Future<VideoStats?> Function(String videoId)? debugFetchStats;
+
+  Future<VideoStats?> _readVideoStats(String videoId) async {
+    final fetch = debugFetchStats;
+    if (fetch != null) return fetch(videoId);
     try {
       final video = await _yt.videos.get(VideoId(videoId)).timeout(_timeout);
       final engagement = video.engagement;

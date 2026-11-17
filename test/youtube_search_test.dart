@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:atlas_music/models/song.dart';
+import 'package:atlas_music/models/video_stats.dart';
 import 'package:atlas_music/services/youtube_service.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -30,6 +31,46 @@ SearchVideo vid({
     );
 
 void main() {
+  test('a repeated lookup of one video is served from the first read', () async {
+    // The full player remounts on every open, so this is the close/open loop:
+    // the same watch page must not be fetched and parsed again mid-flight.
+    var fetches = 0;
+    YouTubeService.debugFetchStats = (id) async {
+      fetches++;
+      // A slow read, so the second call arrives while the first is running.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      return const VideoStats(likes: 7, dislikes: null);
+    };
+    addTearDown(() => YouTubeService.debugFetchStats = null);
+
+    final service = YouTubeService();
+    final results = await Future.wait([
+      service.getVideoStats('vid-cache-a'),
+      service.getVideoStats('vid-cache-a'),
+      service.getVideoStats('vid-cache-a'),
+    ]);
+    expect(fetches, 1, reason: 'concurrent opens share one lookup');
+    expect(results.map((s) => s?.likes), everyElement(7));
+
+    // And after it settled, another open still costs no network.
+    expect((await service.getVideoStats('vid-cache-a'))?.likes, 7);
+    expect(fetches, 1);
+  });
+
+  test('a failed lookup is not remembered, so the next open retries', () async {
+    var fetches = 0;
+    YouTubeService.debugFetchStats = (id) async {
+      fetches++;
+      return fetches == 1 ? null : const VideoStats(likes: 3, dislikes: null);
+    };
+    addTearDown(() => YouTubeService.debugFetchStats = null);
+
+    final service = YouTubeService();
+    expect(await service.getVideoStats('vid-cache-b'), isNull);
+    expect((await service.getVideoStats('vid-cache-b'))?.likes, 3);
+    expect(fetches, 2);
+  });
+
   test('duration parsing: mm:ss, hh:mm:ss, live/empty garbage', () {
     expect(YouTubeService.parseDurationString('3:45'),
         const Duration(minutes: 3, seconds: 45));

@@ -13,6 +13,34 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   fade after three seconds while the video plays. The square video and the
   player's own controls are unchanged.
 
+### Fixed
+- **The player runs at the screen's refresh rate, and the close no longer
+  stutters**: the app window sat on Android's default 60 Hz even on a 144 Hz
+  panel (measured: launcher 90 Hz, Atlas 60 Hz), and the mini bar and floating
+  nav kept their backdrop frosts live under every frame of the player's card
+  (9.7 ms of raster per frame at 144 Hz). The window now asks for the panel's
+  peak mode, capped by the user's own refresh-rate setting, and the mini bar
+  skips its backdrop frost while the card covers it, without overriding the
+  user's selected tint. Measured on a motorola edge 70 fusion: close raster
+  9.7 → 4.3 ms with both frosts removed. The floating nav is exposed through
+  almost the whole close, so it keeps its pass for the two 260 ms flights and
+  skips it only while the settled player page covers the bar; the close now
+  sits between those two numbers, with the mini bar's repeated pass still gone.
+- **Opening and closing the player no longer visibly changes the glass frost**:
+  the bars dropped their frost for the player's whole lifetime, but the
+  floating nav is uncovered within the first ~30 ms of the close and stayed
+  flat for the rest of the flight, then frosted again at landing. The frost now
+  switches only while the card's opaque paper (mini bar) or the settled player
+  page (nav) hides the bar, so the nav is already frosted when the card reveals
+  it and the mini bar never shows the change either. The user's tint is
+  untouched throughout.
+- **Closing the player no longer stutters in Song mode**: the cover's slow
+  breathing scale sat inside the page's repaint boundary, so every breath
+  frame re-rasterised the whole window-sized player and the shrinking card
+  dropped frames over it. The breath now repaints the cover alone. Video mode
+  was already smooth because it has no breathing cover, and a paused song
+  stopped the breath, which is why the stutter came and went.
+
 ### Changed
 - **The player grows out of the mini bar**: tapping the bar now turns the bar
   itself into the full player. The card starts as the bar's own rectangle and

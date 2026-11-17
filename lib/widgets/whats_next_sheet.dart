@@ -82,6 +82,7 @@ class _WhatsNextSheetState extends State<WhatsNextSheet> {
   }
 
   Future<void> _play(Song song) async {
+    widget.audio.clearSleepStop();
     final at = widget.audio.queue.indexWhere((s) => s.id == song.id);
     if (at >= 0) {
       await widget.audio.playQueued(at);

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
+import '../media/cache_service.dart';
 import '../services/glass_settings.dart';
+import '../services/storage_service.dart';
 import '../services/system_permissions.dart';
 import '../services/terms.dart';
 import '../services/theme_settings.dart';
@@ -30,8 +32,10 @@ class AdvancedSettingsScreen extends StatefulWidget {
 class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
     with WidgetsBindingObserver {
   final _prefs = UserPrefs();
+  final _cache = CacheService();
   bool _batteryExempt = false;
   bool _fromFdroid = false;
+  int _cacheBytes = 0;
   String _version = '';
 
   @override
@@ -39,6 +43,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadBatteryStatus();
+    _loadCacheSize();
     _loadVersion();
   }
 
@@ -81,6 +86,56 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
       // over it — the same reason Profile hides the update row.
       _fromFdroid = info.installerStore == 'org.fdroid.fdroid';
     });
+  }
+
+  Future<void> _loadCacheSize() async {
+    final bytes = await _cache.totalBytes();
+    if (!mounted) return;
+    setState(() => _cacheBytes = bytes);
+  }
+
+  static String _fmtBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).round()} MB';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).round()} KB';
+    return '$bytes B';
+  }
+
+  /// Frees the streamed-song cache. Explicit downloads are user intent and
+  /// are passed through, so "Offline Music" keeps working.
+  Future<void> _clearCache() async {
+    final downloaded = await StorageService().getDownloadedSongs();
+    if (!mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Clear cache?'),
+        content: Text(
+          'Removes ${_fmtBytes(_cacheBytes)} of streamed songs. '
+          'Downloaded songs are kept. Cleared songs re-download when played '
+          'again.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _cache.clearAll(keepSongs: downloaded);
+    await _loadCacheSize();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Cache cleared')),
+    );
   }
 
   Future<void> _reset() async {
@@ -332,6 +387,26 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                             .requestBatteryExemption();
                         await _loadBatteryStatus();
                       },
+                    ),
+                  ),
+                  Divider(height: 1, color: AppColors.line),
+                  MotionPress(
+                    scale: 0.99,
+                    child: ListTile(
+                      leading:
+                          const Icon(Icons.cleaning_services_outlined, size: 20),
+                      title: const Text('Clear cache',
+                          style: TextStyle(fontSize: 14)),
+                      subtitle: Text(
+                        _cacheBytes > 0
+                            ? '${_fmtBytes(_cacheBytes)} of streamed songs · downloads kept'
+                            : 'No streamed songs cached',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.inkSoft),
+                      ),
+                      trailing:
+                          Icon(Icons.chevron_right, color: AppColors.mute),
+                      onTap: _clearCache,
                     ),
                   ),
                   Divider(height: 1, color: AppColors.line),

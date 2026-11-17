@@ -19,6 +19,7 @@ import '../widgets/liquid_background.dart';
 import '../widgets/lyrics_sheet.dart';
 import '../widgets/play_next_badge.dart';
 import '../widgets/song_actions.dart';
+import '../widgets/sleep_timer_sheet.dart';
 import '../widgets/video_stats_bar.dart';
 import '../widgets/video_surface.dart';
 import '../widgets/whats_next_sheet.dart';
@@ -188,7 +189,16 @@ class _PlayerScreenState extends State<PlayerScreen>
   @override
   void dispose() {
     _route?.animation?.removeStatusListener(_onRouteStatus);
+    _route?.animation?.removeListener(_onRouteTick);
     _route = null;
+    // Deferred: disposing can happen inside a build, and these notifiers'
+    // listeners rebuild widgets. Only clear them if no other player is mounted.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (PlayerScreen.openCount == 0) {
+        playerRouteOpen.value = false;
+        playerOpenSettled.value = false;
+      }
+    });
     if (PlayerScreen.openCount > 0) PlayerScreen.openCount--;
     if (PlayerScreen.openCount == 0) PlayerScreen._closing = false;
     _audio?.removeListener(_audioListener!);
@@ -209,9 +219,20 @@ class _PlayerScreenState extends State<PlayerScreen>
   void _onRouteStatus(AnimationStatus status) {
     if (status == AnimationStatus.reverse) {
       PlayerScreen._closing = true;
+      // The close starts with the card still filling the window, so the nav is
+      // fully covered: give it its frost back now, and it is already frosted
+      // when the shrinking card uncovers it.
+      playerOpenSettled.value = false;
     } else if (status == AnimationStatus.forward ||
         status == AnimationStatus.completed) {
       PlayerScreen._closing = false;
+      // Forward is either the open flight or a cancelled close: both need the
+      // nav frosted. Completed means the player is settled and its full-window
+      // page covers the nav, so the frost pass can be skipped unseen. The
+      // first frame of an entrance also reports completed while the route is
+      // still offstage — that is the start of the flight, not its end.
+      playerOpenSettled.value =
+          status == AnimationStatus.completed && !(_route?.offstage ?? false);
     }
     // The card has landed: apply what was held for the flight, once. On the
     // frame *after* the landing, not on it: the last frame of the flight is
@@ -224,14 +245,29 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
   }
 
+  /// Keeps the mini bar's frost in step with the card's covered window.
+  ///
+  /// The card's opaque paper hides the bar from [kPlayerCardOpaqueFrom] of the
+  /// flight in both directions: below that the paper fades away and the bar is
+  /// visible. Flip the frost only at that edge, so the bar is never seen
+  /// frosting on or off.
+  void _onRouteTick() {
+    final route = _route;
+    if (route == null || route.offstage) return;
+    final bool covered = (route.animation?.value ?? 0) >= kPlayerCardOpaqueFrom;
+    if (playerRouteOpen.value != covered) playerRouteOpen.value = covered;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final route = ModalRoute.of(context);
     if (route != _route) {
       _route?.animation?.removeStatusListener(_onRouteStatus);
+      _route?.animation?.removeListener(_onRouteTick);
       _route = route;
       route?.animation?.addStatusListener(_onRouteStatus);
+      route?.animation?.addListener(_onRouteTick);
       // The first frame of an entrance builds the route offstage, where it
       // reports a completed animation: that frame is the start of the flight,
       // not its end. A player with no route animation applies updates at once.
@@ -384,6 +420,8 @@ class _PlayerScreenState extends State<PlayerScreen>
         context.select<AudioPlayerService, bool>((s) => s.shuffleEnabled);
     final loop =
         context.select<AudioPlayerService, LoopMode>((s) => s.loopMode);
+    final sleepActive =
+        context.select<AudioPlayerService, bool>((s) => s.sleepActive);
     final upcoming = audioService.upcoming;
 
     // Artwork colour is opt-in and player-only: everything else stays on the
@@ -433,6 +471,15 @@ class _PlayerScreenState extends State<PlayerScreen>
           ),
           centerTitle: true,
           actions: [
+            if (hasSong)
+              IconButton(
+                tooltip: sleepActive ? 'Sleep timer on' : 'Sleep timer',
+                icon: Icon(
+                  sleepActive ? Icons.bedtime : Icons.bedtime_outlined,
+                  color: sleepActive ? AppColors.ink : AppColors.inkSoft,
+                ),
+                onPressed: () => showSleepTimerSheet(context, audioService),
+              ),
             if (hasSong)
               IconButton(
                 key: _moreKey,
@@ -595,7 +642,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   /// when the song changes; the result only repaints the player.
   void _loadAccent(Song song, String? artPath) {
     _accentFor = song.id;
-    _accent = null;
+    // A colour already read for this cover (the player was opened before)
+    // paints on the first frame: no decode, and no gradient landing on the page
+    // after the flight.
+    _accent = cachedArtworkColor(song.thumbnailUrl, filePath: artPath);
+    if (_accent != null) return;
     dominantArtworkColor(song.thumbnailUrl, filePath: artPath).then((color) {
       if (!mounted || _accentFor != song.id) return;
       _flightHold.apply(() => _accent = color);
@@ -611,103 +662,110 @@ class _PlayerScreenState extends State<PlayerScreen>
   /// animation wobble a border instead of the art.
   Widget _cover(Song song, String? artPath, double size) {
     final radius = BorderRadius.circular(22);
-    return ScaleTransition(
-      scale: _breathScale,
-      child: RepaintBoundary(
-        // Sized by the layout, not by AspectRatio: the cover shrinks to fit the
-        // screen instead of pushing the column into a scroll view.
-        child: SizedBox(
-          width: size,
-          height: size,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              GestureDetector(
-                // Double-tap likes without stealing single taps: no onTap
-                // here, so transport, slider and video gestures keep theirs.
-                onDoubleTap: _doubleTapLike,
-                child: Hero(
-                  // Same per-route tag the tapping mini bar stored: the cover only
-                  // flies when that exact bar is the source.
-                  tag: playerHeroTag,
-                  // Linear: the player's curve is applied by the rect tween
-                  // instead, so the cover and the card around it move as one.
-                  curve: Curves.linear,
-                  // Opening, this cover is the flight's destination, so it
-                  // settles onto the full player on the open curve.
-                  createRectTween: (b, e) => PlayerFlightRectTween(
-                    begin: b,
-                    end: e,
-                    curve: AppMotion.playerOpenCurve,
-                  ),
-                  // The cover morphs into the big cover on open and back onto the
-                  // thumb on close.
-                  flightShuttleBuilder: (ctx, anim, dir, from, to) =>
-                      CoverFlightShuttle(song.thumbnailUrl,
+    // Own boundary *around* the breath. The transform marks paint dirty on
+    // every tick, and the nearest boundary above it is the page's window-sized
+    // layer: without this one, each breath frame re-rastered the whole player,
+    // so the card stuttered whenever something else moved over it (the close).
+    // Video mode has no breath, which is why it stayed smooth. Cover-sized now.
+    return RepaintBoundary(
+      child: ScaleTransition(
+        scale: _breathScale,
+        child: RepaintBoundary(
+          // Sized by the layout, not by AspectRatio: the cover shrinks to fit the
+          // screen instead of pushing the column into a scroll view.
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                GestureDetector(
+                  // Double-tap likes without stealing single taps: no onTap
+                  // here, so transport, slider and video gestures keep theirs.
+                  onDoubleTap: _doubleTapLike,
+                  child: Hero(
+                    // Same per-route tag the tapping mini bar stored: the cover only
+                    // flies when that exact bar is the source.
+                    tag: playerHeroTag,
+                    // Linear: the player's curve is applied by the rect tween
+                    // instead, so the cover and the card around it move as one.
+                    curve: Curves.linear,
+                    // Opening, this cover is the flight's destination, so it
+                    // settles onto the full player on the open curve.
+                    createRectTween: (b, e) => PlayerFlightRectTween(
+                      begin: b,
+                      end: e,
+                      curve: AppMotion.playerOpenCurve,
+                    ),
+                    // The cover morphs into the big cover on open and back onto the
+                    // thumb on close.
+                    flightShuttleBuilder: (ctx, anim, dir, from, to) =>
+                        CoverFlightShuttle(song.thumbnailUrl,
+                            filePath: artPath,
+                            songId: song.id,
+                            animation: anim,
+                            curve: playerFlightCurve(dir)),
+                    // The landing spot stays empty while the shuttle flies. It is
+                    // still mounted (Offstage) so it is already decoded when the
+                    // shuttle lands instead of blinking in. Hiding it on close too
+                    // keeps a second copy from sitting there under the shuttle.
+                    placeholderBuilder: (context, size, child) => SizedBox(
+                      width: size.width,
+                      height: size.height,
+                      child: Offstage(child: child),
+                    ),
+                    // Shadow and rim live inside the Hero, so nothing of the cover is
+                    // left behind at the landing spot during the flight.
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: radius,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            blurRadius: 40,
+                            spreadRadius: -6,
+                            offset: const Offset(0, 22),
+                          ),
+                        ],
+                      ),
+                      foregroundDecoration: BoxDecoration(
+                        borderRadius: radius,
+                        border: Border.all(color: AppColors.glassBorder),
+                      ),
+                      child: AnimatedSwitcher(
+                        duration: AppMotion.dur(context, AppMotion.micro),
+                        switchInCurve: AppMotion.curve,
+                        switchOutCurve: AppMotion.curve,
+                        transitionBuilder: (child, animation) =>
+                            FadeTransition(opacity: animation, child: child),
+                        child: Artwork(
+                          song.thumbnailUrl,
+                          key: ValueKey(song.id),
                           filePath: artPath,
-                          songId: song.id,
-                          animation: anim,
-                          curve: playerFlightCurve(dir)),
-                  // The landing spot stays empty while the shuttle flies. It is
-                  // still mounted (Offstage) so it is already decoded when the
-                  // shuttle lands instead of blinking in. Hiding it on close too
-                  // keeps a second copy from sitting there under the shuttle.
-                  placeholderBuilder: (context, size, child) => SizedBox(
-                    width: size.width,
-                    height: size.height,
-                    child: Offstage(child: child),
-                  ),
-                  // Shadow and rim live inside the Hero, so nothing of the cover is
-                  // left behind at the landing spot during the flight.
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: radius,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.55),
-                          blurRadius: 40,
-                          spreadRadius: -6,
-                          offset: const Offset(0, 22),
+                          size: size,
+                          radius: 22,
+                          fit: BoxFit.cover,
+                          // One bitmap for the whole player: the same size the
+                          // cover flight and the mini bar decode. The cover's box
+                          // is whatever the fixed rows leave over, so keying the
+                          // cache on it meant the artwork decoded again (and
+                          // blinked) whenever the up-next peek changed the height.
+                          decodeWidth: coverLogicalSize(context),
                         ),
-                      ],
-                    ),
-                    foregroundDecoration: BoxDecoration(
-                      borderRadius: radius,
-                      border: Border.all(color: AppColors.glassBorder),
-                    ),
-                    child: AnimatedSwitcher(
-                      duration: AppMotion.dur(context, AppMotion.micro),
-                      switchInCurve: AppMotion.curve,
-                      switchOutCurve: AppMotion.curve,
-                      transitionBuilder: (child, animation) =>
-                          FadeTransition(opacity: animation, child: child),
-                      child: Artwork(
-                        song.thumbnailUrl,
-                        key: ValueKey(song.id),
-                        filePath: artPath,
-                        size: size,
-                        radius: 22,
-                        fit: BoxFit.cover,
-                        // One bitmap for the whole player: the same size the
-                        // cover flight and the mini bar decode. The cover's box
-                        // is whatever the fixed rows leave over, so keying the
-                        // cache on it meant the artwork decoded again (and
-                        // blinked) whenever the up-next peek changed the height.
-                        decodeWidth: coverLogicalSize(context),
                       ),
                     ),
                   ),
                 ),
-              ),
-              // One-shot thumbs-up pop; dropped when its run ends, so no
-              // controller to own or dispose.
-              if (_likeBurst > 0)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: _LikeBurst(key: ValueKey(_likeBurst)),
+                // One-shot thumbs-up pop; dropped when its run ends, so no
+                // controller to own or dispose.
+                if (_likeBurst > 0)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: _LikeBurst(key: ValueKey(_likeBurst)),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -828,7 +886,10 @@ class _PlayerScreenState extends State<PlayerScreen>
               final at = audio.queue.indexWhere((s) => s.id == next.id);
               // The first peek row can be the pending "Play next" override,
               // which is not in the queue yet — play it directly.
-              if (at < 0) return audio.playSong(next);
+              if (at < 0) {
+                audio.clearSleepStop();
+                return audio.playSong(next);
+              }
               return audio.playQueued(at);
             }),
             child: Padding(
@@ -930,9 +991,12 @@ class _PlayerScreenState extends State<PlayerScreen>
                       accent: accent,
                       // A disposed controller can throw from an in-flight tap;
                       // the page must not surface an unhandled future for it.
-                      onPressed: () =>
-                          (value.isPlaying ? video.pause() : video.play())
-                              .catchError((_) {}),
+                      onPressed: () {
+                        // Pressing play outranks a finished sleep timer.
+                        if (!value.isPlaying) audioService.clearSleepStop();
+                        (value.isPlaying ? video.pause() : video.play())
+                            .catchError((_) {});
+                      },
                     ),
                   ),
           )

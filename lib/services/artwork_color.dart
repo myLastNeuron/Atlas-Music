@@ -4,7 +4,25 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/painting.dart';
+
+/// Colours already read, and reads already running.
+///
+/// The full player is a fresh route on every open, so with "Artwork colour" on
+/// it asked for the same cover's colour again on every open: a decode plus a
+/// gradient that only landed after the flight and re-rasterised the page. One
+/// colour per cover is enough — a cover file never changes colour.
+final Map<String, Color> _colors = {};
+final Map<String, Future<Color?>> _inflight = {};
+const int _colorsMax = 64;
+
+String _keyOf(String url, String? filePath) => '${filePath ?? ''}\u0000$url';
+
+/// The colour already read for this cover, or null. Synchronous, so the player
+/// can paint its tint on the first frame of a repeated open.
+Color? cachedArtworkColor(String url, {String? filePath}) =>
+    _colors[_keyOf(url, filePath)];
 
 /// The dominant colour of a song's artwork, or null when it cannot be read
 /// (no artwork, offline, a corrupt file).
@@ -13,7 +31,29 @@ import 'package:flutter/painting.dart';
 /// image the artwork widget already cached — one download, and only a ~48 px
 /// decode because the provider is wrapped in [ResizeImage] — so it never pulls
 /// a second copy of the cover.
-Future<Color?> dominantArtworkColor(String url, {String? filePath}) async {
+Future<Color?> dominantArtworkColor(String url, {String? filePath}) {
+  final key = _keyOf(url, filePath);
+  final known = _colors[key];
+  if (known != null) return Future.value(known);
+  // A player opened again before the first read finished joins that read
+  // instead of starting a second decode of the same cover.
+  final pending = _inflight[key];
+  if (pending != null) return pending;
+  final read = _readColor(url, filePath).then((color) {
+    _inflight.remove(key);
+    // Failures are not remembered: a cover that would not decode (offline)
+    // gets another try on the next open.
+    if (color != null) {
+      if (_colors.length >= _colorsMax) _colors.remove(_colors.keys.first);
+      _colors[key] = color;
+    }
+    return color;
+  });
+  _inflight[key] = read;
+  return read;
+}
+
+Future<Color?> _readColor(String url, String? filePath) async {
   final provider = _providerFor(url, filePath);
   if (provider == null) return null;
   try {
@@ -59,8 +99,21 @@ Future<ui.Image?> _resolve(ImageProvider provider) {
     onError: (_, __) => finish(null),
   );
   stream.addListener(listener);
-  return completer.future
-      .whenComplete(() => stream.removeListener(listener));
+  return completer.future.whenComplete(() => stream.removeListener(listener));
+}
+
+/// Drops the remembered colours. Tests only: the app keeps them for its life.
+@visibleForTesting
+void debugClearArtworkColorCache() {
+  _colors.clear();
+  _inflight.clear();
+}
+
+/// Seeds a colour read. Tests only: lets widget tests exercise the live tint
+/// without decoding an image.
+@visibleForTesting
+void debugSeedArtworkColor(String url, Color color, {String? filePath}) {
+  _colors[_keyOf(url, filePath)] = color;
 }
 
 /// The most prominent readable colour in [rgba] (unpremultiplied RGBA).
@@ -94,8 +147,8 @@ Color? dominantColorOfPixels(Uint8List rgba) {
   var bestScore = 0.0;
   counts.forEach((key, count) {
     final sum = sums[key]!;
-    final bucket = Color.fromARGB(
-        255, sum[0] ~/ count, sum[1] ~/ count, sum[2] ~/ count);
+    final bucket =
+        Color.fromARGB(255, sum[0] ~/ count, sum[1] ~/ count, sum[2] ~/ count);
     final hsv = HSVColor.fromColor(bucket);
     if (hsv.value < 0.10 || hsv.value > 0.92) return; // black / white
     final score = count * (0.15 + hsv.saturation);
@@ -111,6 +164,5 @@ Color? dominantColorOfPixels(Uint8List rgba) {
   }
   final sum = sums[best]!;
   final count = counts[best]!;
-  return Color.fromARGB(
-      255, sum[0] ~/ count, sum[1] ~/ count, sum[2] ~/ count);
+  return Color.fromARGB(255, sum[0] ~/ count, sum[1] ~/ count, sum[2] ~/ count);
 }

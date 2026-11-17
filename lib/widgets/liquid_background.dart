@@ -86,6 +86,12 @@ BoxDecoration liquidGlassDecoration(
 /// behind it, so a filter there costs a full repaint per frame and shows
 /// nothing. The floating chrome — nav bar, mini player, sheets, menus — opts in,
 /// because that is where album art and lists actually scroll underneath.
+///
+/// The filter always stays in the tree and is only disabled when [blur] is off:
+/// a disabled [BackdropFilter] paints its child directly with no layer and no
+/// blur pass, and keeping the widget in place means flipping the frost never
+/// replaces the child subtree. The mini bar relies on that — it carries the
+/// player's Hero destination, which must survive a mid-flight frost switch.
 class GlassSurface extends StatelessWidget {
   final Widget child;
   final BorderRadius borderRadius;
@@ -130,15 +136,14 @@ class GlassSurface extends StatelessWidget {
     );
     return ClipRRect(
       borderRadius: borderRadius,
-      child: blur
-          ? BackdropFilter(
-              filter: ImageFilter.blur(
-                sigmaX: kGlassBlurSigma,
-                sigmaY: kGlassBlurSigma,
-              ),
-              child: panel,
-            )
-          : panel,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(
+          sigmaX: kGlassBlurSigma,
+          sigmaY: kGlassBlurSigma,
+        ),
+        enabled: blur,
+        child: panel,
+      ),
     );
   }
 }

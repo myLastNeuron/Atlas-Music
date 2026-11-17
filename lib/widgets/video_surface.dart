@@ -414,6 +414,13 @@ class _VideoSurfaceState extends State<VideoSurface>
     final c = _controller;
     if (c == null || !c.value.isCompleted) return;
     final audio = _audio;
+    // The sleep timer expired: this song's end is playback's end. Do not
+    // repeat it, even in repeat-one mode.
+    if (audio != null && audio.sleepPending) {
+      _advanced = true;
+      unawaited(c.pause().catchError((_) {}));
+      return;
+    }
     // Repeat-one is the audio player's job, and it is paused in Video mode:
     // here the video is the playback, so it repeats itself. A pinned
     // "Play next" is an explicit user choice and beats the loop.
@@ -562,6 +569,9 @@ class _VideoSurfaceState extends State<VideoSurface>
   void _toggle() {
     final c = _controller;
     if (c == null) return;
+    // A tap is the user asking to play again: a finished sleep timer no longer
+    // stops the next end.
+    if (!c.value.isPlaying) _audio?.clearSleepStop();
     // A disposed controller can still surface from an in-flight tap.
     unawaited((c.value.isPlaying ? c.pause() : c.play()).catchError((_) {}));
   }
@@ -763,6 +773,7 @@ class _FullscreenVideo extends StatefulWidget {
 class _FullscreenVideoState extends State<_FullscreenVideo> {
   static const _hideAfter = Duration(seconds: 3);
   static const _skip = Duration(seconds: 10);
+  static const _introAsset = 'assets/intro/rotate_your_phone.mp4';
 
   Timer? _hideTimer;
   Timer? _hintTimer;
@@ -772,18 +783,110 @@ class _FullscreenVideoState extends State<_FullscreenVideo> {
   String? _hint;
   double? _dragValue;
 
+  /// The rotate-your-phone sting that opens every fullscreen video. It plays
+  /// over the song's video and has no skip: taps and seeks stay blocked until
+  /// it finishes.
+  VideoPlayerController? _intro;
+  bool _introUp = false;
+
+  /// The song's video was playing when the sting started. Opening a second
+  /// player takes audio focus, which pauses the song's video; this remembers
+  /// to start it again once the sting is gone.
+  bool _resumeMain = false;
+  Timer? _introTimer;
+
   @override
   void initState() {
     super.initState();
     _wasPlaying = widget.controller.value.isPlaying;
     widget.controller.addListener(_onValue);
     _scheduleHide();
+    unawaited(_openIntro());
+  }
+
+  Future<void> _openIntro() async {
+    // Captured before the second player exists: it is the sting's play() that
+    // takes audio focus and pauses the song's video.
+    _resumeMain = widget.controller.value.isPlaying &&
+        !widget.controller.value.isCompleted;
+    final c = VideoPlayerController.asset(_introAsset);
+    _intro = c;
+    try {
+      await c.initialize().timeout(const Duration(seconds: 10));
+      if (!mounted || _intro != c) {
+        if (_intro == c) {
+          _intro = null;
+          unawaited(c.dispose());
+        }
+        return;
+      }
+      c.addListener(_onIntroValue);
+      setState(() => _introUp = true);
+      // Completion is the normal end; the timer only covers a sting paused by
+      // something else, so the unskippable overlay can never stay forever.
+      _introTimer = Timer(
+        c.value.duration + const Duration(seconds: 2),
+        _closeIntro,
+      );
+      unawaited(c.play().catchError((_) {}));
+    } catch (_) {
+      // No intro: the song's video is already playing, so just carry on.
+      _resumeMain = false;
+      if (_intro == c) {
+        _intro = null;
+        unawaited(c.dispose());
+      }
+    }
+  }
+
+  void _onIntroValue() {
+    final c = _intro;
+    if (c == null || !c.value.isCompleted) return;
+    _closeIntro();
+  }
+
+  void _closeIntro() {
+    final c = _intro;
+    if (c == null) return;
+    _intro = null;
+    _introTimer?.cancel();
+    _introTimer = null;
+    c.removeListener(_onIntroValue);
+    if (mounted) setState(() => _introUp = false);
+    // Resume only once the sting's player has released audio focus, or the
+    // platform would pause the song's video again.
+    unawaited(c
+        .pause()
+        .catchError((_) {})
+        .whenComplete(c.dispose)
+        .whenComplete(_resumeMainVideo));
+  }
+
+  void _resumeMainVideo() {
+    final resume = _resumeMain;
+    _resumeMain = false;
+    if (!resume || !mounted) return;
+    final main = widget.controller;
+    if (main.value.isPlaying || main.value.isCompleted) return;
+    // The app's rule: nothing resumes while it is in the background.
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.paused) {
+      return;
+    }
+    unawaited(main.play().catchError((_) {}));
   }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
     _hintTimer?.cancel();
+    _introTimer?.cancel();
+    _introTimer = null;
+    final intro = _intro;
+    _intro = null;
+    if (intro != null) {
+      intro.removeListener(_onIntroValue);
+      unawaited(intro.pause().catchError((_) {}).whenComplete(intro.dispose));
+    }
     widget.controller.removeListener(_onValue);
     widget.onChromeRestore();
     super.dispose();
@@ -1033,6 +1136,24 @@ class _FullscreenVideoState extends State<_FullscreenVideo> {
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // Last, so it covers the controls and, being opaque to pointers,
+            // blocks every tap, double-tap and slider drag until it is done.
+            if (_introUp)
+              Positioned.fill(
+                child: AbsorbPointer(
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: _intro?.value.aspectRatio ?? 16 / 9,
+                        child: _intro == null
+                            ? const SizedBox.shrink()
+                            : VideoPlayer(_intro!),
                       ),
                     ),
                   ),

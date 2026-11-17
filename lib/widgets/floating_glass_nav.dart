@@ -32,87 +32,99 @@ class FloatingGlassNav extends StatelessWidget {
     final pillAlign = Alignment(-1 + 2 * currentIndex / (items.length - 1), 0);
     return Padding(
       padding: EdgeInsets.fromLTRB(20, 0, 20, 12 + bottom * 0.4),
-      child: GlassSurface(
-        borderRadius: BorderRadius.circular(28),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-        shadow: false,
-        // Frosted: the page scrolls right underneath it.
-        blur: true,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Single pill that glides to the active slot.
-            Positioned.fill(
-              child: AnimatedAlign(
-                duration: pillDuration,
-                curve: AppMotion.emphasized,
-                alignment: pillAlign,
-                child: FractionallySizedBox(
-                  widthFactor: 1 / items.length,
-                  heightFactor: 1,
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    child: DecoratedBox(
-                      key: const ValueKey('nav_pill'),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        color: AppColors.ink.withValues(alpha: 0.10),
-                        border: Border.all(
-                            color: AppColors.ink.withValues(alpha: 0.14)),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Row(
-              children: List.generate(items.length, (i) {
-                final active = i == currentIndex;
-                final data = items[i];
-                return Expanded(
-                  child: MotionPress(
-                    scale: 0.94,
-                    child: GestureDetector(
-                      key: ValueKey('nav_$i'),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onTap(i),
+      child: ValueListenableBuilder<bool>(
+        valueListenable: playerOpenSettled,
+        builder: (context, settled, _) {
+          return GlassSurface(
+            borderRadius: BorderRadius.circular(28),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            shadow: false,
+            // The nav is exposed through almost the whole close, so it cannot
+            // go frost-free during a flight without the change being visible.
+            // It skips the pass only while the settled player page covers it.
+            blur: !settled,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Single pill that glides to the active slot.
+                Positioned.fill(
+                  child: AnimatedAlign(
+                    duration: pillDuration,
+                    curve: AppMotion.emphasized,
+                    alignment: pillAlign,
+                    child: FractionallySizedBox(
+                      widthFactor: 1 / items.length,
+                      heightFactor: 1,
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            AnimatedScale(
-                              scale: active ? 1.08 : 1,
-                              duration: AppMotion.dur(context, AppMotion.micro),
-                              curve: Curves.easeOutBack,
-                              child: Icon(active ? data.$2 : data.$1,
-                                  size: 22,
-                                  color:
-                                      active ? AppColors.ink : AppColors.mute),
-                            ),
-                            const SizedBox(height: 2),
-                            AnimatedDefaultTextStyle(
-                              duration: AppMotion.dur(context, AppMotion.micro),
-                              curve: AppMotion.curve,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight:
-                                    active ? FontWeight.w600 : FontWeight.w400,
-                                color: active ? AppColors.ink : AppColors.mute,
-                              ),
-                              child: Text(data.$3),
-                            ),
-                          ],
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        child: DecoratedBox(
+                          key: const ValueKey('nav_pill'),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            color: AppColors.ink.withValues(alpha: 0.10),
+                            border: Border.all(
+                                color: AppColors.ink.withValues(alpha: 0.14)),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                );
-              }),
+                ),
+                Row(
+                  children: List.generate(items.length, (i) {
+                    final active = i == currentIndex;
+                    final data = items[i];
+                    return Expanded(
+                      child: MotionPress(
+                        scale: 0.94,
+                        child: GestureDetector(
+                          key: ValueKey('nav_$i'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => onTap(i),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                AnimatedScale(
+                                  scale: active ? 1.08 : 1,
+                                  duration:
+                                      AppMotion.dur(context, AppMotion.micro),
+                                  curve: Curves.easeOutBack,
+                                  child: Icon(active ? data.$2 : data.$1,
+                                      size: 22,
+                                      color: active
+                                          ? AppColors.ink
+                                          : AppColors.mute),
+                                ),
+                                const SizedBox(height: 2),
+                                AnimatedDefaultTextStyle(
+                                  duration:
+                                      AppMotion.dur(context, AppMotion.micro),
+                                  curve: AppMotion.curve,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: active
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                    color:
+                                        active ? AppColors.ink : AppColors.mute,
+                                  ),
+                                  child: Text(data.$3),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

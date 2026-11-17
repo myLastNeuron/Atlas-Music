@@ -62,6 +62,15 @@ class AudioPlayerService extends ChangeNotifier {
   bool _isLoading = false;
   bool _shuffle = false;
   LoopMode _loopMode = LoopMode.off;
+  // Sleep timer: after the countdown the current song is allowed to finish,
+  // then playback pauses instead of advancing.
+  Timer? _sleepTimer;
+  Duration? _sleepDuration;
+  DateTime? _sleepDeadline;
+  bool _sleepPending = false;
+  // Set once the timer actually stopped playback: the latch stays (it blocks
+  // auto-advance) but the UI is no longer "active".
+  bool _sleepFinished = false;
   // Single-slot "Play next": plays once right after the current song, then
   // normal advance/autofetch resumes. Re-selecting replaces it; a fresh
   // explicit queue drops it. Never injected into _queue.
@@ -324,6 +333,8 @@ class AudioPlayerService extends ChangeNotifier {
     if (_currentSong == null || _queue.isEmpty) return;
     if (_isLoading || _advancing || _player.playing) return;
     if (_pausedForOffline) return;
+    // The sleep timer ended playback; do not auto-advance on foreground.
+    if (_sleepPending) return;
     final st = _player.processingState;
     if (st != ProcessingState.completed && st != ProcessingState.idle) return;
     // Reset global advance failures: foreground transition means the user
@@ -401,6 +412,101 @@ class AudioPlayerService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get shuffleEnabled => _shuffle;
   LoopMode get loopMode => _loopMode;
+
+  /// Sleep timer choices offered by the player.
+  static const List<int> sleepOptionsMinutes = [15, 30, 45, 60];
+
+  /// Countdown running, or expired while the current song finishes playing.
+  /// False once the timer has actually stopped playback.
+  bool get sleepActive =>
+      _sleepDeadline != null || (_sleepPending && !_sleepFinished);
+
+  /// The countdown expired: stop at the end of the current song, never repeat
+  /// or advance. Video surfaces check this because they own repeat-one there.
+  bool get sleepPending => _sleepPending;
+  Duration? get sleepDuration => _sleepDuration;
+  DateTime? get sleepDeadline => _sleepDeadline;
+
+  /// Arms a sleep timer. When it expires the current song may finish; the
+  /// next advance is replaced by a pause. Passing null turns it off.
+  void setSleepTimer(Duration? duration) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepPending = false;
+    _sleepFinished = false;
+    _sleepDeadline = null;
+    _sleepDuration = duration;
+    if (duration != null) {
+      _sleepDeadline = DateTime.now().add(duration);
+      _sleepTimer = Timer(duration, () {
+        _sleepTimer = null;
+        _sleepDeadline = null;
+        _sleepPending = true;
+        notifyListeners();
+        // Already silent: nothing is left to wait for.
+        if (!_isPlaying && !_isLoading) _finishSleep();
+      });
+    }
+    notifyListeners();
+  }
+
+  void cancelSleepTimer() => setSleepTimer(null);
+
+  void _clearSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepDeadline = null;
+    _sleepDuration = null;
+    _sleepPending = false;
+    _sleepFinished = false;
+  }
+
+  /// Ends playback after the sleep timer expired. Keeps the queue and
+  /// current song, so the user can resume manually.
+  void _finishSleep() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepDeadline = null;
+    _sleepFinished = true;
+    // Keep [_sleepPending]: it blocks the completion guard and every
+    // automatic advance until the user starts playback again. Keep
+    // [_sleepDuration] too: the next sheet opens on the same length.
+    unawaited(_stopForSleep());
+  }
+
+  /// Pauses natively and rewinds a finished source.
+  ///
+  /// At a genuine completion the UI forces `_isPlaying` false while the
+  /// player still reports `playing == true` at `completed`. The native pause
+  /// is therefore unconditional: [pause] is UI-state driven and must never be
+  /// the only thing standing between a finished track and silence.
+  Future<void> _stopForSleep() async {
+    try {
+      await _player.pause().timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Fall through: the playing check below still guards the seek.
+    }
+    // Settle UI state, cancel recovery timers and save the session.
+    await pause();
+    try {
+      // Never seek while the source can still be running: on Android that
+      // restarts the track instead of leaving it stopped.
+      if (_player.playing) return;
+      if (_player.processingState != ProcessingState.completed) return;
+      await _player.seek(Duration.zero).timeout(const Duration(seconds: 5));
+      syncPlaybackState();
+      unawaited(_saveSession());
+    } catch (_) {
+      // Best-effort: the native pause already silenced playback.
+    }
+  }
+
+  /// A manual play outranks a finished sleep timer.
+  void clearSleepStop() {
+    if (!_sleepPending) return;
+    _clearSleepTimer();
+    notifyListeners();
+  }
 
   /// Repeat-one is enforced by the audio player, which is paused in Video
   /// mode: the video surfaces repeat the video themselves on this.
@@ -546,8 +652,9 @@ class AudioPlayerService extends ChangeNotifier {
     // Hook the media notification to this service's real queue.
     AtlasAudioHandler.instance?.attach(this);
     // TEMPORARY boot marker: proves which binary is on device.
-    _cache.sweep();
-    unawaited(restoreLastSession());
+    // Cache boot runs before restore: sweep pins explicit downloads first,
+    // so getValid's TTL check cannot delete an old download on restore.
+    unawaited(_bootCacheThenRestore());
     // Listen to player state for notification updates.
     _subs.add(_player.positionStream.listen((position) {
       _position = position;
@@ -639,6 +746,15 @@ class AudioPlayerService extends ChangeNotifier {
       )) {
         return;
       }
+      // Repeat-one rewinds natively: the wrap is this song's end. If the
+      // sleep timer already expired, stop instead of replaying.
+      if (_sleepPending && _loopMode == LoopMode.one) {
+        final cur = _currentSong;
+        if (cur == null || cur.id != _activeSongId) return;
+        _markCompleted();
+        unawaited(Future.microtask(_finishSleep));
+        return;
+      }
       if (_loopMode != LoopMode.one || _playNextOverride == null) return;
       // Ownership: only the song holding the native source may complete.
       final cur = _currentSong;
@@ -696,6 +812,14 @@ class AudioPlayerService extends ChangeNotifier {
     // succeeds. Mismatch = late teardown from the previous source.
     if (_activeSongId == null) return;
     if (song.id != _activeSongId) return;
+    // Sleep timer expired while this song played: end here instead of
+    // advancing to the next track.
+    if (_sleepPending) {
+      _markCompleted();
+      _handlingCompletion = false;
+      _finishSleep();
+      return;
+    }
     final eventGen = _playGen;
     _handlingCompletion = true;
 
@@ -2031,6 +2155,7 @@ class AudioPlayerService extends ChangeNotifier {
   /// Play the queue entry at [index] (used by the What's Next sheet).
   Future<bool> playQueued(int index) async {
     if (index < 0 || index >= _queue.length) return false;
+    clearSleepStop();
     _playNextOverride = null;
     _continuationNotBefore = null;
     return _playWithRetry(_queue[index], index);
@@ -2692,6 +2817,46 @@ class AudioPlayerService extends ChangeNotifier {
         if (_currentSong != null) _cache.keyFor(_currentSong!),
       };
 
+  /// Boot-time cache work, in this order: pin every explicit download (so
+  /// sweep and getValid never expire one), sweep TTL/parts/cap, then drop
+  /// stored download rows whose file is gone. Only then restore the session.
+  Future<void> _bootCacheThenRestore() async {
+    try {
+      final downloaded = await _storage.getDownloadedSongs();
+      final pinKeys = <String>{};
+      for (final s in downloaded) {
+        pinKeys.addAll(_cache.keysFor(s));
+      }
+      // Older builds flagged offline songs per playlist only.
+      for (final p in await _storage.getPlaylists()) {
+        for (final id in p.downloadedSongIds) {
+          pinKeys.add('atlas2_${CacheService.safeId(id)}');
+        }
+      }
+      await _cache.sweep(pinKeys: pinKeys);
+      await _reconcileDownloaded(downloaded);
+    } catch (_) {
+      // Downloads could not be listed: skip the sweep rather than let it
+      // expire entries that may be explicit downloads.
+    }
+    await restoreLastSession();
+  }
+
+  /// Removes stored download entries whose file no longer exists, so
+  /// Offline Music does not keep ghost rows. Skipped when the cache holds
+  /// nothing at all: that usually means the directory was unreadable, and
+  /// mass-removing the user's library would be worse than a stale row.
+  Future<void> _reconcileDownloaded(List<Song> downloaded) async {
+    try {
+      if (downloaded.isEmpty || await _cache.totalBytes() <= 0) return;
+      for (final s in downloaded) {
+        if (await _cache.getValid(s) == null) {
+          await _storage.removeDownloadedSong(s.id);
+        }
+      }
+    } catch (_) {}
+  }
+
   /// First queued song (excluding [skipSongId]) that has a valid local file.
   /// [wrap] false: only positions after [fromIndex], never wrapping to
   /// already-played songs (resumes forward progress). [wrap] true: circular
@@ -2843,12 +3008,14 @@ class AudioPlayerService extends ChangeNotifier {
   /// surfaced as a hard failure instead of trying another URL. Fresh
   /// manifest resolutions give a new URL, hence a new throttle counter.
   Future<File> _downloadSource(
-      MediaSource source, Song song, PlaybackReport report) async {
+      MediaSource source, Song song, PlaybackReport report,
+      {bool pinned = false}) async {
     final tmp = await _cache.stageFile(song);
 
     Future<File> commitWith(MediaSource src) async {
       await _youTube.download(src, tmp).timeout(const Duration(seconds: 150));
-      return _cache.commit(song, tmp, src, keepKeys: _protectedCacheKeys());
+      return _cache.commit(song, tmp, src,
+          keepKeys: _protectedCacheKeys(), pinned: pinned);
     }
 
     Future<File> freshChain() async {
@@ -2864,7 +3031,8 @@ class AudioPlayerService extends ChangeNotifier {
         budget: const Duration(seconds: 90),
       );
       if (fresh == null) throw StateError('no downloadable source');
-      return _cache.commit(song, tmp, fresh, keepKeys: _protectedCacheKeys());
+      return _cache.commit(song, tmp, fresh,
+          keepKeys: _protectedCacheKeys(), pinned: pinned);
     }
 
     final total = source.contentLength ?? 0;
@@ -3087,6 +3255,10 @@ class AudioPlayerService extends ChangeNotifier {
     // stale completed could land mid-load. Ownership is via gen/active.
     // Debounce only user taps; automatic advances must never be dropped.
     if (depth == 0 && userInitiated && !_skipGuard()) return true;
+    // Sleep timer expired: automatic advances stop. An explicit tap still
+    // moves on, so the user is never locked out.
+    if (depth == 0 && _sleepPending && userInitiated) clearSleepStop();
+    if (depth == 0 && _sleepPending && !userInitiated) return false;
     // Global advance failure limit: after too many consecutive failures
     // across all songs, stop automatic advances. User taps bypass this
     // (they explicitly want to play something). Reset on new queue or
@@ -3246,6 +3418,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (_currentSong == null) return;
       if (_player.playing) return; // a new source owns playback
       if (_pausedForOffline) return; // offline pause owns recovery
+      if (_sleepPending) return; // sleep timer owns the stop
       if (retryGen != _playGen) return; // newer load superseded
       unawaited(_playQueueEnd().then((_) {}, onError: (Object e) {}));
     });
@@ -3273,6 +3446,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (_advancing) return; // an advance chain is running
       if (_queueEndRetryTimer != null) return; // queue-end retry pending
       if (_pausedForOffline) return; // offline pause owns recovery
+      if (_sleepPending) return; // sleep timer owns the stop
       if (_currentSong == null) return;
       if (_queue.isEmpty) return;
       // Global failure limit: stop hammering the resolver when every
@@ -3329,6 +3503,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (_isLoading || _advancing) return;
       if (_queueEndRetryTimer != null) return;
       if (_pausedForOffline) return;
+      if (_sleepPending) return;
       if (_currentSong == null || _queue.isEmpty) return;
       final st = _player.processingState;
       if (st != ProcessingState.completed && st != ProcessingState.idle) {
@@ -3373,6 +3548,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<bool> playPrevious() async {
     if (!_skipGuard()) return true;
+    clearSleepStop();
     if (_queue.isEmpty) return false;
     _resyncIndex();
     int prevIndex;
@@ -3678,7 +3854,10 @@ class AudioPlayerService extends ChangeNotifier {
         _pausedForOffline = false;
       }
       _cancelOfflineResumeRetry('user pause');
-      if (!_isPlaying) {
+      // `_isPlaying` is forced false on completed even though just_audio can
+      // still report playing, so only take the early return when the native
+      // player is silent too.
+      if (!_isPlaying && !_player.playing) {
         // Already paused: still sync in case native state drifted in background.
         syncPlaybackState();
         return;
@@ -3699,6 +3878,8 @@ class AudioPlayerService extends ChangeNotifier {
   /// Resume re-activates the audio session (required after background) and
   /// never throws. Handles completed state by seeking to start.
   Future<void> resume() async {
+    // The user pressed play: a finished sleep timer no longer stops anything.
+    clearSleepStop();
     // play() completes when playback STOPS, so awaiting it here wedged
     // resume for up to 20s on "open app to restart music". Fire it and
     // sync from the state stream instead.
@@ -3783,6 +3964,7 @@ class AudioPlayerService extends ChangeNotifier {
   /// the media service, which removes the notification.
   Future<void> releaseForDismiss() async {
     ++_playGen;
+    _clearSleepTimer();
     await _saveSession();
     _released = true;
     _isLoading = false;
@@ -3900,6 +4082,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<void> stop() async {
     ++_playGen;
+    _clearSleepTimer();
     unawaited(_storage.clearPlaybackSession());
     try {
       _cancelStallTimer();
@@ -3953,6 +4136,7 @@ class AudioPlayerService extends ChangeNotifier {
       // If already cached, just record it â€” no network, no playback glitch.
       final cached = await _cache.getValid(song);
       if (cached != null) {
+        await _cache.markPinned(song);
         await _storage.addDownloadedSong(song);
         if (addToDownloadedPlaylist) {
           await _storage.addSongToDownloadedPlaylist(song);
@@ -3971,7 +4155,7 @@ class AudioPlayerService extends ChangeNotifier {
         return false;
       }
       try {
-        await _downloadSource(source, song, report);
+        await _downloadSource(source, song, report, pinned: true);
       } catch (e) {
         return false;
       }
@@ -4039,6 +4223,7 @@ class AudioPlayerService extends ChangeNotifier {
     _cancelPreloadRetry();
     _cancelEndPreload();
     _cancelUpNextRetry();
+    _clearSleepTimer();
     for (final s in _subs) {
       s.cancel();
     }

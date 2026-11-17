@@ -1,5 +1,8 @@
+import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:atlas_music/services/artwork_color.dart';
 
@@ -46,5 +49,40 @@ void main() {
   test('no opaque pixel means no colour', () {
     expect(dominantColorOfPixels(Uint8List(0)), isNull);
     expect(dominantColorOfPixels(Uint8List.fromList([0, 0, 0, 0])), isNull);
+  });
+
+  testWidgets('a cover\'s colour is read once, then served from the cache',
+      (tester) async {
+    // The player asks for the same cover's colour on every open. With the
+    // colour remembered, a repeated open can paint its tint on the first frame
+    // instead of decoding again and re-rasterising the page after the flight.
+    debugClearArtworkColorCache();
+    addTearDown(debugClearArtworkColorCache);
+
+    late File file;
+    await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawRect(
+        const Rect.fromLTWH(0, 0, 16, 16),
+        Paint()..color = const Color(0xFF2050A0),
+      );
+      final image = await recorder.endRecording().toImage(16, 16);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final dir = await Directory.systemTemp.createTemp('artwork_color');
+      file = File('${dir.path}/cover.png')
+        ..writeAsBytesSync(data!.buffer.asUint8List());
+    });
+
+    // The decode is real engine/IO work: let the real event loop run it.
+    final first = await tester.runAsync(
+        () => dominantArtworkColor('', filePath: file.path));
+    expect(first, isNotNull);
+    expect(cachedArtworkColor('', filePath: file.path), first,
+        reason: 'the player can paint the tint without waiting');
+
+    // Read from memory, not from the file: the second read still answers after
+    // the cover is gone.
+    file.deleteSync();
+    expect(await dominantArtworkColor('', filePath: file.path), first);
   });
 }

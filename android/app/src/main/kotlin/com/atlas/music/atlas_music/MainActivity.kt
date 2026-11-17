@@ -70,6 +70,54 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Without this the window sits on the platform's 60 Hz default even on
+        // a 90/120/144 Hz panel (measured: launcher 90, Atlas 60 on a edge 70
+        // fusion), so the player's card and cover move in coarse steps next to
+        // every system animation. Ask for the panel's peak mode; ROMs that
+        // refuse the hint simply keep their default.
+        try {
+            val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display
+            } else {
+                windowManager.defaultDisplay
+            }
+            val modes = d?.supportedModes ?: return
+            val current = d.mode
+            val sameResolution = modes.filter {
+                it.physicalWidth == current.physicalWidth &&
+                    it.physicalHeight == current.physicalHeight
+            }
+            val panelPeak =
+                sameResolution.maxByOrNull { it.refreshRate } ?: return
+            // Never exceed the user's own cap (Settings > Display > refresh
+            // rate): some ROMs store it, and blowing past it is a battery
+            // regression the user did not ask for.
+            val systemCap = try {
+                Settings.System.getString(
+                    contentResolver,
+                    "peak_refresh_rate"
+                )?.toFloatOrNull()
+            } catch (_: Exception) {
+                null
+            }
+            val target = if (systemCap != null && systemCap > 30f) {
+                minOf(systemCap, panelPeak.refreshRate)
+            } else {
+                panelPeak.refreshRate
+            }
+            val mode = sameResolution
+                .filter { it.refreshRate <= target + 0.01f }
+                .maxByOrNull { it.refreshRate } ?: panelPeak
+            val attrs = window.attributes
+            attrs.preferredDisplayModeId = mode.modeId
+            window.attributes = attrs
+        } catch (_: Exception) {
+            // Refresh-rate hints are advisory; 60 Hz is still correct.
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)

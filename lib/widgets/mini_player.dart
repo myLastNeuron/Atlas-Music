@@ -122,17 +122,24 @@ class _MiniPlayerState extends State<MiniPlayer> {
   }
 
   Widget _glassBar(Widget child) {
-    // Follows the transparency setting like every other glass surface.
-    return SizedBox(
-      height: 70,
-      child: GlassSurface(
-        borderRadius: BorderRadius.circular(22),
-        padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
-        shadow: false,
-        // Frosted: album art and the list scroll underneath it.
-        blur: true,
-        child: child,
-      ),
+    // The card's opaque paper covers this bar from 30% of the flight in both
+    // directions; below that it fades and the bar is visible. Skip the frost
+    // only in the covered window, so the bar is never seen changing.
+    return ValueListenableBuilder<bool>(
+      valueListenable: playerRouteOpen,
+      builder: (context, covered, _) {
+        return SizedBox(
+          height: 70,
+          child: GlassSurface(
+            borderRadius: BorderRadius.circular(22),
+            padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+            shadow: false,
+            // Frosted: album art and the list scroll underneath it.
+            blur: !covered,
+            child: child,
+          ),
+        );
+      },
     );
   }
 
@@ -380,9 +387,13 @@ class _MiniPlayerState extends State<MiniPlayer> {
                             playing: value.isPlaying,
                             // A disposed controller can throw from an
                             // in-flight tap.
-                            onPressed: () => unawaited(
-                                (value.isPlaying ? video.pause() : video.play())
-                                    .catchError((_) {})),
+                            onPressed: () {
+                              // Pressing play outranks a finished sleep timer.
+                              if (!value.isPlaying) audio.clearSleepStop();
+                              unawaited(
+                                  (value.isPlaying ? video.pause() : video.play())
+                                      .catchError((_) {}));
+                            },
                           ),
                         );
                       }

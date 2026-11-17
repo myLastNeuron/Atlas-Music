@@ -10,8 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:atlas_music/models/song.dart';
 import 'package:atlas_music/screens/player_screen.dart';
 import 'package:atlas_music/services/audio_service.dart';
+import 'package:atlas_music/services/glass_settings.dart';
 import 'package:atlas_music/services/theme_settings.dart';
+import 'package:atlas_music/theme/app_theme.dart';
 import 'package:atlas_music/widgets/app_transitions.dart';
+import 'package:atlas_music/widgets/floating_glass_nav.dart';
 import 'package:atlas_music/widgets/liquid_background.dart';
 import 'package:atlas_music/widgets/mini_player.dart';
 
@@ -27,6 +30,8 @@ void main() {
       ..clear()
       ..clearLiveImages();
     PlayerScreen.openCount = 0;
+    playerRouteOpen.value = false;
+    playerOpenSettled.value = false;
   });
 
   group('FlightHold', () {
@@ -163,6 +168,177 @@ void main() {
         isNotNull);
     expect(find.text('UP NEXT'), findsOneWidget);
     expect(find.text('Song B'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the cover breath repaints the cover, not the window-sized player page',
+      (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final song = Song(
+      id: 'song-breath',
+      title: 'Song',
+      artist: 'Artist',
+      thumbnailUrl: '',
+      duration: const Duration(seconds: 200),
+    );
+    final theme = ThemeSettings();
+    await theme.load();
+    final audio = _FakeAudio(song, playing: true);
+    addTearDown(audio.dispose);
+
+    await tester.pumpWidget(_harness(audio, theme, _openButton()));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // The breath is the only animation that keeps marking paint dirty inside
+    // the page. Its repaint must stop at the cover's own layer: if the nearest
+    // boundary above the transform is the page's, every breath tick re-rastered
+    // the window and the close stuttered behind the shrinking card.
+    final breath = find.ancestor(
+      of: find.descendant(
+          of: find.byType(PlayerScreen), matching: find.byType(Hero)),
+      matching: find.byType(ScaleTransition),
+    );
+    expect(breath, findsOneWidget);
+    final boundary =
+        find.ancestor(of: breath, matching: find.byType(RepaintBoundary)).first;
+    expect(tester.getSize(boundary).width, lessThan(400),
+        reason: 'the breath must repaint the cover, never the whole page');
+
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the glass bars keep the selected tint and switch frost only while '
+      'the card covers them', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final song = Song(
+      id: 'song-frost',
+      title: 'Song',
+      artist: 'Artist',
+      thumbnailUrl: '',
+      duration: const Duration(seconds: 200),
+    );
+    final theme = ThemeSettings();
+    await theme.load();
+    // A see-through user setting: dropping frost must not override its tint.
+    final glass = GlassSettings();
+    await glass.setLevel(0.2);
+    final audio = _FakeAudio(song);
+    addTearDown(audio.dispose);
+
+    await tester.pumpWidget(GlassScope(
+      notifier: glass,
+      child: _harness(
+        audio,
+        theme,
+        Scaffold(
+          body: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              const MiniPlayer(),
+              FloatingGlassNav(currentIndex: 0, onTap: (_) {}),
+            ],
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final mini = find.byType(MiniPlayer);
+    final nav = find.byType(FloatingGlassNav);
+    bool barFrost(Finder bar) => tester
+        .widget<GlassSurface>(
+            find.descendant(of: bar, matching: find.byType(GlassSurface)))
+        .blur;
+    // The surface's own Container is the first one under GlassSurface; the
+    // bars carry other Containers (the play button) deeper in the tree.
+    double barAlpha(Finder bar) {
+      final container = tester.widget<Container>(find
+          .descendant(
+              of: find.descendant(of: bar, matching: find.byType(GlassSurface)),
+              matching: find.byType(Container))
+          .first);
+      return (container.decoration! as BoxDecoration).color!.a;
+    }
+
+    final normalAlpha = glassOpacity(glass.level);
+    for (final bar in [mini, nav]) {
+      expect(barFrost(bar), isTrue, reason: 'frosted while home is on top');
+      expect(barAlpha(bar), closeTo(normalAlpha, 1e-6),
+          reason: 'home shows the configured tint');
+    }
+
+    // The bar's own tap path opens the player, exactly like the app. The mini
+    // bar stays frosted while its first 30% still shows it through the paper;
+    // the nav is visible for most of the flight, so it keeps its frost too.
+    await tester.tap(find.byKey(const ValueKey('mini_nav_area')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(PlayerScreen.openCount, 1);
+    expect(barFrost(mini), isTrue,
+        reason: 'the mini bar is still visible through the ramping paper');
+    expect(barFrost(nav), isTrue,
+        reason: 'the nav is exposed through the open flight');
+    for (final bar in [mini, nav]) {
+      expect(barAlpha(bar), closeTo(normalAlpha, 1e-6),
+          reason: 'the configured tint stays in place during the flight');
+    }
+
+    // Past 30% the card's paper is opaque over the mini bar: the frost is
+    // skipped there, still unseen. The nav is mid-flight, so it stays frosted.
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(barFrost(mini), isFalse,
+        reason: 'the card now covers the mini bar completely');
+    expect(barFrost(nav), isTrue,
+        reason: 'the nav is still visible during the flight');
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Settled open: the full-window player page hides both bars, so both may
+    // skip their frost without a visible change.
+    expect(barFrost(mini), isFalse);
+    expect(barFrost(nav), isFalse, reason: 'the player page covers the nav');
+
+    // Closing: the nav's frost comes back while the full-window card still
+    // covers it, and the mini bar stays covered until the paper fades.
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(find.byType(PlayerScreen), findsOneWidget);
+    expect(barFrost(mini), isFalse,
+        reason: 'the mini bar is still under the opaque paper');
+    expect(barFrost(nav), isTrue,
+        reason: 'the nav is already frosted as the card reveals it');
+
+    // The last 30%: the paper fades and the mini bar shows through it. Its
+    // frost is already on, so the reveal never changes it.
+    await tester.pump(const Duration(milliseconds: 160));
+    for (final bar in [mini, nav]) {
+      expect(barFrost(bar), isTrue,
+          reason: 'the bar is visible again and already frosted');
+      expect(barAlpha(bar), closeTo(normalAlpha, 1e-6),
+          reason: 'the configured tint never changes');
+    }
+
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(PlayerScreen), findsNothing);
+    for (final bar in [mini, nav]) {
+      expect(barFrost(bar), isTrue,
+          reason: 'frost is back for the settled app');
+      expect(barAlpha(bar), closeTo(normalAlpha, 1e-6),
+          reason: 'the configured tint never changes');
+    }
     expect(tester.takeException(), isNull);
   });
 
@@ -317,6 +493,9 @@ class _FakeAudio extends ChangeNotifier implements AudioPlayerService {
 
   @override
   bool get isPlaying => playing;
+
+  @override
+  bool get sleepActive => false;
 
   @override
   String? get lastFailure => null;

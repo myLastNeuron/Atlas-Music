@@ -231,6 +231,13 @@ class VideoHandoff extends ChangeNotifier {
       _notify();
     }
     if (!_advanced && _owned && controller.value.isCompleted) {
+      // The sleep timer expired: this song's end is playback's end, so the
+      // parked video must not repeat or advance.
+      if (_audio?.sleepPending ?? false) {
+        _advanced = true;
+        unawaited(controller.pause().catchError((_) {}));
+        return;
+      }
       // Repeat-one is the audio player's job, and it is paused in Video mode:
       // the parked video is the playback, so it repeats itself. A pinned
       // "Play next" is an explicit user choice and beats the loop.

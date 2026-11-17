@@ -452,6 +452,26 @@ Curve playerFlightCurve(HeroFlightDirection dir) =>
 /// so the bar cannot fade away under it.
 bool playerRouteAbove = false;
 
+/// True while the player's card covers the mini bar, which starts 30% into the
+/// flight and lasts until it collapses back below that point. The bar keeps the
+/// user's tint but drops its backdrop frost for this window: a second full-bar
+/// blur is recomposited under every frame of the card flight. Measured on a
+/// motorola edge 70 fusion at 144 Hz: raster ~9.7 ms/frame with the frost live
+/// under the flight, ~4.3 ms without. The flip itself happens while the card's
+/// opaque paper hides the bar, so it is never seen.
+///
+/// Only the mini bar uses this. The floating nav is exposed through almost the
+/// whole close, so it cannot go frost-free during a flight without the change
+/// being visible; see [playerOpenSettled].
+final ValueNotifier<bool> playerRouteOpen = ValueNotifier<bool>(false);
+
+/// True while the player route is fully open and its flight has landed. The
+/// player's page covers the floating nav then, so the nav skips its frost with
+/// no visible change. It is restored on the first frame of the close, while the
+/// full-window card still covers the bar — so the nav is already frosted when
+/// the collapsing card reveals it.
+final ValueNotifier<bool> playerOpenSettled = ValueNotifier<bool>(false);
+
 class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   const AppPageTransitionsBuilder();
 

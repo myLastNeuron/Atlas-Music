@@ -36,6 +36,8 @@ Future<void> playSongs(
     // audio/video state (the mini player could show audio while the saved
     // preference still opened the full player as video).
     if (audio.isCurrent(song)) return;
+    // A new manual pick means the sleep timer already did its job.
+    audio.clearSleepStop();
     final ok = await audio.playSong(
       song,
       queue: queue,

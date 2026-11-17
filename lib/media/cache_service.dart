@@ -11,6 +11,8 @@ import 'media_source.dart';
 /// - Sidecar metadata: song id/title, provider, source URL, byte count,
 ///   download timestamp. Used for TTL + corruption checks.
 /// - TTL 30 days; total size cap 1GB with oldest-first eviction.
+/// - Explicit user downloads are pinned (`pinned: true` in the sidecar):
+///   TTL and cap eviction never touch them.
 /// - Corruption detection: zero-byte files rejected; when the source knew
 ///   its content length, committed size must match exactly.
 /// - Cached replays never touch the network (offline-first).
@@ -114,17 +116,7 @@ class CacheService {
   Future<File?> getValid(Song song) async {
     try {
       final dir = await _resolveBaseDir();
-      File? file;
-      for (final key in keysFor(song)) {
-        for (final ext in _audioExts) {
-          final f = File('${dir.path}/$key.$ext');
-          if (await f.exists()) {
-            file = f;
-            break;
-          }
-        }
-        if (file != null) break;
-      }
+      final file = await _findFile(dir, song);
       if (file == null) return null;
       if (await file.length() == 0) {
         await _deleteQuiet(file);
@@ -140,7 +132,9 @@ class CacheService {
       }
       {
         final at = DateTime.tryParse(meta['downloadedAt'] as String? ?? '');
-        if (at != null && DateTime.now().difference(at) > ttl) {
+        if (meta['pinned'] != true &&
+            at != null &&
+            DateTime.now().difference(at) > ttl) {
           await _deleteQuiet(file);
           await _deleteQuiet(File('${file.path}.json'));
           return null;
@@ -167,8 +161,12 @@ class CacheService {
   /// playback queue). Without this, a commit during playback could evict
   /// an upcoming queued song, which then gates offline_no_cache at
   /// advance time despite having been downloaded.
+  /// [pinned] marks the entry as an explicit user download: the pin is
+  /// written in the same sidecar write as the file, so cap enforcement in
+  /// this call can never evict it first. An existing pin is preserved
+  /// across re-commits (e.g. a corrupt file re-fetched by playback).
   Future<File> commit(Song song, File tmp, MediaSource source,
-      {Set<String>? keepKeys}) async {
+      {Set<String>? keepKeys, bool pinned = false}) async {
     final ext = _extFor(source);
     final dir = await _resolveBaseDir();
     final dest = File('${dir.path}/${keyFor(song)}.$ext');
@@ -198,6 +196,9 @@ class CacheService {
     // Remove any earlier copy under the other key/extension before promoting:
     // a re-download can land as a different container (AAC .m4a -> Opus .webm),
     // and a stale variant would otherwise shadow or outlive the fresh file.
+    // Read the pin first: the old sidecar is deleted below.
+    final previous = await _findFile(dir, song);
+    final keepPinned = pinned || (previous != null && await _isPinned(previous));
     for (final key in keysFor(song)) {
       for (final e in _audioExts) {
         await _deleteQuiet(File('${dir.path}/$key.$e'));
@@ -212,6 +213,7 @@ class CacheService {
       'url': source.url,
       'bytes': bytes,
       'downloadedAt': DateTime.now().toIso8601String(),
+      if (keepPinned) 'pinned': true,
     }));
     if (_approxBytes != null) _approxBytes = _approxBytes! + bytes;
     await enforceCap(keepKeys: keepKeys);
@@ -229,6 +231,54 @@ class CacheService {
         '${dir.path}/${keyFor(song)}.${DateTime.now().microsecondsSinceEpoch}.part');
   }
 
+  /// Any existing cache file for [song], probing every key/extension.
+  Future<File?> _findFile(Directory dir, Song song) async {
+    for (final key in keysFor(song)) {
+      for (final ext in _audioExts) {
+        final f = File('${dir.path}/$key.$ext');
+        if (await f.exists()) return f;
+      }
+    }
+    return null;
+  }
+
+  /// Marks [song]'s cached file as an explicit user download. Pinned files
+  /// never expire on the 30-day TTL and are never evicted by the size cap.
+  /// Best-effort: with no cached file there is nothing to mark.
+  Future<void> markPinned(Song song) async {
+    try {
+      final dir = await _resolveBaseDir();
+      final file = await _findFile(dir, song);
+      if (file == null) return;
+      await _pinFile(file);
+    } catch (_) {
+      // Marker is best-effort; only TTL protection is lost.
+    }
+  }
+
+  /// Writes `pinned: true` into [file]'s sidecar. No-op if already pinned.
+  Future<void> _pinFile(File file) async {
+    try {
+      final sidecar = File('${file.path}.json');
+      final meta =
+          json.decode(await sidecar.readAsString()) as Map<String, dynamic>;
+      if (meta['pinned'] == true) return;
+      meta['pinned'] = true;
+      await sidecar.writeAsString(json.encode(meta));
+    } catch (_) {
+      // Missing/unreadable sidecar: leave the entry as ordinary cache.
+    }
+  }
+
+  Future<bool> _isPinned(File file) async {
+    try {
+      final raw = await File('${file.path}.json').readAsString();
+      return (json.decode(raw) as Map<String, dynamic>)['pinned'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> invalidate(Song song) async {
     final dir = await _resolveBaseDir();
     for (final key in keysFor(song)) {
@@ -240,8 +290,56 @@ class CacheService {
     _approxBytes = null;
   }
 
+  /// Deletes every cached audio file (and its sidecar), except files under a
+  /// key in [keepSongs]. Explicit downloads share this directory, so the
+  /// caller passes them in: "clear cache" frees the streamed-song cache and
+  /// never wipes the user's Offline Music library.
+  Future<void> clearAll({Iterable<Song> keepSongs = const []}) async {
+    final keep = <String>{};
+    for (final s in keepSongs) {
+      keep.addAll(keysFor(s));
+    }
+    try {
+      final dir = await _resolveBaseDir();
+      await for (final e in dir.list()) {
+        if (e is! File) continue;
+        final name = e.path.split(Platform.pathSeparator).last;
+        if (!name.startsWith('atlas_') && !name.startsWith('atlas2_')) continue;
+        if (keep.any(name.startsWith)) continue;
+        await _deleteQuiet(e);
+      }
+    } catch (_) {
+      // Best-effort: an unreadable entry must not abort the whole clear.
+    }
+    _approxBytes = null;
+  }
+
+  /// Total bytes held by cached audio files. Used by the Clear-cache row.
+  Future<int> totalBytes() async {
+    try {
+      final dir = await _resolveBaseDir();
+      var total = 0;
+      await for (final e in dir.list()) {
+        if (e is! File) continue;
+        final name = e.path.split(Platform.pathSeparator).last;
+        if ((name.startsWith('atlas_') || name.startsWith('atlas2_')) &&
+            !name.endsWith('.json')) {
+          total += (await e.stat()).size;
+        }
+      }
+      _approxBytes = total;
+      return total;
+    } catch (_) {
+      return _approxBytes ?? 0;
+    }
+  }
+
   /// TTL sweep + orphan `.part` cleanup + size-cap eviction.
-  Future<void> sweep() async {
+  ///
+  /// [pinKeys] are key prefixes (`atlas2_<id>`) of explicit downloads. They
+  /// are pinned on the spot so entries downloaded before pinning existed
+  /// survive this sweep, then the TTL skip and cap eviction honor the pin.
+  Future<void> sweep({Set<String>? pinKeys}) async {
     _approxBytes = null;
     try {
       final dir = await _resolveBaseDir();
@@ -254,8 +352,12 @@ class CacheService {
           continue;
         }
         if (name.endsWith('.json')) continue;
+        if (pinKeys != null && pinKeys.any(name.startsWith)) {
+          await _pinFile(e);
+        }
         final stat = await e.stat();
         if (DateTime.now().difference(stat.modified) > ttl) {
+          if (await _isPinned(e)) continue; // explicit download: never expires
           await _deleteQuiet(e);
           await _deleteQuiet(File('${e.path}.json'));
           continue;
@@ -309,6 +411,8 @@ class CacheService {
           final name = f.path.split(Platform.pathSeparator).last;
           if (keepKeys.any(name.startsWith)) continue;
         }
+        // Explicit downloads are user intent, not disposable cache.
+        if (await _isPinned(f)) continue;
         total -= sizes[f]!;
         _approxBytes = total;
         await _deleteQuiet(f);

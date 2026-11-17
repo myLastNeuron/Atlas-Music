@@ -74,15 +74,18 @@ void main() {
   testWidgets('the frost is opt-in, so lists do not pay for a filter',
       (tester) async {
     // A panel inside the page has only the flat backdrop behind it: blurring it
-    // costs a full repaint per frame and shows nothing.
+    // costs a full repaint per frame and shows nothing. The filter stays in the
+    // tree but is disabled, so there is no layer and no blur pass.
     await tester.pumpWidget(app(1.0, const GlassSurface(child: Text('Row'))));
     await tester.pumpAndSettle();
-    expect(find.byType(BackdropFilter), findsNothing);
+    final off = tester.widget<BackdropFilter>(find.byType(BackdropFilter));
+    expect(off.enabled, isFalse);
 
-    await tester.pumpWidget(app(
-        1.0, const GlassSurface(blur: true, child: Text('Row'))));
+    await tester.pumpWidget(
+        app(1.0, const GlassSurface(blur: true, child: Text('Row'))));
     await tester.pumpAndSettle();
     final blur = tester.widget<BackdropFilter>(find.byType(BackdropFilter));
+    expect(blur.enabled, isTrue);
     expect(blur.filter,
         ImageFilter.blur(sigmaX: kGlassBlurSigma, sigmaY: kGlassBlurSigma));
   });
