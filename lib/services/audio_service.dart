@@ -300,7 +300,7 @@ class AudioPlayerService extends ChangeNotifier {
 
   void _noteFailure(String detail) {
     var d = detail.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (d.length > 140) d = '${d.substring(0, 140)}â€¦';
+    if (d.length > 140) d = '${d.substring(0, 140)}…';
     _lastFailure = d.isEmpty ? null : d;
   }
 
@@ -1386,7 +1386,7 @@ class AudioPlayerService extends ChangeNotifier {
           _degradedOffline ? _offlineKnownUnavailable[song.id] : null;
       if (knownSince != null) {
         _lastLoadWasTransient = false;
-        _noteFailure('Track unavailable â€” no internet and not downloaded');
+        _noteFailure('Track unavailable — no internet and not downloaded');
         final base = _pendingIndex ?? _currentIndex;
         return await _skipOrWaitOffline(song, gen, base, revertPending);
       }
@@ -1438,11 +1438,6 @@ class AudioPlayerService extends ChangeNotifier {
                   d.contains('timeout') ||
                   d.contains('connectivity');
             });
-        // Report the last attempt, not the first: the toast must show the
-        // final fallback's error rather than an earlier provider's miss.
-        _noteFailure(report.attempts.isNotEmpty
-            ? report.attempts.last.detail
-            : 'no playable source found');
         // If the failure looks like a network error, treat as offline
         // so skip/pause logic kicks in instead of silently stopping.
         final isNetworkFail = report.attempts.any((a) {
@@ -1455,6 +1450,15 @@ class AudioPlayerService extends ChangeNotifier {
               d.contains('timeout') ||
               d.contains('connectivity');
         });
+        // Report the last attempt, not the first: the toast must show the
+        // final fallback's error rather than an earlier provider's miss.
+        // A network miss gets a human message: the raw chain is cut at 140
+        // chars anyway and names no host the user can act on.
+        _noteFailure(isNetworkFail
+            ? 'Network timeout — check your connection'
+            : (report.attempts.isNotEmpty
+                ? report.attempts.last.detail
+                : 'no playable source found'));
         if (isNetworkFail) {
           _recordOfflineGate(song);
           final base = _pendingIndex ?? _currentIndex;

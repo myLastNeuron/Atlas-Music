@@ -87,9 +87,36 @@ void main() {
       'tok',
     );
     expect(
+      withToken.headers['X-Goog-Visitor-Id'],
+      'tok',
+      reason: 'no watch page is fetched, so the header must be sent here',
+    );
+    expect(
       client.payload['context']['client'].containsKey('visitorData'),
       isFalse,
       reason: 'const payloads are shared; the token is per app run',
+    );
+  });
+
+  test('retries one stall, not a permanent miss', () {
+    expect(
+      YouTubeProvider.shouldRetryManifest(
+          Exception('no client resolved; last: TimeoutException after 10s'), 0),
+      isTrue,
+    );
+    expect(
+      YouTubeProvider.shouldRetryManifest(
+          Exception('no client resolved; last: TimeoutException after 10s'), 1),
+      isFalse,
+      reason: 'a second stall is the network, not a blip',
+    );
+    expect(
+      YouTubeProvider.shouldRetryManifest(StateError('Video unavailable'), 0),
+      isFalse,
+    );
+    expect(
+      YouTubeProvider.shouldRetryManifest(Exception('HTTP 429'), 2),
+      isTrue,
     );
   });
 }

@@ -148,13 +148,22 @@ class YouTubeProvider extends MediaResolver {
     return audio;
   }
 
+  /// One retry for a stalled client chain; rate limits keep the backoff
+  /// ladder. The wrapped chain error hides the exception type, so match text.
+  @visibleForTesting
+  static bool shouldRetryManifest(Object e, int attempt) {
+    if (isRateLimited(e)) return true;
+    return attempt == 0 && e.toString().toLowerCase().contains('timeout');
+  }
+
   Future<StreamManifest> _fetchManifest(String videoId) async {
     final hit = _manifests[videoId];
     if (hit != null && DateTime.now().difference(hit.at) < _manifestTtl) {
       return hit.manifest;
     }
-    // Rate limits are worth waiting out (short backoff); anything else
-    // fails fast so one bad video never stalls playback for seconds.
+    // Rate limits are worth waiting out (short backoff); a stall gets one
+    // retry; anything else fails fast so one bad video never stalls playback
+    // for seconds.
     const waits = [Duration.zero, Duration(seconds: 2), Duration(seconds: 5)];
     Object? last;
     for (var attempt = 0; attempt < waits.length; attempt++) {
@@ -168,7 +177,7 @@ class YouTubeProvider extends MediaResolver {
         return m;
       } catch (e) {
         last = e;
-        if (!isRateLimited(e)) rethrow;
+        if (!shouldRetryManifest(e, attempt)) rethrow;
       }
     }
     throw last!;
@@ -354,7 +363,12 @@ class YouTubeProvider extends MediaResolver {
       'visitorData': visitorData,
     };
     payload['context'] = context;
-    return YoutubeApiClient(payload, base.apiUrl, headers: base.headers);
+    // The library only sends the header itself when a watch page was
+    // fetched; we skip the watch page, so send it here like yt-dlp does.
+    return YoutubeApiClient(payload, base.apiUrl, headers: {
+      ...base.headers,
+      'X-Goog-Visitor-Id': visitorData,
+    });
   }
 
   @override
@@ -493,7 +507,7 @@ class YouTubeProvider extends MediaResolver {
         withVisitorData(_visionosClient, await _visitorDataOrNull());
     final resp = await _http.post(
       Uri.parse(client.apiUrl),
-      headers: const {'Content-Type': 'application/json'},
+      headers: {...client.headers, 'Content-Type': 'application/json'},
       body: jsonEncode({...client.payload, 'videoId': videoId}),
     );
     if (resp.statusCode != 200) {
@@ -929,7 +943,10 @@ class _FreshConnectionClient extends http.BaseClient {
   _FreshConnectionClient([http.Client? inner])
       : _inner = inner ??
             IOClient(HttpClient()
-              ..connectionTimeout = const Duration(seconds: 10));
+              // Shorter than the 10s per-client budget: a dead route hands
+              // over to the next client instead of eating the whole slice.
+              // Dart does not race addresses (no Happy Eyeballs).
+              ..connectionTimeout = const Duration(seconds: 4));
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
