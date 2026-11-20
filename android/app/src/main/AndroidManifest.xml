@@ -15,6 +15,11 @@
     <!-- "Import Atlas Music Playlist": scans a playlist QR code from a shared
          screenshot or another device's screen. -->
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Backup export on Android 7-9 writes straight into Downloads, which
+         needs the legacy storage grant there. Android 10+ uses MediaStore and
+         needs no permission, hence the maxSdkVersion cap. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
     <!-- In-app updater: lets a downloaded release APK be handed to the system
          package installer. The user still grants "install unknown apps". -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>

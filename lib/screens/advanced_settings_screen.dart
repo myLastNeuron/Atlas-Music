@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../media/cache_service.dart';
+import '../services/backup_service.dart';
 import '../services/glass_settings.dart';
 import '../services/storage_service.dart';
 import '../services/system_permissions.dart';
@@ -37,6 +39,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
   bool _fromFdroid = false;
   int _cacheBytes = 0;
   String _version = '';
+  /// 'export' or 'import' while a backup file is being written, read or
+  /// applied. Null when idle.
+  String? _busy;
+  bool get _transferBusy => _busy != null;
 
   @override
   void initState() {
@@ -160,6 +166,120 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Name cleared. Restart app.')),
       );
+    }
+  }
+
+  /// Writes history, playlists, likes, name and settings to a .json in
+  /// Downloads. Downloads themselves stay on the device.
+  Future<void> _exportBackup() async {
+    if (_transferBusy) return;
+    // Read both from context before the first await.
+    final theme = context.read<ThemeSettings>();
+    final glass = glassSettings(context);
+    setState(() => _busy = 'export');
+    String message = 'Could not save the backup.';
+    try {
+      final name = await _prefs.getName();
+      final videoMode = await _prefs.getVideoMode();
+      final language = await _prefs.getLanguage();
+      final genres = await _prefs.getGenres();
+      final artists = await _prefs.getArtists();
+      final saved = await BackupService.instance.export(
+        name: name,
+        theme: theme,
+        glass: glass,
+        videoMode: videoMode,
+        language: language.name,
+        genres: genres,
+        artists: artists,
+      );
+      if (saved != null) message = 'Saved to Downloads: $saved';
+    } catch (_) {
+      // Keep the failure message; export never partially changes the app.
+    }
+    if (!mounted) return;
+    setState(() => _busy = null);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Picks a .json, shows what it will replace, then restores it.
+  Future<void> _importBackup() async {
+    if (_transferBusy) return;
+    setState(() => _busy = 'import');
+    BackupData? data;
+    String? error;
+    try {
+      data = await BackupService.instance.pickAndParse();
+    } on FormatException catch (e) {
+      error = e.message;
+    } on PlatformException catch (e) {
+      // too_large / read_failed carry a user-facing message from native.
+      error = e.message ?? 'Could not read that file.';
+    } catch (_) {
+      error = 'Could not read that file.';
+    }
+    if (!mounted) return;
+    setState(() => _busy = null);
+    if (error != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    if (data == null) return; // picker cancelled
+    final backup = data;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Import this backup?'),
+        content: SingleChildScrollView(
+          child: Text(
+            'This replaces your current likes, playlists, history and '
+            'settings.\n\n'
+            '${backup.name == null ? '' : 'Name: ${backup.name}\n'}'
+            '${backup.likes.length} liked songs\n'
+            '${backup.playlists.length} playlists '
+            '(${backup.playlistSongCount} songs)\n'
+            '${backup.recentlyPlayed.length} history entries\n'
+            '${backup.fetchedSongs.length} fetched songs',
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child:
+                  const Text('Replace', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _busy = 'import');
+    try {
+      await BackupService.instance.apply(
+        data,
+        theme: context.read<ThemeSettings>(),
+        glass: glassSettings(context),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Backup restored. Restart Atlas to apply the settings.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Import failed. Import the same file again to retry.')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = null);
     }
   }
 
@@ -413,6 +533,52 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
+                      enabled: !_transferBusy,
+                      leading: const Icon(Icons.upload_file_outlined, size: 20),
+                      title: const Text('Export data',
+                          style: TextStyle(fontSize: 14)),
+                      subtitle: Text(
+                        'History, playlists, likes, name and settings → Downloads',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.inkSoft),
+                      ),
+                      trailing: _busy == 'export'
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))
+                          : Icon(Icons.chevron_right, color: AppColors.mute),
+                      onTap: _exportBackup,
+                    ),
+                  ),
+                  Divider(height: 1, color: AppColors.line),
+                  MotionPress(
+                    scale: 0.99,
+                    child: ListTile(
+                      enabled: !_transferBusy,
+                      leading: const Icon(Icons.file_open_outlined, size: 20),
+                      title: const Text('Import data',
+                          style: TextStyle(fontSize: 14)),
+                      subtitle: Text(
+                        'Restore an Atlas backup .json file',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.inkSoft),
+                      ),
+                      trailing: _busy == 'import'
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2))
+                          : Icon(Icons.chevron_right, color: AppColors.mute),
+                      onTap: _importBackup,
+                    ),
+                  ),
+                  Divider(height: 1, color: AppColors.line),
+                  MotionPress(
+                    scale: 0.99,
+                    child: ListTile(
                       leading: const Icon(Icons.refresh, size: 20),
                       title: const Text('Reset name',
                           style: TextStyle(fontSize: 14)),
@@ -457,7 +623,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                             size: 20),
                         title: const Text('Revert update',
                             style: TextStyle(fontSize: 14)),
-                        subtitle: Text('Install an earlier version from GitHub',
+                        subtitle: Text('Open an earlier release on GitHub',
                             style: TextStyle(
                                 fontSize: 12, color: AppColors.inkSoft)),
                         trailing:

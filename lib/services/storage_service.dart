@@ -733,4 +733,90 @@ class StorageService extends ChangeNotifier {
       notifyListeners();
     });
   }
+
+  // ── Backup import (whole-list replace) ──
+
+  /// Replaces the play history with a restored list, newest first.
+  Future<void> replaceRecentlyPlayed(List<Song> songs) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (songs.isEmpty) {
+        await prefs.remove(_recentlyPlayedKey);
+      } else {
+        await prefs.setString(_recentlyPlayedKey,
+            json.encode(songs.map((s) => s.toJson()).toList()));
+      }
+      notifyListeners();
+    });
+  }
+
+  Future<void> replaceLikedSongs(List<Song> songs) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (songs.isEmpty) {
+        await prefs.remove(_likedSongsKey);
+      } else {
+        await prefs.setString(_likedSongsKey,
+            json.encode(songs.map((s) => s.toJson()).toList()));
+      }
+      notifyListeners();
+    });
+  }
+
+  /// Replaces every user playlist with a restored set. The device's own
+  /// Downloaded Music list is preserved: its audio files were never in the
+  /// backup, so removing the list would orphan them.
+  Future<void> replacePlaylists(List<Playlist> playlists) {
+    return _serialized(() async {
+      final existing = await getPlaylists();
+      final next = [
+        ...playlists.where((p) => p.id != downloadedPlaylistId),
+        ...existing.where((p) => p.id == downloadedPlaylistId),
+      ];
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+          _playlistsKey, json.encode(next.map((p) => p.toJson()).toList()));
+      notifyListeners();
+    });
+  }
+
+  Future<void> replaceAutoFinds(List<AutoFind> finds) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (finds.isEmpty) {
+        await prefs.remove(_autoFindsKey);
+      } else {
+        await prefs.setString(
+            _autoFindsKey, json.encode(finds.map((f) => f.toJson()).toList()));
+      }
+      notifyListeners();
+    });
+  }
+
+  Future<void> replaceListeningStats(
+      Map<String, Map<String, dynamic>> stats) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (stats.isEmpty) {
+        await prefs.remove(_listeningStatsKey);
+      } else {
+        await prefs.setString(_listeningStatsKey, json.encode(stats));
+      }
+      // The artist ranking is derived from this device's plays, so it would
+      // otherwise stay mixed with the restored counts. It rebuilds from the
+      // next listens.
+      await prefs.remove(_topArtistsKey);
+    });
+  }
+
+  Future<void> replaceSearchHistory(List<String> queries) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (queries.isEmpty) {
+        await prefs.remove(_searchHistoryKey);
+      } else {
+        await prefs.setStringList(_searchHistoryKey, queries);
+      }
+    });
+  }
 }

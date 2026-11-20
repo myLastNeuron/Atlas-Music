@@ -4,6 +4,23 @@ All notable changes to Atlas Music are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Backup and restore**: Advanced settings now has Export data, which writes
+  a `.json` into Downloads, and Import data, which restores that file after
+  showing what it will replace. The file carries play history, playlists
+  (songs only, never the downloaded audio), likes, the profile name, fetched
+  songs and settings.
+
+### Fixed
+- **Revert update now opens the release you pick instead of failing**: Android
+  refuses to install an older versionCode over the installed one, so every
+  revert attempt ended with "App not installed". Each row now opens that tag's
+  release page, where its APK can be downloaded. Going back still requires
+  uninstalling Atlas first, which erases playlists and settings (export a
+  backup first from Advanced settings).
+
 ## [2.4.0] - 2026-11-17
 
 ### Added

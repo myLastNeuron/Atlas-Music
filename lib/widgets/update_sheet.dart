@@ -6,8 +6,8 @@ import '../theme/app_theme.dart';
 import 'liquid_background.dart';
 
 /// Checks GitHub for a newer release and, when one exists, offers to download
-/// and install it. With [revert], lists every older release instead so the
-/// user can pick the version to go back to. Styled like the app's other
+/// and install it. With [revert], lists every older release instead, and each
+/// row opens that version's release page. Styled like the app's other
 /// translucent-glass sheets.
 Future<void> showUpdateSheet(BuildContext hostContext, {bool revert = false}) {
   return showModalBottomSheet<void>(
@@ -36,7 +36,6 @@ class _UpdateSheetState extends State<_UpdateSheet> {
   String? _error;
   double? _progress; // 0..1 while downloading
   bool _busy = false; // between "Update" tap and installer handoff
-  AppRelease? _target; // release being downloaded, for the progress label
 
   @override
   void initState() {
@@ -80,7 +79,6 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       _busy = true;
       _progress = 0;
       _error = null;
-      _target = release;
     });
     try {
       final file = await _service.downloadApk(
@@ -293,47 +291,10 @@ class _UpdateSheetState extends State<_UpdateSheet> {
     );
   }
 
-  /// Older releases, newest first, each one installable on tap. Android's
-  /// installer handles the downgrade confirmation itself.
+  /// Older releases, newest first. Android refuses to install a lower
+  /// versionCode over the installed one, so each row opens that tag's release
+  /// page rather than pretending an in-app downgrade can work.
   Widget _revertBody(UpdateResult result) {
-    if (_busy) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Installing version ${_target?.version ?? ''}',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 16),
-          LinearProgressIndicator(
-            value: _progress == null || _progress == 0 ? null : _progress,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _progress == null
-                ? 'Preparing…'
-                : 'Downloading… ${(_progress! * 100).toStringAsFixed(0)}%',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              _error!,
-              style: TextStyle(fontSize: 12.5, color: AppColors.danger),
-            ),
-          ],
-          const SizedBox(height: 16),
-          OutlinedButton(
-            // Popping disposes the service, which aborts the download.
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      );
-    }
-
     final previous =
         UpdateService.olderThan(result.releases, result.installedVersion);
     if (previous.isEmpty) {
@@ -349,13 +310,15 @@ class _UpdateSheetState extends State<_UpdateSheet> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          'Choose a version to install',
+          'Choose a version to download',
           style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 4),
         Text(
-          'You have ${result.installedVersion}. Android will ask you to '
-          'confirm the downgrade; playlists and settings stay on the device.',
+          'You have ${result.installedVersion}. Android will not install an '
+          'older version over a newer one, so each row opens that release on '
+          'GitHub. Reverting means uninstalling Atlas first, which erases '
+          'playlists and settings.',
           style: TextStyle(fontSize: 12.5, color: AppColors.inkSoft),
         ),
         if (_error != null) ...[
@@ -382,9 +345,9 @@ class _UpdateSheetState extends State<_UpdateSheet> {
                     size: 20, color: AppColors.inkSoft),
                 title: Text('Version ${release.version}',
                     style: const TextStyle(fontSize: 14)),
-                trailing: Icon(Icons.download_outlined,
+                trailing: Icon(Icons.open_in_new,
                     size: 20, color: AppColors.mute),
-                onTap: () => _confirmRevert(release),
+                onTap: () => _openRelease(release),
               );
             },
           ),
@@ -398,29 +361,14 @@ class _UpdateSheetState extends State<_UpdateSheet> {
     );
   }
 
-  Future<void> _confirmRevert(AppRelease release) async {
-    final installed = _result?.installedVersion ?? 'the current version';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Install version ${release.version}?'),
-        content: Text(
-            'You are on $installed. Android may warn that this is an older '
-            'version and ask you to confirm. Your playlists and settings stay '
-            'on the device.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Install'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true && mounted) await _startUpdate(release);
+  /// Opens the picked version's GitHub release page, which carries that tag's
+  /// APK asset.
+  Future<void> _openRelease(AppRelease release) async {
+    final url = release.pageUrl.isNotEmpty ? release.pageUrl : release.apkUrl;
+    final opened = await _perms.openUrl(url);
+    if (!mounted || opened) return;
+    setState(() => _error =
+        'Could not open the browser. Find version ${release.version} on GitHub.');
   }
 
   Widget _message({

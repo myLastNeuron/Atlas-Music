@@ -120,8 +120,8 @@ class AudioPlayerService extends ChangeNotifier {
   final Set<String> _videoSeen = <String>{};
   // One lookup per song at a time: the load-time precheck and a player opened
   // straight after it must share the same answer instead of checking twice.
-  final Map<String, Future<VideoSource?>> _videoLookups =
-      <String, Future<VideoSource?>>{};
+  final Map<String, Future<VideoLookup>> _videoLookups =
+      <String, Future<VideoLookup>>{};
   // Committed player ownership: the song id + gen that actually holds the
   // native source. _currentSong only changes on commit (setAudioSource
   // success), so miniplayer never flickers to a track that failed to load.
@@ -453,8 +453,11 @@ class AudioPlayerService extends ChangeNotifier {
         if (!await _hasConnectivity()) return;
         // The user skipped before the lookup started: not worth the network.
         if (_disposed || _currentSong?.id != song.id) return;
-        final source = await videoSource(song);
-        if (!_disposed) setVideoAvailability(song.id, source != null);
+        final lookup = await videoLookup(song);
+        // A failed lookup is not a proven miss: leave the option enabled
+        // instead of dimming it for the rest of the run.
+        if (_disposed || lookup.failed) return;
+        setVideoAvailability(song.id, lookup.source != null);
       } catch (_) {
         // Unknown stays enabled: only a proven miss dims Video.
       } finally {
@@ -612,12 +615,10 @@ class AudioPlayerService extends ChangeNotifier {
   }) =>
       currentSongId == songId && activeSongId == songId && !completed;
 
-  /// Video for [song]: the song's own video when it is a real video (same
-  /// media as the audio, so it may seek to the audio position), otherwise a
-  /// music video found through the catalogue (different media, starts at 0).
-  /// Keeps providers out of the UI layer. Null when nothing is usable.
+  /// Video for [song], or a proven miss, or a failed lookup: only a null
+  /// [VideoLookup.source] with [VideoLookup.failed] false may disable Video.
   /// [refresh] ignores the cached answer so Retry can get a fresh URL.
-  Future<VideoSource?> videoSource(Song song, {bool refresh = false}) {
+  Future<VideoLookup> videoLookup(Song song, {bool refresh = false}) {
     // Retry wants a fresh URL; it must not join an older answer.
     if (refresh) return _resolveVideo(song, refresh: true);
     final key = song.videoId ?? song.id;
@@ -638,8 +639,8 @@ class AudioPlayerService extends ChangeNotifier {
     return lookup;
   }
 
-  Future<VideoSource?> _resolveVideo(Song song, {bool refresh = false}) =>
-      _youTube.videoSource(
+  Future<VideoLookup> _resolveVideo(Song song, {bool refresh = false}) =>
+      _youTube.videoLookup(
         song,
         refresh: refresh,
         findMusicVideo: (s) async {

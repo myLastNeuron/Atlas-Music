@@ -63,4 +63,15 @@ class SystemPermissions {
       return false;
     }
   }
+
+  /// Opens an http(s) link in the browser. Returns false when no browser
+  /// accepted it.
+  Future<bool> openUrl(String url) async {
+    try {
+      return await _channel.invokeMethod<bool>('openUrl', {'url': url}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
 }

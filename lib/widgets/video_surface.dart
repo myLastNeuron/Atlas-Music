@@ -329,10 +329,16 @@ class _VideoSurfaceState extends State<VideoSurface>
       }
 
       if (mounted) setState(() => _message = 'Finding video…');
-      final source = await audio
-          .videoSource(widget.song, refresh: refresh)
+      final lookup = await audio
+          .videoLookup(widget.song, refresh: refresh)
           .timeout(audio.videoSourceTimeout);
       if (_closed) return;
+      if (lookup.failed) {
+        // Unknown, not a proven miss: keep Video enabled and let Retry work.
+        _fail('Could not check for a video. Tap Retry.');
+        return;
+      }
+      final source = lookup.source;
       if (source == null) {
         widget.onVideoAvailability?.call(false);
         _fail('No official video for this track. Tap Retry.');

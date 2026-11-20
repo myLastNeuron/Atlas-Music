@@ -438,8 +438,9 @@ class MiniVideo {
       // The precheck may have answered while connectivity was resolving.
       if (!audio.hasVideo(song)) return;
 
-      final source =
-          await audio.videoSource(song).timeout(audio.videoSourceTimeout);
+      final lookup =
+          await audio.videoLookup(song).timeout(audio.videoSourceTimeout);
+      final source = lookup.source;
       if (!_alive(gen, song) || source == null) return;
       // A real resolve beats a precheck that timed out.
       audio.setVideoAvailability(song.id, true);

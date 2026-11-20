@@ -2,14 +2,18 @@ package com.atlas.music.atlas_music
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.Settings
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
@@ -21,6 +25,10 @@ import java.io.File
 
 class MainActivity : AudioServiceActivity() {
     private var identifyChannel: MethodChannel? = null
+    /// Pending backup answers: the storage-permission prompt and the file
+    /// picker both finish after their system UI closes.
+    private var pendingStorageResult: MethodChannel.Result? = null
+    private var pendingPickResult: MethodChannel.Result? = null
 
     /// Launch requests parked for Dart, backed by process-scoped flags: a
     /// rotation (or process restore) recreates the Activity before Dart's
@@ -140,6 +148,23 @@ class MainActivity : AudioServiceActivity() {
                         val path = call.argument<String>("path")
                         result.success(path != null && installApk(path))
                     }
+                    // Revert list: open the picked version's release page.
+                    "openUrl" -> {
+                        val url = call.argument<String>("url")
+                        result.success(url != null && openUrl(url))
+                    }
+                    // Backup export/import: save a .json into Downloads and
+                    // read one back with the system file picker.
+                    "requestStoragePermission" -> requestStoragePermission(result)
+                    "saveToDownloads" -> {
+                        val filename = call.argument<String>("filename")
+                        val content = call.argument<String>("content")
+                        result.success(
+                            if (filename == null || content == null) null
+                            else saveToDownloads(filename, content)
+                        )
+                    }
+                    "pickJsonFile" -> pickJsonFile(result)
                     else -> result.notImplemented()
                 }
             }
@@ -295,6 +320,49 @@ class MainActivity : AudioServiceActivity() {
         ) {
             maybeRequestBatteryExemption()
         }
+        if (requestCode == REQ_STORAGE) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            pendingStorageResult?.success(granted)
+            pendingStorageResult = null
+        }
+    }
+
+    /// Backs the import flow's file picker. The document is read on a
+    /// background thread because a cloud provider can be slow, and the read
+    /// stops at the cap even when the provider reports no length.
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PICK_JSON) return
+        val result = pendingPickResult
+        pendingPickResult = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) {
+            result?.success(null)
+            return
+        }
+        Thread {
+            try {
+                val text = readPickedFile(uri)
+                runOnUiThread { result?.success(text) }
+            } catch (_: TooLargeException) {
+                runOnUiThread {
+                    result?.error(
+                        "too_large",
+                        "That backup file is too large.",
+                        null
+                    )
+                }
+            } catch (_: Exception) {
+                runOnUiThread {
+                    result?.error(
+                        "read_failed",
+                        "Could not read that file.",
+                        null
+                    )
+                }
+            }
+        }.start()
     }
 
     /// Next first-run ask after notifications: the mic, then the battery
@@ -341,6 +409,170 @@ class MainActivity : AudioServiceActivity() {
             } catch (_: Exception) {
                 // Give up silently — the exemption stays optional.
             }
+        }
+    }
+
+    // ---- Backup export / import ------------------------------------------
+
+    /// Android 10+ writes to Downloads with no permission; Android 7-9 needs
+    /// the storage grant. Asked here, answered when the system dialog closes.
+    private fun hasWritePermission(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun requestStoragePermission(result: MethodChannel.Result) {
+        if (hasWritePermission()) {
+            result.success(true)
+            return
+        }
+        if (pendingStorageResult != null) {
+            result.success(false)
+            return
+        }
+        pendingStorageResult = result
+        requestPermissions(
+            arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+            REQ_STORAGE
+        )
+    }
+
+    /// Writes the backup into the public Downloads folder. Returns the saved
+    /// file name, or null when the write failed.
+    private fun saveToDownloads(filename: String, content: String): String? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        Environment.DIRECTORY_DOWNLOADS
+                    )
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                ) ?: return null
+                try {
+                    contentResolver.openOutputStream(uri)?.use {
+                        it.write(content.toByteArray(Charsets.UTF_8))
+                    } ?: throw IllegalStateException("no output stream")
+                    contentResolver.update(
+                        uri,
+                        ContentValues().apply {
+                            put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        },
+                        null,
+                        null
+                    )
+                } catch (_: Exception) {
+                    // Do not leave an invisible pending row behind.
+                    contentResolver.delete(uri, null, null)
+                    return null
+                }
+                // MediaStore may add " (1)" to a same-name file, so report the
+                // name it actually used.
+                try {
+                    contentResolver.query(
+                        uri,
+                        arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                        null,
+                        null,
+                        null
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val name = cursor.getString(0)
+                            if (!name.isNullOrEmpty()) return name
+                        }
+                    }
+                } catch (_: Exception) {
+                    // The file is written; the requested name is good enough.
+                }
+                filename
+            } else {
+                if (!hasWritePermission()) return null
+                val dir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS
+                )
+                if (!dir.exists() && !dir.mkdirs()) return null
+                val file = uniqueFile(dir, filename)
+                file.writeText(content, Charsets.UTF_8)
+                // The Downloads app only lists indexed files.
+                MediaScannerConnection.scanFile(
+                    this, arrayOf(file.absolutePath),
+                    arrayOf("application/json"), null
+                )
+                file.name
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /// Reads the picked document, refusing anything over the cap even when the
+    /// provider reports an unknown length (-1).
+    private fun readPickedFile(uri: Uri): String {
+        val declared = contentResolver.openAssetFileDescriptor(uri, "r")
+            ?.use { it.length } ?: -1L
+        if (declared > MAX_BACKUP_BYTES) throw TooLargeException()
+        val out = StringBuilder()
+        contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+            val buffer = CharArray(16 * 1024)
+            while (true) {
+                val read = reader.read(buffer)
+                if (read < 0) break
+                out.append(buffer, 0, read)
+                if (out.length.toLong() > MAX_BACKUP_BYTES) {
+                    throw TooLargeException()
+                }
+            }
+        } ?: throw IllegalStateException("no input stream")
+        return out.toString()
+    }
+
+    private class TooLargeException : Exception()
+
+    /// Never overwrite an earlier backup on Android 7-9.
+    private fun uniqueFile(dir: File, name: String): File {
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var file = File(dir, name)
+        var n = 1
+        while (file.exists()) {
+            file = File(dir, "$base $n$ext")
+            n++
+        }
+        return file
+    }
+
+    /// Providers label the same .json as application/json, text/plain or
+    /// application/octet-stream, so all three are offered; the content is
+    /// validated on the Dart side.
+    private fun pickJsonFile(result: MethodChannel.Result) {
+        if (pendingPickResult != null) {
+            result.success(null)
+            return
+        }
+        pendingPickResult = result
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(
+                    Intent.EXTRA_MIME_TYPES,
+                    arrayOf(
+                        "application/json",
+                        "text/plain",
+                        "application/octet-stream"
+                    )
+                )
+            }
+            startActivityForResult(intent, REQ_PICK_JSON)
+        } catch (_: Exception) {
+            pendingPickResult = null
+            result.success(null)
         }
     }
 
@@ -394,6 +626,22 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    /// Opens an http(s) link in the browser. The revert list uses it to reach
+    /// the exact release page for the version the user picked.
+    private fun openUrl(url: String): Boolean {
+        return try {
+            val uri = Uri.parse(url)
+            if (uri.scheme != "https" && uri.scheme != "http") return false
+            startActivity(
+                Intent(Intent.ACTION_VIEW, uri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < 33) return true
         return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
@@ -433,6 +681,12 @@ class MainActivity : AudioServiceActivity() {
         // (1001): a shared code mixed the two permission results up.
         private const val REQ_NOTIFICATIONS = 2001
         private const val REQ_MIC = 2003
+        private const val REQ_STORAGE = 2005
+        private const val REQ_PICK_JSON = 2006
+
+        /// A backup is a few hundred KB at most; anything bigger is not an
+        /// Atlas backup and is not read into memory.
+        private const val MAX_BACKUP_BYTES = 20L * 1024 * 1024
         private const val PREFS = "atlas_boot"
         private const val KEY_ONBOARDED = "onboarded"
     }

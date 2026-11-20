@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -14,6 +15,28 @@ import '../resolve_failure.dart';
 /// music video is a different edit, but the player still opens both at the
 /// song's position so the switch cannot look like it lost the timeline.
 typedef VideoSource = ({String url, bool matchAudioPosition});
+
+/// Outcome of a video lookup. A null [source] means "nothing playable" for
+/// two very different reasons, and only [failed] tells them apart: a proven
+/// miss may disable Video, a failed lookup must leave it unknown (it used to
+/// dim Video for the rest of the run after one stalled lookup).
+class VideoLookup {
+  const VideoLookup.found(this.source) : failed = false;
+  const VideoLookup.none() : source = null, failed = false;
+  const VideoLookup.failed() : source = null, failed = true;
+
+  final VideoSource? source;
+
+  /// True when the lookup could not answer (transport, timeout, budget
+  /// exhausted). Never cache this answer and never dim Video on it.
+  final bool failed;
+}
+
+/// Internal: every attempt failed or ran out of budget, so the lookup never
+/// got a definitive answer. Never escapes [YouTubeProvider.videoLookup].
+class _VideoLookupFailed implements Exception {
+  const _VideoLookupFailed();
+}
 
 /// Sole owner of `youtube_explode_dart` (3.1.0, pinned) and of all
 /// googlevideo range semantics. If YouTube changes InnerTube tomorrow,
@@ -388,8 +411,9 @@ class YouTubeProvider extends MediaResolver {
     'Origin': 'https://www.youtube.com',
   };
 
-  /// The video for [song], or null when nothing usable is found. Never
-  /// throws: the Video toggle degrades to a message.
+  /// The video for [song], a proven miss, or a failed lookup. Only a null
+  /// [VideoLookup.source] with [VideoLookup.failed] false may disable Video;
+  /// a failed lookup leaves the song undecided. Never throws.
   ///
   /// YT Music's Songs filter only lists auto-generated art tracks (channel
   /// "<Artist> - Topic"), whose HLS stream is the still album art. For those
@@ -402,7 +426,7 @@ class YouTubeProvider extends MediaResolver {
   ///
   /// shortcut: the master is adaptive bitrate, not pinned 360p — the platform
   /// player picks the variant. Pin a rendition only if the cap ever matters.
-  Future<VideoSource?> videoSource(
+  Future<VideoLookup> videoLookup(
     Song song, {
     Future<String?> Function(Song song)? findMusicVideo,
     bool refresh = false,
@@ -411,28 +435,46 @@ class YouTubeProvider extends MediaResolver {
     if (!refresh) {
       final hit = _videoCache[videoId];
       if (hit != null && DateTime.now().difference(hit.at) < _manifestTtl) {
-        return hit.source;
+        return VideoLookup.found(hit.source);
       }
     }
     final deadline = DateTime.now().add(videoBudget);
-    final own = await _hlsMasterUrl(videoId, deadline: deadline);
+    ({String url, bool artTrack})? own;
+    var failed = false;
+    try {
+      own = await _hlsMasterUrl(videoId, deadline: deadline);
+    } on _VideoLookupFailed {
+      // Unknown, not a proven miss. The finder may still name a video.
+      failed = true;
+    }
     // A flaky/absent own stream must not veto a findable music video.
-    final found = (own == null || own.artTrack) && findMusicVideo != null
-        ? await _musicVideoSource(videoId, () => findMusicVideo(song),
-            deadline: deadline)
-        : null;
+    VideoSource? found;
+    if ((own == null || own.artTrack) && findMusicVideo != null) {
+      try {
+        found = await _musicVideoSource(
+            videoId, () => findMusicVideo(song),
+            deadline: deadline);
+      } on _VideoLookupFailed {
+        // The finder answered, its stream did not: still unknown.
+        failed = true;
+      }
+    }
     final pick = chooseVideoSource(
       own: own,
       found: found,
       hasFinder: findMusicVideo != null,
     );
-    // Past the budget the answer belongs to a tap the user already left:
-    // it must not be cached for the next tap to pick up.
-    if (pick == null || DateTime.now().isAfter(deadline)) return null;
-    return pick.cache ? _cacheVideo(videoId, pick.source) : pick.source;
+    // Past the budget the answer belongs to a tap the user already left: it
+    // must not be cached for the next tap, nor read as "no video".
+    if (DateTime.now().isAfter(deadline)) return const VideoLookup.failed();
+    if (pick == null) {
+      return failed ? const VideoLookup.failed() : const VideoLookup.none();
+    }
+    return VideoLookup.found(
+        pick.cache ? _cacheVideo(videoId, pick.source) : pick.source);
   }
 
-  /// Picks what [videoSource] returns: the song's own stream when it is a real
+  /// Picks what [videoLookup] returns: the song's own stream when it is a real
   /// video, else a found music video, else — only without a finder — the art
   /// track itself. The art-track fallback is not cached: a later open may find
   /// the real video. Pure for the test.
@@ -452,7 +494,9 @@ class YouTubeProvider extends MediaResolver {
     return null;
   }
 
-  /// HLS of the music video [find] names, or null. The song's own id is
+  /// HLS of the music video [find] names, or null when the finder answered
+  /// "nothing". A finder that did not answer (timeout) or ran out of budget
+  /// throws, so it is never recorded as "no video". The song's own id is
   /// rejected so a finder that echoes it cannot produce the art track again.
   Future<VideoSource?> _musicVideoSource(
     String ownId,
@@ -460,8 +504,11 @@ class YouTubeProvider extends MediaResolver {
     required DateTime deadline,
   }) async {
     final left = deadline.difference(DateTime.now());
-    if (left <= Duration.zero) return null;
-    final id = await find().timeout(left, onTimeout: () => null);
+    if (left <= Duration.zero) throw const _VideoLookupFailed();
+    final id = await find().timeout(
+          left,
+          onTimeout: () => throw const _VideoLookupFailed(),
+        );
     if (id == null || id.isEmpty || id == ownId) return null;
     final master = await _hlsMasterUrl(id, deadline: deadline);
     if (master == null) return null;
@@ -476,27 +523,36 @@ class YouTubeProvider extends MediaResolver {
     return source;
   }
 
-  /// Two attempts under the caller's deadline. Never throws.
+  /// Two attempts under the caller's deadline. Null only for a proven answer
+  /// (playable, no HLS master); when every attempt fails it throws, so the
+  /// caller never records a failed lookup as "this song has no video".
   Future<({String url, bool artTrack})?> _hlsMasterUrl(
     String videoId, {
     required DateTime deadline,
   }) async {
+    var sawFailure = false;
     for (var attempt = 0; attempt < 2; attempt++) {
       // A retry always starts from a fresh token: a bot-gated token makes
       // VISIONOS answer LOGIN_REQUIRED instead of an HLS master.
       if (attempt > 0) _visitorData = null;
       final remaining = deadline.difference(DateTime.now());
-      if (remaining <= Duration.zero) break;
-      const perAttempt = Duration(seconds: 15);
-      final budget = remaining < perAttempt ? remaining : perAttempt;
+      if (remaining <= Duration.zero) {
+        sawFailure = true;
+        break;
+      }
+      // Share what is left between the attempts still to run, so a stalled
+      // first attempt cannot leave the retry with zero seconds.
+      final budget = remaining ~/ (2 - attempt);
       try {
         // Null means a playable video with no HLS master: a retry cannot
         // conjure one, so this attempt ends the lookup.
         return await _masterOnce(videoId).timeout(budget);
       } catch (_) {
         // Transport/status failure or the budget ran out: next attempt.
+        sawFailure = true;
       }
     }
+    if (sawFailure) throw const _VideoLookupFailed();
     return null;
   }
 
@@ -871,7 +927,11 @@ class YouTubeProvider extends MediaResolver {
           );
         }
         var wrote = 0;
-        await for (final chunkBytes in resp.stream) {
+        // `send()` only bounds the response headers, so a body that stalls
+        // mid-file used to wait for the outer 180s while the abandoned
+        // transfer kept downloading in parallel with the retry.
+        await for (final chunkBytes
+            in resp.stream.timeout(const Duration(seconds: 30))) {
           if (stale?.call() ?? false) {
             // Superseded mid-download: fail, don't return normally. A normal
             // return would make download() report success and let the caller
@@ -893,6 +953,16 @@ class YouTubeProvider extends MediaResolver {
           chunk = (wrote ~/ 2).clamp(64 * 1024, downloadChunkBytes);
         }
       }
+    } on TimeoutException catch (e) {
+      // Header or body stall: a URL-level failure, so download() tries a
+      // fresh candidate instead of handing a bare TimeoutException upward.
+      throw ResolveFailure(
+        provider: provider,
+        stage: ResolveStage.download,
+        scope: FailureScope.url,
+        detail: 'download stalled for $url: $e',
+        retryable: true,
+      );
     } finally {
       await sink.flush();
       await sink.close();
