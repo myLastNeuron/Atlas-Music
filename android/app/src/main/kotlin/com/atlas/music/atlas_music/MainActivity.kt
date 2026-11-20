@@ -26,9 +26,17 @@ import java.io.File
 class MainActivity : AudioServiceActivity() {
     private var identifyChannel: MethodChannel? = null
     /// Pending backup answers: the storage-permission prompt and the file
-    /// picker both finish after their system UI closes.
-    private var pendingStorageResult: MethodChannel.Result? = null
-    private var pendingPickResult: MethodChannel.Result? = null
+    /// picker both finish after their system UI closes, and this Activity can
+    /// be recreated while the Dart caller is still waiting. Backed by
+    /// process-scoped fields for the same reason the launch flags below are:
+    /// in an instance field the answer was lost, the channel call never
+    /// returned, and the Settings row spun until the screen was left.
+    private var pendingStorageResult: MethodChannel.Result?
+        get() = pendingStorageResultRef
+        set(value) { pendingStorageResultRef = value }
+    private var pendingPickResult: MethodChannel.Result?
+        get() = pendingPickResultRef
+        set(value) { pendingPickResultRef = value }
 
     /// Launch requests parked for Dart, backed by process-scoped flags: a
     /// rotation (or process restore) recreates the Activity before Dart's
@@ -365,6 +373,20 @@ class MainActivity : AudioServiceActivity() {
         }.start()
     }
 
+    /// The Activity is going away for good, not being recreated — a recreation
+    /// keeps the process-scoped answers, and the picker result is delivered to
+    /// the new instance. Answering here means the Dart future never hangs and
+    /// the Settings row stops spinning.
+    override fun onDestroy() {
+        if (isFinishing) {
+            pendingStorageResult?.success(false)
+            pendingStorageResult = null
+            pendingPickResult?.success(null)
+            pendingPickResult = null
+        }
+        super.onDestroy()
+    }
+
     /// Next first-run ask after notifications: the mic, then the battery
     /// exemption. Chained so the two dialogs never stack.
     private fun startMicThenBattery() {
@@ -662,6 +684,11 @@ class MainActivity : AudioServiceActivity() {
         private var pendingIdentifyFlag = false
         private var pendingShowHistoryFlag = false
         private var pendingAutoStartFlag = false
+
+        /// Answers parked for system UI (see the pending* properties above).
+        /// Process-scoped so a recreated Activity still resolves them.
+        private var pendingStorageResultRef: MethodChannel.Result? = null
+        private var pendingPickResultRef: MethodChannel.Result? = null
 
         private const val CHANNEL = "atlas/permissions"
 

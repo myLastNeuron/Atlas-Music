@@ -99,6 +99,13 @@ Search YouTube Music, build playlists, follow synced lyrics, and keep listening 
 - Settings: light mode, artwork-derived player colour, and a transparency slider (transparent to translucent, default halfway) that applies to every glass surface.
 - Version label comes from the platform through `package_info_plus`, so it cannot drift from `pubspec.yaml`.
 
+### Backup and restore
+
+- **Advanced settings → Export data** writes one `.json` into Downloads: likes, playlists (their songs, names, descriptions and covers, never the downloaded audio), play history, listening stats, search history, dismissed songs, the Auto song fetch history, the profile name and the settings (appearance, glass level, player mode, language, genres, artists). The file records when it was exported.
+- **Advanced settings → Import data** opens the system file picker, shows when the file was exported and how many likes, playlists, history entries, fetched and dismissed songs it carries, and only then replaces the current ones.
+- A restore always replaces everything, and there is no undo — export first if you want to keep the current library. If a write fails mid-restore, the previous library and settings are put back. Songs still downloaded on this phone stay marked offline in the playlists that hold them.
+- Downloads, the profile photo and Spotify credentials are never in the backup: the audio stays on the device and the other two are per-install secrets.
+
 ### Updates
 
 - **Profile → Check for updates** reads the newest published GitHub Release, compares its tag with the installed version, shows what changed, downloads the APK and hands it to the Android installer. No server and no API key.
@@ -247,7 +254,7 @@ Atlas has no accounts, no cloud sync, and no analytics. Everything below stays o
 - Spotify credentials, if you choose to enter them for playlist matching.
 - Auto listen history.
 
-The cache is capped at **1 GB** with a **30-day TTL**. Eviction is oldest-first, and files belonging to the currently playing queue are never evicted. The app sets `allowBackup="false"`, so Android will not copy this data into a device backup.
+The cache is capped at **1 GB** with a **30-day TTL**. Eviction is oldest-first, and files belonging to the currently playing queue are never evicted. The app sets `allowBackup="false"`, so Android will not copy this data into a device backup — export a `.json` from Advanced settings before uninstalling if you want to keep your library, and note that the file you export sits in Downloads, outside the app's own storage.
 
 ### Android permissions
 
@@ -270,7 +277,7 @@ flutter analyze
 flutter test
 ```
 
-GitHub Actions runs both on every push and pull request. `flutter analyze` is expected to be clean; the vendored `plugins/audio_service` copy is excluded from analysis. The test suite covers content filtering, recommendations, cache and download policy, resolver failover and cooldowns, lyrics and translation, playlist parsing, playlist QR generation and decoding, Spotify matching, storage, song identification, the update service, and UI behaviour such as motion and queue handling.
+GitHub Actions runs both on every push and pull request. `flutter analyze` is expected to be clean; the vendored `plugins/audio_service` copy is excluded from analysis. The test suite covers content filtering, recommendations, cache and download policy, resolver failover and cooldowns, lyrics and translation, playlist parsing, playlist QR generation and decoding, Spotify matching, storage, backup parsing and restore, song identification, the update service, and UI behaviour such as motion and queue handling.
 
 ---
 
@@ -278,7 +285,7 @@ GitHub Actions runs both on every push and pull request. `flutter analyze` is ex
 
 - Android only. iOS support has not started.
 - No queue-reordering screen, and playback position is not restored after the app restarts.
-- No cloud sync or user accounts; library data stays on-device.
+- No cloud sync or user accounts; library data stays on-device. A backup `.json` moves it between installs, but it carries no audio: downloaded songs re-download when played again.
 - The dark appearance is the default look; light mode is available, and there is no separate accent-colour picker.
 - One-shot **Find song** needs Atlas on screen, because Android only grants the microphone to a visible app and there is no "always allow" option. **Auto listen** covers background listening, but it must be started from Atlas (tile or shortcut) and uses more battery.
 - YouTube does not publish dislike counts, so those values show as `N/A`.

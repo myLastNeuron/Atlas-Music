@@ -27,6 +27,56 @@ import '../widgets/update_sheet.dart';
 class AdvancedSettingsScreen extends StatefulWidget {
   const AdvancedSettingsScreen({super.key});
 
+  /// What the import dialog says it will replace: when the file was made, the
+  /// counts of everything that lands, and a warning that there is no undo.
+  /// A static on the widget so a test can pin the wording without pumping it.
+  static String describeBackup(BackupData backup) {
+    final exportedAt = backup.exportedAt;
+    return <String>[
+      'This replaces your current likes, playlists, history and settings. '
+          'It cannot be undone — export first if you want to keep the current '
+          'library.',
+      '',
+      if (backup.name != null) 'Name: ${backup.name}',
+      if (exportedAt != null) 'Exported ${_describeMoment(exportedAt)}',
+      '${backup.likes.length} liked songs',
+      '${backup.playlists.length} playlists '
+          '(${backup.playlistSongCount} songs)',
+      '${backup.recentlyPlayed.length} history entries',
+      '${backup.fetchedSongs.length} fetched songs',
+      '${backup.notInterested.length} dismissed songs',
+      if (backup.version > BackupService.currentVersion) ...[
+        '',
+        'Made by a newer Atlas (format v${backup.version}). Only what this '
+            'version understands will be restored.',
+      ],
+    ].join('\n');
+  }
+
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+
+  /// "20 Nov 2026, 15:42" in the phone's own timezone, matching how the rest
+  /// of the app writes dates to a person. No intl dependency for one line.
+  static String _describeMoment(DateTime utc) {
+    final t = utc.toLocal();
+    final hour = t.hour.toString().padLeft(2, '0');
+    final minute = t.minute.toString().padLeft(2, '0');
+    return '${t.day} ${_months[t.month - 1]} ${t.year}, $hour:$minute';
+  }
+
   @override
   State<AdvancedSettingsScreen> createState() => _AdvancedSettingsScreenState();
 }
@@ -39,6 +89,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
   bool _fromFdroid = false;
   int _cacheBytes = 0;
   String _version = '';
+
   /// 'export' or 'import' while a backup file is being written, read or
   /// applied. Null when idle.
   String? _busy;
@@ -193,7 +244,15 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
         genres: genres,
         artists: artists,
       );
-      if (saved != null) message = 'Saved to Downloads: $saved';
+      // A denied storage permission is not a failed write: say which one it
+      // was, so the user knows whether to try again or change a setting.
+      message = switch (saved.outcome) {
+        ExportOutcome.saved => 'Saved to Downloads: ${saved.fileName}',
+        ExportOutcome.permissionDenied =>
+          'Storage access was denied, so the backup was not saved.',
+        ExportOutcome.unsupported => 'Export is only available on Android.',
+        ExportOutcome.failed => 'Could not save the backup.',
+      };
     } catch (_) {
       // Keep the failure message; export never partially changes the app.
     }
@@ -234,16 +293,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
       builder: (_) => AlertDialog(
         title: const Text('Import this backup?'),
         content: SingleChildScrollView(
-          child: Text(
-            'This replaces your current likes, playlists, history and '
-            'settings.\n\n'
-            '${backup.name == null ? '' : 'Name: ${backup.name}\n'}'
-            '${backup.likes.length} liked songs\n'
-            '${backup.playlists.length} playlists '
-            '(${backup.playlistSongCount} songs)\n'
-            '${backup.recentlyPlayed.length} history entries\n'
-            '${backup.fetchedSongs.length} fetched songs',
-          ),
+          child: Text(AdvancedSettingsScreen.describeBackup(backup)),
         ),
         actions: [
           TextButton(
@@ -273,10 +323,10 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
       );
     } catch (_) {
       if (!mounted) return;
+      // apply() rolls the library and settings back before rethrowing, so the
+      // phone really is unchanged: no "import again to retry" hedge.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('Import failed. Import the same file again to retry.')),
+        const SnackBar(content: Text('Import failed. Nothing was changed.')),
       );
     } finally {
       if (mounted) setState(() => _busy = null);
@@ -513,16 +563,16 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                   MotionPress(
                     scale: 0.99,
                     child: ListTile(
-                      leading:
-                          const Icon(Icons.cleaning_services_outlined, size: 20),
+                      leading: const Icon(Icons.cleaning_services_outlined,
+                          size: 20),
                       title: const Text('Clear cache',
                           style: TextStyle(fontSize: 14)),
                       subtitle: Text(
                         _cacheBytes > 0
                             ? '${_fmtBytes(_cacheBytes)} of streamed songs · downloads kept'
                             : 'No streamed songs cached',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.inkSoft),
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.inkSoft),
                       ),
                       trailing:
                           Icon(Icons.chevron_right, color: AppColors.mute),
@@ -539,15 +589,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                           style: TextStyle(fontSize: 14)),
                       subtitle: Text(
                         'History, playlists, likes, name and settings → Downloads',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.inkSoft),
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.inkSoft),
                       ),
                       trailing: _busy == 'export'
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : Icon(Icons.chevron_right, color: AppColors.mute),
                       onTap: _exportBackup,
                     ),
@@ -562,15 +611,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                           style: TextStyle(fontSize: 14)),
                       subtitle: Text(
                         'Restore an Atlas backup .json file',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.inkSoft),
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.inkSoft),
                       ),
                       trailing: _busy == 'import'
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : Icon(Icons.chevron_right, color: AppColors.mute),
                       onTap: _importBackup,
                     ),
@@ -619,8 +667,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen>
                     MotionPress(
                       scale: 0.99,
                       child: ListTile(
-                        leading: const Icon(Icons.settings_backup_restore,
-                            size: 20),
+                        leading:
+                            const Icon(Icons.settings_backup_restore, size: 20),
                         title: const Text('Revert update',
                             style: TextStyle(fontSize: 14)),
                         subtitle: Text('Open an earlier release on GitHub',

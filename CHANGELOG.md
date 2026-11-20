@@ -9,11 +9,38 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Added
 - **Backup and restore**: Advanced settings now has Export data, which writes
   a `.json` into Downloads, and Import data, which restores that file after
-  showing what it will replace. The file carries play history, playlists
-  (songs only, never the downloaded audio), likes, the profile name, fetched
-  songs and settings.
+  showing what it will replace and when it was exported. The file carries play
+  history, playlists (their songs, names, descriptions, covers and creation
+  dates — never the downloaded audio), likes, the profile name, fetched songs,
+  dismissed songs and settings. Downloads, the profile photo and Spotify
+  credentials stay on the phone. Playlist covers are kept only on a phone that
+  still has the image.
 
 ### Fixed
+- **A restored playlist knows which songs are still downloaded**: the file
+  never carries offline state, so a same-device restore showed the audio in
+  Library → Offline while the playlist counted as online-only, and deleting
+  that playlist left its files behind. The offline set is now rebuilt from the
+  phone's own downloads on import; on a new phone it stays empty, as before.
+- **A backup with no name no longer sends you back to setup**: importing a
+  file without a name cleared the profile name, and the entry screen opens on
+  onboarding when the name is empty, so a restore looked like it had wiped
+  everything. The name a phone already has is kept unless the file carries
+  one.
+- **A failed import now changes nothing**: the current library and settings
+  are read before the restore and put back if any write fails, and the error
+  says so instead of asking you to import the same file again.
+- **Restored data obeys the app's own limits**: history is capped at 50
+  entries, searches at 20 and dismissals at 400 like every other write, a
+  song listed twice in the file is kept once (a duplicate like could not be
+  un-liked in one tap), and a restored like clears the "not interested" mark
+  the same file carried — liking is explicit taste everywhere else.
+- **Import and export can no longer spin forever**: the pending picker and
+  permission answers now survive an Activity recreation (Android recreates it
+  under "Don't keep activities" and low memory) and are answered when the
+  screen goes away, so the row cannot sit on a spinner with no way back.
+- **Export says which failure it hit**: a denied storage permission on
+  Android 7-9 is reported as such instead of as "could not save the backup".
 - **Revert update now opens the release you pick instead of failing**: Android
   refuses to install an older versionCode over the installed one, so every
   revert attempt ended with "App not installed". Each row now opens that tag's

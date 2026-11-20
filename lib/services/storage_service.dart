@@ -22,6 +22,13 @@ class StorageService extends ChangeNotifier {
   static const String _playbackSessionKey = 'playback_session';
   static const String downloadedPlaylistId = 'downloaded_music';
 
+  /// The caps the single-item paths have always enforced. The bulk restore
+  /// path enforces them too: an imported file must not be able to leave the
+  /// app in a shape its own writers never produce.
+  static const int recentlyPlayedLimit = 50;
+  static const int searchHistoryLimit = 20;
+  static const int notInterestedLimit = 400;
+
   // Every mutation is get -> mutate -> set against SharedPreferences with
   // no serialisation, so concurrent writers (rapid skipping fires
   // recordListen per track change) silently lose updates. Route every
@@ -283,8 +290,8 @@ class StorageService extends ChangeNotifier {
         return; // already the newest entry; no write, no notify
       }
       recentlyPlayed.insert(0, song);
-      if (recentlyPlayed.length > 50) {
-        recentlyPlayed.removeRange(50, recentlyPlayed.length);
+      if (recentlyPlayed.length > recentlyPlayedLimit) {
+        recentlyPlayed.removeRange(recentlyPlayedLimit, recentlyPlayed.length);
       }
       final prefs = await SharedPreferences.getInstance();
       final jsonList = recentlyPlayed.map((s) => s.toJson()).toList();
@@ -374,8 +381,8 @@ class StorageService extends ChangeNotifier {
   Future<void> removeAutoFind(AutoFind target) {
     return _serialized(() async {
       final finds = await getAutoFinds();
-      final at = finds.indexWhere((f) =>
-          f.foundAt == target.foundAt && f.song.id == target.song.id);
+      final at = finds.indexWhere(
+          (f) => f.foundAt == target.foundAt && f.song.id == target.song.id);
       if (at < 0) return;
       finds.removeAt(at);
       final prefs = await SharedPreferences.getInstance();
@@ -507,11 +514,11 @@ class StorageService extends ChangeNotifier {
         'at': DateTime.now().millisecondsSinceEpoch,
         'artist': song.artist,
       };
-      if (marks.length > 400) {
+      if (marks.length > notInterestedLimit) {
         final oldest = marks.entries.toList()
           ..sort((a, b) => ((a.value['at'] as int?) ?? 0)
               .compareTo((b.value['at'] as int?) ?? 0));
-        for (final entry in oldest.take(marks.length - 400)) {
+        for (final entry in oldest.take(marks.length - notInterestedLimit)) {
           marks.remove(entry.key);
         }
       }
@@ -535,7 +542,9 @@ class StorageService extends ChangeNotifier {
       final q = query.trim();
       list.removeWhere((e) => e.toLowerCase() == q.toLowerCase());
       list.insert(0, q);
-      if (list.length > 20) list.removeRange(20, list.length);
+      if (list.length > searchHistoryLimit) {
+        list.removeRange(searchHistoryLimit, list.length);
+      }
       await prefs.setStringList(_searchHistoryKey, list);
     });
   }
@@ -736,15 +745,20 @@ class StorageService extends ChangeNotifier {
 
   // ── Backup import (whole-list replace) ──
 
-  /// Replaces the play history with a restored list, newest first.
+  /// Replaces the play history with a restored list, newest first. Capped like
+  /// [addToRecentlyPlayed]: the Home rail is sized for [recentlyPlayedLimit]
+  /// entries, and an imported file must not break that invariant.
   Future<void> replaceRecentlyPlayed(List<Song> songs) {
     return _serialized(() async {
+      final capped = songs.length > recentlyPlayedLimit
+          ? songs.sublist(0, recentlyPlayedLimit)
+          : songs;
       final prefs = await SharedPreferences.getInstance();
-      if (songs.isEmpty) {
+      if (capped.isEmpty) {
         await prefs.remove(_recentlyPlayedKey);
       } else {
         await prefs.setString(_recentlyPlayedKey,
-            json.encode(songs.map((s) => s.toJson()).toList()));
+            json.encode(capped.map((s) => s.toJson()).toList()));
       }
       notifyListeners();
     });
@@ -756,8 +770,20 @@ class StorageService extends ChangeNotifier {
       if (songs.isEmpty) {
         await prefs.remove(_likedSongsKey);
       } else {
-        await prefs.setString(_likedSongsKey,
-            json.encode(songs.map((s) => s.toJson()).toList()));
+        await prefs.setString(
+            _likedSongsKey, json.encode(songs.map((s) => s.toJson()).toList()));
+      }
+      // Same rule as [toggleLikedSong]: liking a song clears its "not
+      // interested" mark. A backup can carry both for one song, and the
+      // rankers would then hide a song the user has also liked.
+      final likedIds = songs.map((s) => s.id).toSet();
+      if (likedIds.isNotEmpty) {
+        final marks = await getNotInterested();
+        final before = marks.length;
+        marks.removeWhere((id, _) => likedIds.contains(id));
+        if (marks.length != before) {
+          await prefs.setString(_notInterestedKey, json.encode(marks));
+        }
       }
       notifyListeners();
     });
@@ -766,11 +792,28 @@ class StorageService extends ChangeNotifier {
   /// Replaces every user playlist with a restored set. The device's own
   /// Downloaded Music list is preserved: its audio files were never in the
   /// backup, so removing the list would orphan them.
+  ///
+  /// The offline set is rebuilt from this phone's downloads instead of being
+  /// trusted from the file. A same-device restore still has the audio cached,
+  /// so the playlist must know those songs are offline — otherwise deleting
+  /// the playlist leaves the files behind. On a new phone nothing is
+  /// downloaded, and the set comes out empty as before.
   Future<void> replacePlaylists(List<Playlist> playlists) {
     return _serialized(() async {
       final existing = await getPlaylists();
+      final downloaded = (await getDownloadedSongs()).map((s) => s.id).toSet();
+      final restored = <Playlist>[];
+      for (final p in playlists.where((p) => p.id != downloadedPlaylistId)) {
+        final ids = p.songs.map((s) => s.id).where(downloaded.contains).toSet();
+        restored.add(p.copyWith(
+          downloadedSongIds: ids,
+          // Same rule as PlaylistDetailScreen._syncPlaylistDownloads.
+          isDownloaded: ids.isNotEmpty && ids.length == p.songs.length,
+          isSystemManaged: ids.isNotEmpty,
+        ));
+      }
       final next = [
-        ...playlists.where((p) => p.id != downloadedPlaylistId),
+        ...restored,
         ...existing.where((p) => p.id == downloadedPlaylistId),
       ];
       final prefs = await SharedPreferences.getInstance();
@@ -793,8 +836,7 @@ class StorageService extends ChangeNotifier {
     });
   }
 
-  Future<void> replaceListeningStats(
-      Map<String, Map<String, dynamic>> stats) {
+  Future<void> replaceListeningStats(Map<String, Map<String, dynamic>> stats) {
     return _serialized(() async {
       final prefs = await SharedPreferences.getInstance();
       if (stats.isEmpty) {
@@ -806,17 +848,43 @@ class StorageService extends ChangeNotifier {
       // otherwise stay mixed with the restored counts. It rebuilds from the
       // next listens.
       await prefs.remove(_topArtistsKey);
+      notifyListeners();
     });
   }
 
+  /// Replaces the dismissals with a restored set, bounded the way
+  /// [addNotInterested] bounds it: newest [notInterestedLimit] kept.
+  Future<void> replaceNotInterested(Map<String, Map<String, dynamic>> marks) {
+    return _serialized(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (marks.isEmpty) {
+        await prefs.remove(_notInterestedKey);
+        notifyListeners();
+        return;
+      }
+      final newest = marks.entries.toList()
+        ..sort((a, b) => ((b.value['at'] as int?) ?? 0)
+            .compareTo((a.value['at'] as int?) ?? 0));
+      final capped = Map<String, Map<String, dynamic>>.fromEntries(
+          newest.take(notInterestedLimit));
+      await prefs.setString(_notInterestedKey, json.encode(capped));
+      notifyListeners();
+    });
+  }
+
+  /// Replaces the search history, capped like [addSearchQuery].
   Future<void> replaceSearchHistory(List<String> queries) {
     return _serialized(() async {
       final prefs = await SharedPreferences.getInstance();
-      if (queries.isEmpty) {
+      final capped = queries.length > searchHistoryLimit
+          ? queries.sublist(0, searchHistoryLimit)
+          : queries;
+      if (capped.isEmpty) {
         await prefs.remove(_searchHistoryKey);
       } else {
-        await prefs.setStringList(_searchHistoryKey, queries);
+        await prefs.setStringList(_searchHistoryKey, capped);
       }
+      notifyListeners();
     });
   }
 }
