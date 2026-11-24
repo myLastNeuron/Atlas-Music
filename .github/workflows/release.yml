@@ -206,7 +206,7 @@ jobs:
 
           "$apksigner" verify --verbose --print-certs Atlas.Music.apk | tee apksigner.txt
 
-          digests="$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' apksigner.txt | tr 'A-F' 'a-f' | sort -u)"
+          digests="$(sed -nE 's/^.*certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' apksigner.txt | tr 'A-F' 'a-f' | sort -u)"
           signer_count="$(printf '%s\n' "$digests" | sed '/^$/d' | wc -l)"
           if [ "$signer_count" -ne 1 ] || [ "$digests" != "$EXPECTED_CERT_SHA256" ]; then
             echo "::error::APK signer certificate SHA-256 is '$digests' (signers: $signer_count); expected $EXPECTED_CERT_SHA256."
