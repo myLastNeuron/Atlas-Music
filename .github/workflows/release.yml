@@ -1,9 +1,14 @@
 name: Release
 
-# Publishes a signed APK to a GitHub Release whenever a v* tag is pushed.
+# Publishes a signed APK to a GitHub Release when a v* tag is pushed.
 # The in-app update checker reads these releases, so the tag MUST match the
-# version in pubspec.yaml: tag `v2.0.3` for `version: 2.0.3+7`. The workflow
-# enforces that below.
+# version in pubspec.yaml: tag `v2.0.3` for `version: 2.0.3+7`.
+#
+# ATL-1: a tag is not trusted on its own. The exact tagged commit must pass
+# `flutter analyze` and `flutter test`, the APK must be signed by the permanent
+# release certificate, and its versionName/versionCode must match pubspec.yaml
+# before anything is published. A manual run is always a dry run: it builds and
+# verifies the APK but never publishes.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   KEYSTORE_BASE64     base64 of the release .jks file
@@ -19,21 +24,127 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name to simulate, e.g. v2.4.0. Required when the selected ref is not a tag.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.47.2'
+  ANDROID_PACKAGE: com.atlas.music.atlas_music
+  EXPECTED_CERT_SHA256: b4c0a3b650658771a6466cf56ce5ff17fa29152c283d5ddf036f146498795f00
 
 jobs:
-  build-and-release:
+  verify:
+    name: Analyze & test tag SHA
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # create the release and upload the APK
-
+    outputs:
+      sha: ${{ steps.version.outputs.sha }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+      version_name: ${{ steps.version.outputs.version_name }}
+      version_code: ${{ steps.version.outputs.version_code }}
     steps:
-      - name: Check out
+      - name: Check out exact tagged ref
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 1
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Resolve and verify tag/version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            ref_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+            if [ "$sha" != "$ref_commit" ]; then
+              echo "::error::Checked out $sha, but tag ${GITHUB_REF_NAME} points at $ref_commit."
+              exit 1
+            fi
+          fi
+
+          tag="${INPUT_TAG:-}"
+          if [ -z "$tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          fi
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a v<major>.<minor>.<patch> tag, got '$tag'. Pass -f tag=vX.Y.Z for a manual dry run."
+            exit 1
+          fi
+
+          version_line="$(sed -nE 's/^version:[[:space:]]*//p' pubspec.yaml | head -n 1)"
+          version_name="${version_line%%+*}"
+          version_code="${version_line#*+}"
+          if [ "$version_code" = "$version_line" ] || ! [[ "$version_code" =~ ^[0-9]+$ ]]; then
+            echo "::error::pubspec.yaml version '$version_line' is not <versionName>+<versionCode>."
+            exit 1
+          fi
+          if [ "${tag#v}" != "$version_name" ]; then
+            echo "::error::Tag $tag does not match pubspec versionName $version_name. Bump pubspec.yaml or retag."
+            exit 1
+          fi
+
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release gate input"
+            echo ""
+            echo "- Commit: \`$sha\`"
+            echo "- Tag: \`$tag\`"
+            echo "- versionName: \`$version_name\`"
+            echo "- versionCode: \`$version_code\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  build-and-release:
+    name: Build, verify, publish
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload the verified APK
+
+    steps:
+      - name: Check out verified SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 1
+
+      - name: Confirm checkout matches verified SHA
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.verify.outputs.sha }}"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Set up Java
@@ -48,15 +159,6 @@ jobs:
       # The update feature only works if every build shares one signing key.
       # Refuse to publish a debug-signed APK: it would not install over the
       # previous version.
-      - name: Verify tag matches pubspec version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          ver=$(grep -E '^version:' pubspec.yaml | sed -E 's/version: *([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
-          if [ "$tag" != "$ver" ]; then
-            echo "::error::Tag v$tag does not match pubspec version $ver. Bump pubspec.yaml or retag."
-            exit 1
-          fi
-
       - name: Configure signing
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -64,11 +166,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::KEYSTORE_BASE64 secret is not set — refusing to publish a debug-signed APK."
-            exit 1
-          fi
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name secret is not set — refusing to publish a debug-signed APK."
+              exit 1
+            fi
+          done
           echo "$KEYSTORE_BASE64" | base64 -d > android/app/atlas-release.jks
+          test -s android/app/atlas-release.jks
           cat > android/key.properties <<EOF
           storePassword=$KEYSTORE_PASSWORD
           keyPassword=$KEY_PASSWORD
@@ -82,11 +188,75 @@ jobs:
       - name: Prepare APK
         run: cp build/app/outputs/flutter-apk/app-release.apk Atlas.Music.apk
 
+      # Fail before publishing if the APK is not signed by the permanent key or
+      # if its manifest does not carry the tag's version.
+      - name: Verify APK signer and manifest
+        env:
+          EXPECTED_VERSION_NAME: ${{ needs.verify.outputs.version_name }}
+          EXPECTED_VERSION_CODE: ${{ needs.verify.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          apksigner="$(find "$sdk" -type f -name apksigner 2>/dev/null | sort -V | tail -n 1)"
+          aapt2="$(find "$sdk" -type f -name aapt2 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$apksigner" ] || [ -z "$aapt2" ]; then
+            echo "::error::Could not find apksigner/aapt2 under Android SDK at $sdk."
+            exit 1
+          fi
+
+          "$apksigner" verify --verbose --print-certs Atlas.Music.apk | tee apksigner.txt
+
+          digests="$(sed -nE 's/^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]+)$/\1/p' apksigner.txt | tr 'A-F' 'a-f' | sort -u)"
+          signer_count="$(printf '%s\n' "$digests" | sed '/^$/d' | wc -l)"
+          if [ "$signer_count" -ne 1 ] || [ "$digests" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::APK signer certificate SHA-256 is '$digests' (signers: $signer_count); expected $EXPECTED_CERT_SHA256."
+            exit 1
+          fi
+
+          "$aapt2" dump badging Atlas.Music.apk | tee aapt2.txt
+          package_line="$(grep -m1 '^package:' aapt2.txt)"
+          package_name="$(printf '%s\n' "$package_line" | sed -nE "s/^package: name='([^']*)'.*/\1/p")"
+          version_name="$(printf '%s\n' "$package_line" | sed -nE "s/.*versionName='([^']*)'.*/\1/p")"
+          version_code="$(printf '%s\n' "$package_line" | sed -nE "s/.*versionCode='([^']*)'.*/\1/p")"
+          if [ "$package_name" != "$ANDROID_PACKAGE" ]; then
+            echo "::error::APK package is '$package_name'; expected $ANDROID_PACKAGE."
+            exit 1
+          fi
+          if [ "$version_name" != "$EXPECTED_VERSION_NAME" ] || [ "$version_code" != "$EXPECTED_VERSION_CODE" ]; then
+            echo "::error::APK version is $version_name+$version_code; expected $EXPECTED_VERSION_NAME+$EXPECTED_VERSION_CODE."
+            exit 1
+          fi
+
+          sha256sum Atlas.Music.apk | tee apk.sha256
+          {
+            echo "### APK verification"
+            echo ""
+            echo "- APK SHA-256: \`$(cut -d' ' -f1 apk.sha256)\`"
+            echo "- versionName: \`$version_name\`"
+            echo "- versionCode: \`$version_code\`"
+            echo ""
+            echo '```'
+            cat apksigner.txt
+            cat aapt2.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           files: Atlas.Music.apk
+          tag_name: ${{ needs.verify.outputs.tag_name }}
           generate_release_notes: true
+
+      - name: Note dry run
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          {
+            echo "### Dry run"
+            echo ""
+            echo "Manual run built and verified the APK at \`${{ needs.verify.outputs.sha }}\`; no release was published."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up signing material
         if: always()
